@@ -113,6 +113,24 @@ def strategies():
     }
 
 
+@app.get("/strategies/status", tags=["strategies"])
+def strategies_status():
+    """Compatibility status shape for simple dashboards and deployment checks."""
+    names = {
+        "market_maker": "MarketMaker",
+        "arbitrage": "ArbitrageHunter",
+        "grid": "GridRunner",
+        "sniper": "SniperBot",
+    }
+    return {
+        "running": {
+            display_name: state["running"]
+            for key, display_name in names.items()
+            for state in [get_agent().list_strategies().get(key, {"running": False})]
+        }
+    }
+
+
 @app.post("/api/strategies/start", tags=["strategies"])
 def start_strategy(name: str = Body(..., embed=True)):
     """Start a strategy by name. Body: { "name": "market_maker" }"""

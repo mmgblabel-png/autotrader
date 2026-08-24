@@ -52,6 +52,21 @@ python main.py --strategy market_maker
 python main.py --config /path/to/config.yaml --tick-interval 2.0
 ```
 
+### Railway deployment
+
+Railway detects the root `Procfile` and starts the API with `app:app`.
+The health check is available at `/api/health`; the simple strategy status
+check is available at `/strategies/status`.
+
+```bash
+pip install -r requirements.txt
+uvicorn app:app --host 0.0.0.0 --port 8000
+```
+
+Set `CORS_ORIGINS` to a comma-separated list of trusted dashboard origins in
+production. Keep wallet and RPC credentials in Railway environment variables;
+never commit them to the repository.
+
 ### CLI commands
 
 ```bash

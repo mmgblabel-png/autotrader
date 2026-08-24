@@ -347,6 +347,19 @@ def test_api_list_strategies(api_client):
     assert "market_maker" in names
 
 
+def test_api_strategy_status_compatibility(api_client):
+    r = api_client.get("/strategies/status")
+    assert r.status_code == 200
+    assert r.json() == {
+        "running": {
+            "MarketMaker": False,
+            "ArbitrageHunter": False,
+            "GridRunner": False,
+            "SniperBot": False,
+        }
+    }
+
+
 def test_api_start_valid_strategy(api_client):
     r = api_client.post("/api/strategies/start", json={"name": "market_maker"})
     assert r.status_code == 200
