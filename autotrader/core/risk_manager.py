@@ -2,10 +2,13 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
-from typing import Dict
+from dataclasses import dataclass
+from typing import TYPE_CHECKING, Dict, Optional
 
 from autotrader.core.logger import get_logger
+
+if TYPE_CHECKING:
+    from autotrader.core.profit_engine import ProfitEngine
 
 log = get_logger("RiskManager")
 
@@ -27,11 +30,13 @@ class RiskManager:
     Call ``is_killed`` to see if the kill-switch has fired.
     """
 
-    def __init__(self, configs: Dict[str, StrategyRiskConfig] | None = None) -> None:
+    def __init__(self, configs: Dict[str, StrategyRiskConfig] | None = None,
+                 profit_engine: Optional["ProfitEngine"] = None) -> None:
         self._configs: Dict[str, StrategyRiskConfig] = configs or {}
         self._daily_loss: Dict[str, float] = {}
         self._error_counts: Dict[str, int] = {}
         self._killed: Dict[str, bool] = {}
+        self._pe: Optional["ProfitEngine"] = profit_engine
 
     # ------------------------------------------------------------------
     # Public API
@@ -39,6 +44,10 @@ class RiskManager:
 
     def set_config(self, strategy: str, cfg: StrategyRiskConfig) -> None:
         self._configs[strategy] = cfg
+
+    def set_profit_engine(self, pe: "ProfitEngine") -> None:
+        """Wire up the profit engine for event forwarding (avoids circular imports)."""
+        self._pe = pe
 
     def check_order(self, strategy: str, notional: float, slippage_pct: float = 0.0) -> bool:
         """Return True if the order is allowed; False if it must be rejected."""
@@ -90,10 +99,25 @@ class RiskManager:
         return self._killed.get(strategy, False)
 
     def status(self) -> dict:
+        """Return a dashboard-ready risk status dict.
+
+        Top-level keys:
+            ``any_killed``  – True if any strategy's kill-switch is active.
+            ``strategies``  – per-strategy breakdown.
+        """
+        strategies: Dict[str, dict] = {}
+        for key, cfg in self._configs.items():
+            strategies[key] = {
+                "daily_pnl": -self._daily_loss.get(key, 0.0),   # negative = loss
+                "max_daily_loss": cfg.max_daily_loss,
+                "daily_loss": self._daily_loss.get(key, 0.0),
+                "error_count": self._error_counts.get(key, 0),
+                "max_consecutive_errors": cfg.max_consecutive_errors,
+                "kill_switch": self._killed.get(key, False),
+            }
         return {
-            "daily_loss": dict(self._daily_loss),
-            "error_counts": dict(self._error_counts),
-            "killed": dict(self._killed),
+            "any_killed": any(self._killed.values()),
+            "strategies": strategies,
         }
 
     # ------------------------------------------------------------------
@@ -107,3 +131,5 @@ class RiskManager:
         if not self._killed.get(strategy):
             self._killed[strategy] = True
             log.error("[%s] KILL-SWITCH triggered: %s", strategy, reason)
+            if self._pe is not None:
+                self._pe.add_risk_event(strategy, f"Kill-switch triggered: {reason}")

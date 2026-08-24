@@ -35,6 +35,7 @@ class AutoTrader:
         self._om = OrderManager()
         self._rm = RiskManager()
         self._pe = ProfitEngine(export_dir=self._config.get("export_dir", "exports"))
+        self._rm.set_profit_engine(self._pe)   # forward risk events to event log
         self._strategies: Dict[str, BaseStrategy] = {}
         self._setup_risk()
         self._register_strategies()

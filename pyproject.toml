@@ -9,6 +9,9 @@ description = "Automaton AutoTrader – modular automated trading agent"
 requires-python = ">=3.10"
 dependencies = [
     "pyyaml>=6.0",
+    "fastapi>=0.111",
+    "uvicorn[standard]>=0.29",
+    "slowapi>=0.1.9",
 ]
 
 [project.optional-dependencies]
