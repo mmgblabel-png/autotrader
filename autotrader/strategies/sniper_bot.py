@@ -54,9 +54,9 @@ class SniperBot(BaseStrategy):
             if abs(move) >= momentum_pct:
                 side = OrderSide.BUY if move > 0 else OrderSide.SELL
                 notional = size * current_price
-                # Estimate slippage vs momentum
-                slippage = abs(move) * 0.1
-                if not self._rm.check_order(self.name, notional, slippage_pct=slippage * 100):
+                # Slippage estimate: assume slippage equals 50% of the observed move
+                slippage_pct = abs(move) * 100 * 0.5
+                if not self._rm.check_order(self.name, notional, slippage_pct=slippage_pct):
                     self._prev_price = current_price
                     return
 

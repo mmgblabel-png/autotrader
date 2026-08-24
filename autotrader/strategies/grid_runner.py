@@ -30,6 +30,8 @@ class GridRunner(BaseStrategy):
         super().__init__(*args, **kwargs)
         self._grid_prices: list[float] = []
         self._initialized = False
+        # Track which grid prices already have an active order
+        self._active_levels: set[float] = set()
 
     def on_start(self) -> None:
         self._build_grid()
@@ -50,8 +52,11 @@ class GridRunner(BaseStrategy):
         exchange: str = cfg.get("exchange", "binance")
         size: float = cfg.get("order_size", 1.0)
 
-        # For each grid level, place a buy below and a sell above current price
+        # For each grid level, place an order only if no active order exists there
         for level_price in self._grid_prices:
+            if level_price in self._active_levels:
+                continue
+
             notional = size * level_price
             if not self._rm.check_order(self.name, notional):
                 continue
@@ -66,6 +71,7 @@ class GridRunner(BaseStrategy):
                               strategy=self.name)
 
             self._om.register(order)
+            self._active_levels.add(level_price)
             log.debug("GRID %s %s %.2f qty=%.4f", order.side.value, symbol, level_price, size)
 
         # Record a simulated PnL update
