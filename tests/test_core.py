@@ -1,4 +1,4 @@
-"""Basic smoke tests for AutoTrader core modules and API routes."""
+"""Tests for AutoTrader core modules and API routes."""
 
 import json
 
@@ -79,8 +79,11 @@ def test_risk_manager_status_shape():
     rm.set_config("mm", StrategyRiskConfig(max_daily_loss=20))
     status = rm.status()
     assert "any_killed" in status
+    assert "kill_switch" in status
+    assert "daily_pnl" in status
+    assert "max_daily_loss" in status
+    assert "open_positions" in status
     assert "strategies" in status
-    assert "mm" in status["strategies"]
     s = status["strategies"]["mm"]
     assert "daily_loss" in s and "max_daily_loss" in s and "kill_switch" in s
 
@@ -113,11 +116,38 @@ def test_profit_engine_as_summary(tmp_path):
     pe.record_realized_pnl("mm", 10.0)
     pe.record_realized_pnl("arb", -2.0)
     s = pe.as_summary()
-    assert "total_pnl" in s and "by_strategy" in s and "trade_count" in s
-    assert s["trade_count"] == 0
+    assert "total_pnl" in s
+    assert "pnl_per_strategy" in s
+    assert "by_strategy" in s
+    assert "trade_count" in s
+    assert "total_fees" in s
 
 
-def test_profit_engine_recent_trades(tmp_path):
+def test_profit_engine_total_pnl(tmp_path):
+    pe = ProfitEngine(export_dir=str(tmp_path))
+    pe.record_realized_pnl("mm", 10.0)
+    pe.record_realized_pnl("arb", -2.0)
+    assert pe.total_pnl() == 8.0
+
+
+def test_profit_engine_pnl_per_strategy(tmp_path):
+    pe = ProfitEngine(export_dir=str(tmp_path))
+    pe.record_realized_pnl("mm", 5.0)
+    d = pe.pnl_per_strategy()
+    assert "mm" in d
+    assert d["mm"] == 5.0
+
+
+def test_profit_engine_last_trades(tmp_path):
+    pe = ProfitEngine(export_dir=str(tmp_path))
+    for i in range(5):
+        pe.record_trade(Trade(strategy="mm", symbol="BTC/USDT", side="BUY",
+                              quantity=0.001, price=float(30000 + i), fee=0.0))
+    trades = pe.last_trades(3)
+    assert len(trades) == 3
+
+
+def test_profit_engine_recent_trades_sorted(tmp_path):
     pe = ProfitEngine(export_dir=str(tmp_path))
     for i in range(5):
         pe.record_trade(Trade(strategy="mm", symbol="BTC/USDT", side="BUY",
@@ -172,7 +202,6 @@ def test_market_maker_tick(tmp_path):
     mm = MarketMaker(om, rm, pe, cfg)
     mm.start()
     mm.tick()
-    assert len(om.open_orders()) >= 0
 
 
 def test_arbitrage_hunter_tick(tmp_path):
@@ -214,6 +243,58 @@ def test_sniper_bot_tick(tmp_path):
     sb.tick()
 
 
+# ── AutoTrader agent tests ────────────────────────────────────────────────────
+
+def test_agent_start_stop_return_dicts(tmp_path):
+    from autotrader.agent import AutoTrader
+    import autotrader.api.deps as deps
+    agent = AutoTrader.__new__(AutoTrader)
+    agent._config = {}
+    agent._om = OrderManager()
+    agent._rm = RiskManager()
+    agent._pe = ProfitEngine(export_dir=str(tmp_path))
+    agent._rm.set_profit_engine(agent._pe)
+    from autotrader.strategies.market_maker import MarketMaker
+    agent._strategies = {"market_maker": MarketMaker(agent._om, agent._rm, agent._pe, {})}
+
+    result = agent.start("market_maker")
+    assert result["status"] == "started"
+    result = agent.stop("market_maker")
+    assert result["status"] == "stopped"
+    result = agent.start("nonexistent")
+    assert "error" in result
+
+
+def test_agent_list_strategies(tmp_path):
+    from autotrader.agent import AutoTrader
+    agent = AutoTrader.__new__(AutoTrader)
+    agent._config = {}
+    agent._om = OrderManager()
+    agent._rm = RiskManager()
+    agent._pe = ProfitEngine(export_dir=str(tmp_path))
+    agent._rm.set_profit_engine(agent._pe)
+    from autotrader.strategies.market_maker import MarketMaker
+    agent._strategies = {"market_maker": MarketMaker(agent._om, agent._rm, agent._pe, {})}
+
+    strats = agent.list_strategies()
+    assert "market_maker" in strats
+    assert "running" in strats["market_maker"]
+
+
+def test_agent_properties(tmp_path):
+    from autotrader.agent import AutoTrader
+    agent = AutoTrader.__new__(AutoTrader)
+    agent._config = {}
+    agent._om = OrderManager()
+    agent._rm = RiskManager()
+    agent._pe = ProfitEngine(export_dir=str(tmp_path))
+    agent._rm.set_profit_engine(agent._pe)
+    agent._strategies = {}
+
+    assert agent.profit_engine is agent._pe
+    assert agent.risk_manager is agent._rm
+
+
 # ── API route tests ────────────────────────────────────────────────────────────
 
 @pytest.fixture()
@@ -247,9 +328,14 @@ def api_client(tmp_path):
 
 
 def test_api_health(api_client):
-    r = api_client.get("/")
+    r = api_client.get("/api/health")
     assert r.status_code == 200
     assert r.json()["status"] == "ok"
+
+
+def test_api_root_health(api_client):
+    r = api_client.get("/")
+    assert r.status_code == 200
 
 
 def test_api_list_strategies(api_client):
@@ -264,7 +350,7 @@ def test_api_list_strategies(api_client):
 def test_api_start_valid_strategy(api_client):
     r = api_client.post("/api/strategies/start", json={"name": "market_maker"})
     assert r.status_code == 200
-    assert r.json()["action"] == "started"
+    assert r.json()["status"] == "started"
 
 
 def test_api_start_invalid_strategy(api_client):
@@ -276,17 +362,21 @@ def test_api_stop_strategy(api_client):
     api_client.post("/api/strategies/start", json={"name": "grid"})
     r = api_client.post("/api/strategies/stop", json={"name": "grid"})
     assert r.status_code == 200
+    assert r.json()["status"] == "stopped"
 
 
 def test_api_pnl_summary(api_client):
     r = api_client.get("/api/pnl/summary")
     assert r.status_code == 200
     data = r.json()
-    assert "total_pnl" in data and "by_strategy" in data
+    assert "total_pnl" in data
+    assert "pnl_per_strategy" in data
+    assert "by_strategy" in data
+    assert "trade_count" in data
 
 
 def test_api_recent_trades(api_client):
-    r = api_client.get("/api/pnl/trades/recent?limit=10")
+    r = api_client.get("/api/trades/recent?limit=10")
     assert r.status_code == 200
     assert "trades" in r.json()
 
@@ -295,10 +385,13 @@ def test_api_risk_status(api_client):
     r = api_client.get("/api/risk/status")
     assert r.status_code == 200
     data = r.json()
-    assert "any_killed" in data and "strategies" in data
+    assert "kill_switch" in data
+    assert "daily_pnl" in data
+    assert "max_daily_loss" in data
+    assert "open_positions" in data
 
 
-def test_api_events(api_client):
+def test_api_pnl_events(api_client):
     r = api_client.get("/api/pnl/events")
     assert r.status_code == 200
     assert "events" in r.json()

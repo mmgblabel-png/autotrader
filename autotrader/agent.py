@@ -41,25 +41,54 @@ class AutoTrader:
         self._register_strategies()
 
     # ------------------------------------------------------------------
+    # Public properties (used by api/server.py)
+    # ------------------------------------------------------------------
+
+    @property
+    def profit_engine(self) -> "ProfitEngine":
+        return self._pe
+
+    @property
+    def risk_manager(self) -> "RiskManager":
+        return self._rm
+
+    # ------------------------------------------------------------------
     # Public API
     # ------------------------------------------------------------------
 
-    def start(self, name: Optional[str] = None) -> None:
+    def start(self, name: Optional[str] = None) -> dict:
         targets = [name] if name else list(self._strategies.keys())
+        results = []
         for n in targets:
             if n in self._strategies:
                 self._strategies[n].start()
                 log.info("Strategy '%s' started.", n)
+                results.append({"strategy": n, "status": "started"})
             else:
                 log.warning("Unknown strategy '%s'.", n)
+                results.append({"strategy": n, "error": "unknown strategy"})
+        # Return single dict when one strategy was targeted (API-friendly)
+        return results[0] if name else {"started": [r["strategy"] for r in results if "status" in r]}
 
-    def stop(self, name: Optional[str] = None) -> None:
+    def stop(self, name: Optional[str] = None) -> dict:
         targets = [name] if name else list(self._strategies.keys())
+        results = []
         for n in targets:
             if n in self._strategies:
                 self._strategies[n].stop()
                 log.info("Strategy '%s' stopped.", n)
+                results.append({"strategy": n, "status": "stopped"})
+            else:
+                log.warning("Unknown strategy '%s'.", n)
+                results.append({"strategy": n, "error": "unknown strategy"})
+        return results[0] if name else {"stopped": [r["strategy"] for r in results if "status" in r]}
 
+    def list_strategies(self) -> dict:
+        """Return {name: {running: bool}} — used by api/server.py."""
+        return {
+            name: {"running": strat.is_running}
+            for name, strat in self._strategies.items()
+        }
     def tick_all(self) -> None:
         """Call once per market-data update (or loop iteration)."""
         for strat in self._strategies.values():
@@ -73,7 +102,7 @@ class AutoTrader:
         }
 
     def pnl(self) -> dict:
-        return self._pe.summary()
+        return self._pe.as_summary()
 
     def export_pnl(self, fmt: str = "json") -> str:
         if fmt == "csv":

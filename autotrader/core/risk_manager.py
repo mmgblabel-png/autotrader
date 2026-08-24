@@ -101,22 +101,35 @@ class RiskManager:
     def status(self) -> dict:
         """Return a dashboard-ready risk status dict.
 
-        Top-level keys:
-            ``any_killed``  – True if any strategy's kill-switch is active.
-            ``strategies``  – per-strategy breakdown.
+        Top-level keys (flat, for simple dashboard consumption):
+            ``daily_pnl``       – aggregate net daily PnL (negative = loss).
+            ``max_daily_loss``  – lowest configured max_daily_loss across all strategies.
+            ``kill_switch``     – True if any strategy's kill-switch is active.
+            ``open_positions``  – placeholder (populated by connectors in production).
+            ``any_killed``      – same as ``kill_switch`` (alias).
+            ``strategies``      – per-strategy breakdown.
         """
         strategies: Dict[str, dict] = {}
         for key, cfg in self._configs.items():
             strategies[key] = {
-                "daily_pnl": -self._daily_loss.get(key, 0.0),   # negative = loss
+                "daily_pnl": -self._daily_loss.get(key, 0.0),
                 "max_daily_loss": cfg.max_daily_loss,
                 "daily_loss": self._daily_loss.get(key, 0.0),
                 "error_count": self._error_counts.get(key, 0),
                 "max_consecutive_errors": cfg.max_consecutive_errors,
                 "kill_switch": self._killed.get(key, False),
             }
+
+        total_daily_loss = sum(self._daily_loss.values())
+        global_max = min((c.max_daily_loss for c in self._configs.values()), default=50.0)
+        any_killed = any(self._killed.values())
+
         return {
-            "any_killed": any(self._killed.values()),
+            "daily_pnl": round(-total_daily_loss, 4),
+            "max_daily_loss": global_max,
+            "kill_switch": any_killed,
+            "open_positions": {},   # populated by exchange connectors in production
+            "any_killed": any_killed,
             "strategies": strategies,
         }
 

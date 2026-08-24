@@ -11,4 +11,4 @@ router = APIRouter(prefix="/api/risk", tags=["risk"])
 
 @router.get("/status", summary="Per-strategy risk status (daily loss, kill-switch)")
 def risk_status() -> dict:
-    return get_agent()._rm.status()
+    return get_agent().risk_manager.status()

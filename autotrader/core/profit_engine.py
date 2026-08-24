@@ -114,6 +114,7 @@ class ProfitEngine:
 
             {
                 "total_pnl": 42.5,
+                "pnl_per_strategy": {"MarketMaker": 10.0, ...},
                 "total_fees": 1.2,
                 "trade_count": 18,
                 "by_strategy": {
@@ -123,13 +124,13 @@ class ProfitEngine:
             }
         """
         by_strategy = self.summary()
-        total_pnl = sum(s["net_pnl"] for s in by_strategy.values())
-        total_fees = sum(s["total_fees"] for s in by_strategy.values())
-        trade_count = sum(s["num_trades"] for s in by_strategy.values())
         return {
-            "total_pnl": round(total_pnl, 4),
-            "total_fees": round(total_fees, 4),
-            "trade_count": trade_count,
+            "total_pnl": self.total_pnl(),
+            "pnl_per_strategy": self.pnl_per_strategy(),
+            "total_fees": round(sum(s["total_fees"] for s in by_strategy.values()), 4),
+            "trade_count": len(list(
+                t for s in self._stats.values() for t in s.trades
+            )),
             "by_strategy": by_strategy,
         }
 
@@ -145,7 +146,35 @@ class ProfitEngine:
         """Return the most recent ``limit`` events (risk + large PnL)."""
         return list(reversed(self._events[-limit:]))
 
+    def last_trades(self, n: int) -> List[dict]:
+        """Return the last ``n`` trades across all strategies (alias for ``recent_trades``)."""
+        return self.recent_trades(limit=n)
+
+    def total_pnl(self) -> float:
+        """Return aggregate net PnL across all strategies."""
+        return round(sum(s.net_pnl for s in self._stats.values()), 4)
+
+    def pnl_per_strategy(self) -> Dict[str, float]:
+        """Return {strategy: net_pnl} mapping."""
+        return {k: round(s.net_pnl, 4) for k, s in self._stats.items()}
+
     def summary(self) -> Dict[str, dict]:
+        """Return per-strategy stats dict (used internally and by tests)."""
+        return {
+            strat: {
+                "realized_pnl": s.realized_pnl,
+                "unrealized_pnl": s.unrealized_pnl,
+                "net_pnl": s.net_pnl,
+                "total_fees": s.total_fees,
+                "wins": s.wins,
+                "losses": s.losses,
+                "winrate_pct": round(s.winrate, 2),
+                "num_trades": len(s.trades),
+            }
+            for strat, s in self._stats.items()
+        }
+
+
         return {
             strat: {
                 "realized_pnl": s.realized_pnl,
