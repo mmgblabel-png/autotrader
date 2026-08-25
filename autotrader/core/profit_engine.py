@@ -26,6 +26,7 @@ class Trade:
     price: float
     fee: float = 0.0
     timestamp: float = field(default_factory=time.time)
+    _recorded_order: int = field(default=-1, init=False, repr=False, compare=False)
 
     @property
     def notional(self) -> float:
@@ -70,6 +71,7 @@ class ProfitEngine:
         self._stats: Dict[str, StrategyStats] = {}
         self._export_dir = export_dir
         self._events: List[dict] = []          # event log (risk + large PnL)
+        self._trade_sequence = 0
         os.makedirs(export_dir, exist_ok=True)
 
     # ------------------------------------------------------------------
@@ -78,6 +80,8 @@ class ProfitEngine:
 
     def record_trade(self, trade: Trade) -> None:
         stats = self._ensure(trade.strategy)
+        trade._recorded_order = self._trade_sequence
+        self._trade_sequence += 1
         stats.trades.append(trade)
         stats.total_fees += trade.fee
         log.info("[%s] Trade recorded: %s %s %.4f @ %.4f (fee=%.4f)",
@@ -139,7 +143,10 @@ class ProfitEngine:
         all_trades: List[Trade] = []
         for s in self._stats.values():
             all_trades.extend(s.trades)
-        all_trades.sort(key=lambda t: t.timestamp, reverse=True)
+        all_trades.sort(
+            key=lambda t: (t.timestamp, t._recorded_order),
+            reverse=True,
+        )
         return [t.as_dict() for t in all_trades[:limit]]
 
     def events(self, limit: int = 100) -> List[dict]:
@@ -174,20 +181,6 @@ class ProfitEngine:
             for strat, s in self._stats.items()
         }
 
-
-        return {
-            strat: {
-                "realized_pnl": s.realized_pnl,
-                "unrealized_pnl": s.unrealized_pnl,
-                "net_pnl": s.net_pnl,
-                "total_fees": s.total_fees,
-                "wins": s.wins,
-                "losses": s.losses,
-                "winrate_pct": round(s.winrate, 2),
-                "num_trades": len(s.trades),
-            }
-            for strat, s in self._stats.items()
-        }
 
     # ------------------------------------------------------------------
     # Exports
