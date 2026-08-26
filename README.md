@@ -242,6 +242,18 @@ python -m campaign_automaton review <artifact-id> \
   --decision approved \
   --reviewer owner \
   --notes "Claims, source gaps, disclosure, destination, and channel rules checked"
+
+# Execute exactly one lease-protected scheduler tick.
+python -m campaign_automaton heartbeat-once
+
+# Inspect content and outbound-action policy gates.
+python -m campaign_automaton policy-check \
+  --channel social \
+  --content "Gegarandeerd 10 kilo in 2 weken zonder moeite!" \
+  --no-add-disclosure
+python -m campaign_automaton action-check \
+  --action publish \
+  --human-confirmed
 ```
 
 Before approval, verify product facts, destination URL, affiliate attribution, disclosure placement, spelling, channel rules, consent requirements, and whether medical context needs professional-advice language.
@@ -457,7 +469,7 @@ python /home/ubuntu/skills/skill-creator/scripts/quick_validate.py \
   /home/ubuntu/skills/paypro-campaign-automaton
 ```
 
-The 17-test suite covers default campaign seeding, full four-agent runs, deterministic fallback, disclosure insertion, unsupported-claim blocking, action blocking, affiliate template substitution, run idempotency, atomic heartbeat execution, event deduplication, direct-identifier rejection, analytics aggregation, campaign cloning, optimization decisions, API authentication, artifact approval, webhook ingestion, and tracked redirects.
+The 18-test suite covers default campaign seeding, full four-agent runs, deterministic fallback, disclosure insertion, unsupported-claim blocking, action blocking, affiliate template substitution, run idempotency, atomic heartbeat execution, event deduplication, direct-identifier rejection, analytics aggregation, campaign cloning, optimization decisions, API authentication, artifact approval, webhook ingestion, and tracked redirects.
 
 ## Troubleshooting
 

@@ -52,6 +52,15 @@ class PolicyEngine:
     def __init__(self, settings: Settings) -> None:
         self.settings = settings
 
+    @staticmethod
+    def _matches_unnegated(pattern: str, text: str) -> bool:
+        for match in re.finditer(pattern, text, re.IGNORECASE | re.DOTALL):
+            prefix = text[max(0, match.start() - 20) : match.start()]
+            if re.search(r"(?:geen|niet)\s+$", prefix, re.IGNORECASE):
+                continue
+            return True
+        return False
+
     def evaluate_content(
         self,
         content: str,
@@ -63,7 +72,7 @@ class PolicyEngine:
         findings: list[PolicyFinding] = []
         lowered = content.lower()
         for pattern in self.GUARANTEED_CLAIMS:
-            if re.search(pattern, lowered, re.IGNORECASE | re.DOTALL):
+            if self._matches_unnegated(pattern, lowered):
                 findings.append(
                     PolicyFinding(
                         code="unsupported_weight_loss_claim",

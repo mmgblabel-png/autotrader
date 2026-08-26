@@ -158,3 +158,18 @@ async def test_heartbeat_executes_queued_run_once(runtime):
     second = await runtime.scheduler.tick()
     assert second["executed_runs"] == []
     assert len(runtime.store.latest_heartbeats()) == 2
+
+
+def test_policy_allows_explicit_negation_but_blocks_positive_claim(runtime):
+    allowed = runtime.policy.evaluate_content(
+        "Geen wondermiddel en geen garantie op een bepaald resultaat.",
+        channel="landing_page",
+        sales_intent=True,
+    )
+    blocked = runtime.policy.evaluate_content(
+        "Dit wondermiddel geeft gegarandeerd resultaat.",
+        channel="landing_page",
+        sales_intent=True,
+    )
+    assert allowed.result.allowed is True
+    assert blocked.result.allowed is False

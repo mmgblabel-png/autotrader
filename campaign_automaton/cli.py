@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import asyncio
 import json
 import os
 from typing import Any
@@ -57,6 +58,31 @@ def build_parser() -> argparse.ArgumentParser:
     analytics = sub.add_parser("analytics", help="Show campaign metrics")
     analytics.add_argument("--campaign", default="wegmetdiekilos-bronze")
 
+    sub.add_parser("heartbeat-once", help="Run one scheduler heartbeat tick")
+
+    policy_check = sub.add_parser("policy-check", help="Evaluate content against policy")
+    policy_check.add_argument("--content", required=True)
+    policy_check.add_argument("--channel", choices=[item.value for item in Channel], required=True)
+    policy_check.add_argument("--no-sales-intent", action="store_true")
+    policy_check.add_argument("--no-add-disclosure", action="store_true")
+
+    action_check = sub.add_parser("action-check", help="Evaluate an outbound action gate")
+    action_check.add_argument(
+        "--action",
+        choices=[
+            "publish",
+            "send_email",
+            "send_dm",
+            "post_social",
+            "scrape_profiles",
+            "buy_leads",
+            "unsolicited_email",
+            "unsolicited_dm",
+        ],
+        required=True,
+    )
+    action_check.add_argument("--human-confirmed", action="store_true")
+
     review = sub.add_parser("review", help="Approve or reject an artifact")
     review.add_argument("artifact_id")
     review.add_argument("--decision", choices=["approved", "rejected"], required=True)
@@ -105,6 +131,22 @@ def main() -> None:
     elif args.command == "analytics":
         campaign = runtime.store.get_campaign(args.campaign)
         _print(runtime.store.campaign_metrics(campaign["id"]))
+    elif args.command == "heartbeat-once":
+        _print(asyncio.run(runtime.scheduler.tick()))
+    elif args.command == "policy-check":
+        evaluated = runtime.policy.evaluate_content(
+            args.content,
+            channel=args.channel,
+            sales_intent=not args.no_sales_intent,
+            add_disclosure=not args.no_add_disclosure,
+        )
+        _print({"content": evaluated.content, "policy": evaluated.result.model_dump(mode="json")})
+    elif args.command == "action-check":
+        _print(
+            runtime.policy.evaluate_action(
+                args.action, {"human_confirmed": args.human_confirmed}
+            ).model_dump(mode="json")
+        )
     elif args.command == "review":
         payload = ApprovalRequest(
             decision=ArtifactStatus(args.decision), reviewer=args.reviewer, notes=args.notes
