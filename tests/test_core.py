@@ -197,3 +197,24 @@ def test_policy_allows_explicit_negation_but_blocks_positive_claim(runtime):
     )
     assert allowed.result.allowed is True
     assert blocked.result.allowed is False
+
+
+async def test_scheduled_occurrence_has_its_own_idempotency_key(settings):
+    live_runtime = build_runtime(replace(settings, auto_run_due_campaigns=True))
+    manual = live_runtime.orchestrator.run_now(
+        "wegmetdiekilos-bronze", RunRequest(workflow="full_campaign", force=False)
+    )
+    campaign = live_runtime.store.get_campaign("wegmetdiekilos-bronze")
+    live_runtime.store.update_campaign(
+        campaign["slug"], CampaignUpdate(status=CampaignStatus.ACTIVE)
+    )
+    live_runtime.store.set_next_run(campaign["id"], "2000-01-01T00:00:00+00:00")
+
+    tick = await live_runtime.scheduler.tick()
+
+    assert tick["status"] == "ok"
+    assert len(tick["executed_runs"]) == 1
+    runs = live_runtime.store.list_runs(campaign["id"])
+    full_campaign_runs = [item for item in runs if item["workflow"] == "full_campaign"]
+    assert len(full_campaign_runs) == 2
+    assert manual["id"] != tick["executed_runs"][0]

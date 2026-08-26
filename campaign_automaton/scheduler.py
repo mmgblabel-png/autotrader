@@ -75,7 +75,12 @@ class HeartbeatScheduler:
                         channels=campaign["channels"],
                         force=False,
                     )
-                    run, created = self.orchestrator.queue_run(campaign["slug"], request)
+                    occurrence_key = campaign["next_run_at"] or campaign["updated_at"]
+                    run, created = self.orchestrator.queue_run(
+                        campaign["slug"],
+                        request,
+                        idempotency_key=f"scheduled:{campaign['id']}:{occurrence_key}",
+                    )
                     if created:
                         result = await asyncio.to_thread(
                             self.orchestrator.execute_run, run["id"]
