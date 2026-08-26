@@ -298,7 +298,8 @@ def test_agent_properties(tmp_path):
 # ── API route tests ────────────────────────────────────────────────────────────
 
 @pytest.fixture()
-def api_client(tmp_path):
+def api_client(tmp_path, monkeypatch):
+    monkeypatch.setenv("AUTOTRADER_CONTROL_TOKEN", "test-control-token")
     import autotrader.api.deps as deps
     from autotrader.agent import AutoTrader
     from autotrader.api.server import app
@@ -321,7 +322,11 @@ def api_client(tmp_path):
             deps._agent._om, deps._agent._rm, deps._agent._pe, {}
         )
 
-    with TestClient(app, raise_server_exceptions=True) as client:
+    with TestClient(
+        app,
+        raise_server_exceptions=True,
+        headers={"X-AutoTrader-Token": "test-control-token"},
+    ) as client:
         yield client
 
     deps._agent = None
@@ -371,6 +376,15 @@ def test_api_start_invalid_strategy(api_client):
     assert r.status_code == 422
 
 
+def test_api_strategy_control_rejects_invalid_token(api_client):
+    response = api_client.post(
+        "/api/strategies/start",
+        json={"name": "market_maker"},
+        headers={"X-AutoTrader-Token": "wrong-token"},
+    )
+    assert response.status_code == 401
+
+
 def test_api_stop_strategy(api_client):
     api_client.post("/api/strategies/start", json={"name": "grid"})
     r = api_client.post("/api/strategies/stop", json={"name": "grid"})
@@ -408,3 +422,56 @@ def test_api_pnl_events(api_client):
     r = api_client.get("/api/pnl/events")
     assert r.status_code == 200
     assert "events" in r.json()
+
+
+def test_api_health_reports_paper_runtime(api_client):
+    response = api_client.get("/api/health")
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["mode"] == "paper"
+    assert payload["runtime"]["ticker_running"] is True
+    assert payload["runtime"]["tick_interval_seconds"] >= 0.1
+
+
+def test_api_recent_trades_rejects_out_of_range_limit(api_client):
+    assert api_client.get("/api/trades/recent?limit=0").status_code == 422
+    assert api_client.get("/api/trades/recent?limit=201").status_code == 422
+
+
+def test_api_pnl_events_rejects_out_of_range_limit(api_client):
+    assert api_client.get("/api/pnl/events?limit=0").status_code == 422
+    assert api_client.get("/api/pnl/events?limit=201").status_code == 422
+
+
+def test_api_pnl_summary_matches_dashboard_strategy_shape(api_client):
+    response = api_client.get("/api/pnl/summary")
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["mode"] == "paper"
+    assert isinstance(payload["pnl_per_strategy"], list)
+    rows = {row["name"]: row for row in payload["pnl_per_strategy"]}
+    assert set(rows) == {"market_maker", "arbitrage", "grid", "sniper"}
+    assert rows["market_maker"]["status"] == "stopped"
+    assert "pnl_by_strategy" in payload
+
+
+def test_api_dashboard_compatibility_routes(api_client):
+    events = api_client.get("/api/events")
+    assert events.status_code == 200
+    assert isinstance(events.json(), list)
+
+    history = api_client.get("/api/pnl/history")
+    assert history.status_code == 200
+    assert history.json() == {"history": []}
+
+    credits = api_client.get("/api/wallet/credits?address=0xnot-used")
+    assert credits.status_code == 200
+    assert credits.json() == {"credits": 0, "mode": "paper"}
+
+
+def test_api_risk_status_marks_paper_mode(api_client):
+    response = api_client.get("/api/risk/status")
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["mode"] == "paper"
+    assert payload["slippage_alerts"] == []
