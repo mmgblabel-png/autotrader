@@ -62,3 +62,17 @@ After explicit owner confirmation, production settings were changed to `DRAFT_ON
 The deterministic initial website workflow generated four artifacts. Two website artifacts passed policy review and were approved under the `owner-authorized-publish` reviewer identity: `925815e1-70ec-4363-b9fb-143a532c762c` (`landing_page_copy`) and `c7ebd584-c341-487e-8a44-2d68e8545024` (`blog_article`). Both include the affiliate disclosure and medical-context caution. The website is publicly available at `/site/wegmetdiekilos-bronze`.
 
 Live verification returned health `ok`, publisher status `enabled=true` with two approved publishable artifact types, and HTTP 302 from the first-party tracking route to the verified PayPro URL with `utm_source=website-live-verification`, `utm_medium=affiliate`, `utm_campaign=wegmetdiekilos-bronze`, and `utm_content=hero-cta`. The public page was also visually inspected and correctly displayed the hero, conservative claims, disclosure, approved landing content, and article link.
+
+
+## Conservative multi-product portfolio publication — 2026-08-26/27 CEST
+
+The owner explicitly authorized publication of the conservative portfolio after private policy review. The following campaigns are now active and publicly represented in the self-hosted portfolio:
+
+| Campaign | PayPro destination verified from authenticated detail | Public-page approval | Next scheduled run |
+|---|---|---|---|
+| `practice-happy-yoga` | `https://www.paypro.nl/producten/Maandabonnement_-_Practice_Happy_with_Yoga/57261/183297` | Approved landing artifact `e0a5eeb1-ce81-4510-9845-a81f75afa316` and blog artifact `2342b063-4d86-4243-952c-fff8f579c1c0` | 2026-08-27T22:00:00+00:00 (00:00 Europe/Amsterdam) |
+| `online-cursus-fermenteren` | `https://www.paypro.nl/producten/Online_Cursus_Fermenteren/90133/183297` | Approved landing artifact `15f10757-85fd-4f65-bb6b-6fb6703446f3` and blog artifact `21d47dc5-5354-4d50-9375-5ac519e83122` | 2026-08-27T22:00:00+00:00 (00:00 Europe/Amsterdam) |
+
+Both products were verified through independent first-party redirects. The Yoga destination returned the account-issued PayPro URL with `utm_campaign=practice-happy-yoga`; the Fermenteren destination returned the account-issued PayPro URL with `utm_campaign=online-cursus-fermenteren`. Each check created one explicitly labelled `internal-verification` click event only.
+
+The public portfolio index is available at `/site` and lists the original WegMetDieKilos page plus these two owner-approved product pages. The website publisher still exposes only policy-cleared, owner-approved landing and blog artifacts. Email and social drafts remain private and were not published or sent.

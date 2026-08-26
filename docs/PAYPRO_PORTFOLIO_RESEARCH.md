@@ -89,3 +89,6 @@ Read-only inspection of authenticated campaign detail `2206` verified the follow
 | Tracking availability | The authenticated page displays an Affiliate link field for website placement |
 
 The merchant describes a course with more than 35 instructional videos and practical fermentation recipes, and offers a media kit via `https://www.lerenfermenteren.nl/samenwerken`. The merchant’s own “high conversion” and refund-rate statements are not treated as independent performance evidence and will not be repeated as campaign claims. This was an inspection only: no campaign was joined, no terms were accepted, and no affiliate destination was placed into production.
+
+
+Promotion-flow access was initiated only after explicit owner confirmation. The campaign list presents the relevant control as `Promoot campagne`; the web view’s horizontal table control did not expose the button directly, so an alternate PayPro detail-route approach is required to inspect and accept any final enrollment terms. No enrollment state changed at this point.
