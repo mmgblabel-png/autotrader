@@ -20,6 +20,11 @@ MAINNET_MAX_DAILY_USDC      Future offline-policy daily exposure cap; defaults 0
 MAINNET_MAX_DAILY_LOSS_USDC Future offline-policy daily realized-loss cap; defaults 0.
 MAINNET_MAX_SLIPPAGE_BPS    Future offline-policy slippage cap; defaults 0.
 MAINNET_MAX_GAS_ETH         Future offline-policy fee cap; defaults 0.
+MAINNET_QUOTE_PROPOSALS_ENABLED  Explicit quote-proposal flag; defaults false.
+MAINNET_QUOTE_TTL_SECONDS        Bounded quote-proposal TTL; defaults 30.
+UNISWAP_API_KEY                  Server-only Uniswap quote API credential.
+DATABASE_URL                     Railway PostgreSQL connection URL.
+AUTOTRADER_QUOTE_PROPOSAL_TOKEN  Required shared secret for quote proposals.
 
 The Mainnet settings configure only the non-executing proposal validator. They
 never add a wallet, approval, signing, or broadcast capability.
@@ -37,8 +42,10 @@ import hmac
 import os
 import time
 from typing import Final
+from uuid import UUID
 
 from fastapi import Body, Depends, FastAPI, Header, HTTPException, Query
+from pydantic import BaseModel, Field
 from fastapi.middleware.cors import CORSMiddleware
 from slowapi import Limiter, _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
@@ -47,8 +54,21 @@ from slowapi.util import get_remote_address
 
 from autotrader.agent import AutoTrader
 from autotrader.api.deps import get_agent, init_agent
-from autotrader.blockchain.mainnet_policy import MainnetExecutionPolicy
+from autotrader.blockchain.mainnet_policy import MainnetExecutionPolicy, PolicyViolation
 from autotrader.core.logger import get_logger
+from autotrader.ledger.quote_proposals import (
+    LedgerPolicyViolation,
+    LedgerUnavailable,
+    QuoteProposalDisabled,
+    QuoteProposalRequest,
+    QuoteProposalService,
+    QuoteProposalValidationError,
+)
+from autotrader.quotes.uniswap import (
+    QuoteProviderProtocolError,
+    QuoteProviderRejected,
+    QuoteProviderUnavailable,
+)
 
 log = get_logger("api.server")
 
@@ -99,6 +119,30 @@ def _require_control_token(
         )
     if not x_autotrader_token or not hmac.compare_digest(x_autotrader_token, expected):
         raise HTTPException(status_code=401, detail="Invalid strategy-control token.")
+
+
+def _require_quote_proposal_token(
+    x_autotrader_quote_token: str | None = Header(default=None),
+) -> None:
+    """Protect quote creation; do not make the authenticated provider a public proxy."""
+    expected = os.getenv("AUTOTRADER_QUOTE_PROPOSAL_TOKEN")
+    if not expected:
+        raise HTTPException(
+            status_code=503,
+            detail="Quote proposals are disabled until AUTOTRADER_QUOTE_PROPOSAL_TOKEN is set.",
+        )
+    if not x_autotrader_quote_token or not hmac.compare_digest(
+        x_autotrader_quote_token, expected
+    ):
+        raise HTTPException(status_code=401, detail="Invalid quote-proposal token.")
+
+
+class QuoteProposalPayload(BaseModel):
+    """Public quote request.  No token contract, router, calldata, or chain override is accepted."""
+
+    swapper_address: str = Field(min_length=42, max_length=42)
+    amount_in_usdc: str = Field(min_length=1, max_length=40)
+    slippage_bps: int = Field(ge=0, le=100)
 
 
 async def _tick_loop(app: FastAPI, agent: AutoTrader) -> None:
@@ -328,7 +372,77 @@ def mainnet_safety():
     }
 
 
-# ── Health ────────────────────────────────────────────────────────────────────
+
+
+@app.get("/api/mainnet/quote-proposals/status", tags=["mainnet"])
+def quote_proposal_status():
+    """Expose only non-secret availability state for the disabled quote subsystem."""
+    service = QuoteProposalService()
+    return {
+        "enabled": os.getenv("MAINNET_QUOTE_PROPOSALS_ENABLED", "false").strip().lower() == "true",
+        "provider": "uniswap",
+        "provider_configured": service._quote_client.configured,
+        "ledger_configured": service._ledger.configured,
+        "execution_capability": "not_implemented",
+        "approval_capability": "not_implemented",
+        "broadcast_capability": "not_implemented",
+    }
+
+
+@app.post("/api/mainnet/quote-proposals", tags=["mainnet"], status_code=201)
+async def create_quote_proposal(
+    payload: QuoteProposalPayload,
+    idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
+    _: None = Depends(_require_quote_proposal_token),
+):
+    """Create a policy-gated Base USDC→WETH quote proposal and durable reservation.
+
+    This endpoint never returns an approval message, transaction calldata, a
+    signature request, a transaction hash, or any wallet-execution capability.
+    """
+    if not idempotency_key:
+        raise HTTPException(status_code=400, detail="Idempotency-Key header is required.")
+    try:
+        key = UUID(idempotency_key)
+    except (TypeError, ValueError) as exc:
+        raise HTTPException(status_code=400, detail="Idempotency-Key must be a UUID.") from exc
+
+    service = QuoteProposalService()
+    try:
+        record = await service.create(
+            request=QuoteProposalRequest(**payload.model_dump()), idempotency_key=key
+        )
+    except QuoteProposalDisabled as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except (QuoteProposalValidationError, PolicyViolation, LedgerPolicyViolation) as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except QuoteProviderRejected as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except (QuoteProviderUnavailable, QuoteProviderProtocolError, LedgerUnavailable) as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+    return {
+        "proposal_id": str(record.proposal_id),
+        "reservation_id": str(record.reservation_id),
+        "risk_date": record.risk_date.isoformat(),
+        "amount_in_usdc": str(record.amount_in_usdc),
+        "amount_in_base_units": str(record.amount_in_base_units),
+        "quoted_amount_out_base_units": str(record.quoted_amount_out_base_units),
+        "min_amount_out_base_units": str(record.min_amount_out_base_units),
+        "estimated_network_fee_wei": str(record.estimated_network_fee_wei),
+        "slippage_bps": record.slippage_bps,
+        "requires_token_approval": record.requires_token_approval,
+        "quoted_at": record.quoted_at.isoformat(),
+        "expires_at": record.expires_at.isoformat(),
+        "status": record.status,
+        "idempotent": record.idempotent,
+        "execution_capability": "not_implemented",
+        "approval_capability": "not_implemented",
+        "broadcast_capability": "not_implemented",
+    }
+
+
+# ── Health ───────────────────────────────────────────────────────────────────
 
 @app.get("/api/health", tags=["health"])
 @app.get("/", tags=["health"])

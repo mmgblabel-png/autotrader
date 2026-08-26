@@ -156,6 +156,51 @@ class MainnetExecutionPolicy:
             "execution_capability": "not_implemented",
         }
 
+    def validate_quote_request(
+        self,
+        *,
+        chain_id: int,
+        token_in: str,
+        token_out: str,
+        router: str,
+        amount_in_usdc: Decimal,
+        slippage_bps: int,
+    ) -> None:
+        """Fail closed before making an authenticated external quote request.
+
+        This preflight deliberately evaluates only information known before a
+        provider response.  The durable PostgreSQL transaction later enforces
+        daily exposure and realised-loss state atomically, while ``validate``
+        validates the quoted minimum output, fee, and TTL after parsing.
+        """
+        if not self.execution_enabled:
+            raise PolicyViolation("Mainnet execution is disabled by policy.")
+        if self.emergency_stop:
+            raise PolicyViolation("Emergency stop is active.")
+        if chain_id != BASE_MAINNET_CHAIN_ID:
+            raise PolicyViolation("Proposal chain must be Base Mainnet (8453).")
+        token_in = _address(token_in)
+        token_out = _address(token_out)
+        router = _address(router)
+        if (token_in, token_out) not in self.allowed_pairs:
+            raise PolicyViolation("Token pair is not allowlisted.")
+        if router != _address(self.allowed_router):
+            raise PolicyViolation("Router is not allowlisted.")
+        if amount_in_usdc <= 0:
+            raise PolicyViolation("Input amount must be positive.")
+        if self.max_trade_usdc <= 0:
+            raise PolicyViolation("Per-trade cap is unset; execution is fail-closed.")
+        if amount_in_usdc > self.max_trade_usdc:
+            raise PolicyViolation("Input amount exceeds the per-trade cap.")
+        if self.max_daily_usdc <= 0:
+            raise PolicyViolation("Daily exposure cap is unset; execution is fail-closed.")
+        if self.max_daily_loss_usdc <= 0:
+            raise PolicyViolation("Daily loss cap is unset; execution is fail-closed.")
+        if not 0 <= slippage_bps <= self.max_slippage_bps:
+            raise PolicyViolation("Slippage is outside the policy bound.")
+        if self.max_network_fee_eth <= 0:
+            raise PolicyViolation("Network-fee cap is unset; execution is fail-closed.")
+
     def validate(
         self,
         intent: TradeIntent,
@@ -208,7 +253,9 @@ class MainnetExecutionPolicy:
             raise PolicyViolation("Slippage is outside the policy bound.")
         if self.max_network_fee_eth <= 0:
             raise PolicyViolation("Network-fee cap is unset; execution is fail-closed.")
-        if intent.estimated_network_fee_eth < 0 or intent.estimated_network_fee_eth > self.max_network_fee_eth:
+        if intent.estimated_network_fee_eth <= 0:
+            raise PolicyViolation("Estimated network fee must be positive.")
+        if intent.estimated_network_fee_eth > self.max_network_fee_eth:
             raise PolicyViolation("Estimated network fee exceeds the policy cap.")
         if intent.quoted_at_epoch > now:
             raise PolicyViolation("Quote timestamp cannot be in the future.")
