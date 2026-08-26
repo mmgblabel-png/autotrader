@@ -1,6 +1,6 @@
 # AutoTrader – Automaton Trading Agent
 
-A modular, headless automated trading agent inspired by Hummingbot's architecture.
+A modular, headless **paper-trading** backend inspired by Hummingbot's architecture. The current strategies, exchange connectors, and blockchain services are simulations or interface stubs; this repository does **not** place live exchange orders or execute MetaMask transactions.
 
 ## Project structure
 
@@ -54,18 +54,20 @@ python main.py --config /path/to/config.yaml --tick-interval 2.0
 
 ### Railway deployment
 
-Railway detects the root `Procfile` and starts the API with `app:app`.
-The health check is available at `/api/health`; the simple strategy status
-check is available at `/strategies/status`.
+Railway detects the root `Procfile` and starts the API with `app:app`. On startup the API creates a controlled background tick loop, so strategies started through the API now advance without a separate `main.py` process. This process remains **paper mode**: its order, PnL, and risk output are simulated.
+
+The health check is available at `/api/health`; it includes `mode: "paper"` plus the tick-loop state. The simple strategy status check is available at `/strategies/status`.
 
 ```bash
 pip install -r requirements.txt
 uvicorn app:app --host 0.0.0.0 --port 8000
 ```
 
-Set `CORS_ORIGINS` to a comma-separated list of trusted dashboard origins in
-production. Keep wallet and RPC credentials in Railway environment variables;
-never commit them to the repository.
+Set `CORS_ORIGINS` to a comma-separated list of trusted dashboard origins in production. Use `AUTOTRADER_TICK_INTERVAL` to set the background tick interval in seconds; values below `0.1` are clamped. Set `AUTOTRADER_CONTROL_TOKEN` to a long, randomly generated secret in Railway. The dashboard must provide the same value in the `X-Autotrader-Token` request header to call `POST /api/strategies/start` or `POST /api/strategies/stop`; leaving it unset disables those controls.
+
+CORS is not authentication. Keep the token out of frontend source code and do not expose a raw control-token field to a public browser client; a real dashboard still needs server-side session authorization before it can safely proxy those calls.
+
+Do **not** put a MetaMask seed phrase or private key in Railway. MetaMask is a user-controlled browser wallet, not a server-side signing service. [EIP-1193] defines it as a browser provider/wallet boundary; a dapp requests signing through the wallet provider and the user approves or rejects the transaction. [1]
 
 ### CLI commands
 
@@ -131,17 +133,13 @@ strategies:
     max_consecutive_errors: 5   # kill-switch fires after N errors
 ```
 
-## Blockchain / MetaMask (stub)
+## Blockchain / MetaMask (not implemented)
 
-`autotrader/blockchain/wallet_service.py` and `usdc_service.py` contain
-interface stubs.  Fill in the `TODO` sections with your RPC URL and private
-key (via environment variables – **never** commit secrets):
+`autotrader/blockchain/wallet_service.py` and `usdc_service.py` are **interface stubs**. They do not connect to MetaMask, query balances, sign, broadcast, deposit, or withdraw. Likewise, the exchange connectors return placeholder market data and order responses.
 
-```bash
-export RPC_URL="https://mainnet.infura.io/v3/<YOUR_KEY>"
-export WALLET_PRIVATE_KEY="0x…"
-export CHAIN_ID=1
-```
+A safe MetaMask integration requires a browser-based dashboard on `mmgbgames.com/autotrader` that connects through the EIP-1193 provider, reads the selected address and chain, requests an explicit user signature for each prepared transaction, and reacts to `accountsChanged`, `chainChanged`, and rejection errors. MetaMask’s provider API is exposed to the dapp and transaction requests return a hash only after the user approves the wallet prompt. [1]
+
+> A fully unattended strategy cannot rely on a browser extension wallet that requires user approval. Do not replace this approval requirement by exporting a MetaMask private key to a server. A live DEX implementation needs a separately designed, audited execution policy, a selected network and router, exact token/allowance handling, slippage and gas controls, durable order state, and testnet validation before any production launch.
 
 ## Logs
 
@@ -154,4 +152,6 @@ export CHAIN_ID=1
 pytest tests/
 ```
 
-Copy from hummingbot and created my own using AI
+## References
+
+[1] [MetaMask Ethereum Provider API](https://docs.metamask.io/metamask-connect/evm/reference/provider-api/) and [EIP-1193: Ethereum Provider JavaScript API](https://eips.ethereum.org/EIPS/eip-1193)
