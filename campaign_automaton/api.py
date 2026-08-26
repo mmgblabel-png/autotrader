@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hmac
 from contextlib import asynccontextmanager
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Annotated, Any
 
@@ -89,6 +90,7 @@ def create_app() -> FastAPI:
     app.add_middleware(
         CORSMiddleware,
         allow_origins=origins,
+        allow_origin_regex=r"^https://[a-z0-9.-]+\.manus\.(?:space|computer)$",
         allow_credentials=False,
         allow_methods=["GET", "POST", "PATCH", "OPTIONS"],
         allow_headers=["Content-Type", "X-Control-Token", "X-Webhook-Token", "Idempotency-Key"],
@@ -160,6 +162,70 @@ def create_app() -> FastAPI:
             database_ok=runtime.store.health(),
             heartbeat=runtime.scheduler.status(),
         )
+
+    @app.get("/api/public/farm-snapshot", tags=["public"])
+    def public_farm_snapshot(request: Request) -> dict[str, Any]:
+        """Return aggregated public portfolio data for the read-only Event Farm game.
+
+        The endpoint deliberately excludes affiliate destinations, content drafts, audit notes,
+        source metadata, tokens, and personal information. It is safe for a public browser game
+        to request on load and every 60 seconds while the page remains open.
+        """
+        runtime = get_runtime(request)
+        verification_sources = {
+            "railway-live-verification",
+            "website-live-verification",
+            "internal-verification",
+        }
+        campaigns: list[dict[str, Any]] = []
+        totals = {"views": 0, "clicks": 0, "signups": 0, "conversions": 0}
+        for campaign in runtime.store.list_campaigns():
+            if campaign["status"] != "active":
+                continue
+            metrics = runtime.store.campaign_metrics(campaign["id"])
+            sources = {row["source"] for row in metrics["by_source"]}
+            if not sources:
+                data_quality = "no_events"
+            elif sources.issubset(verification_sources):
+                data_quality = "verification_only"
+            else:
+                data_quality = "observed_events"
+            public_metrics = {
+                metric: int(metrics[metric])
+                for metric in ("views", "clicks", "signups", "conversions")
+            }
+            for metric, value in public_metrics.items():
+                totals[metric] += value
+            campaigns.append(
+                {
+                    "slug": campaign["slug"],
+                    "product_name": campaign["product_name"],
+                    "metrics": public_metrics,
+                    "data_quality": data_quality,
+                    "next_run_at": campaign.get("next_run_at"),
+                }
+            )
+        snapshot_quality = (
+            "verification_only"
+            if campaigns and all(row["data_quality"] == "verification_only" for row in campaigns)
+            else "mixed_or_observed"
+        )
+        return {
+            "schema_version": 1,
+            "refreshed_at": datetime.now(UTC).isoformat(),
+            "refresh_interval_seconds": 60,
+            "data_quality": snapshot_quality,
+            "lifecycle": totals,
+            "campaigns": campaigns,
+            "review_window": {
+                "hours": 24,
+                "minimum_views_per_campaign": 100,
+                "minimum_clicks_per_campaign": 20,
+                "recommendation": (
+                    "Collect evidence before proposing a reversible, owner-approved strategy change."
+                ),
+            },
+        }
 
     @app.get("/api/config/status", tags=["health"])
     def config_status(

@@ -38,6 +38,31 @@ def test_health_is_public_and_ready(client: TestClient):
     assert payload["llm_mode"] == "deterministic"
 
 
+def test_public_farm_snapshot_is_token_free_and_aggregated(client: TestClient):
+    activated = client.patch(
+        "/api/campaigns/wegmetdiekilos-bronze",
+        headers=control(),
+        json={"status": "active"},
+    )
+    assert activated.status_code == 200
+    response = client.get("/api/public/farm-snapshot")
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["schema_version"] == 1
+    assert payload["refresh_interval_seconds"] == 60
+    assert payload["lifecycle"] == {
+        "views": 0,
+        "clicks": 0,
+        "signups": 0,
+        "conversions": 0,
+    }
+    campaign = payload["campaigns"][0]
+    assert campaign["slug"] == "wegmetdiekilos-bronze"
+    assert "product_url" not in campaign
+    assert "by_source" not in campaign
+    assert "metadata" not in campaign
+
+
 def test_control_endpoints_require_token(client: TestClient):
     assert client.get("/api/campaigns").status_code == 401
     assert client.get("/api/campaigns", headers={"X-Control-Token": "wrong"}).status_code == 401
