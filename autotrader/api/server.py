@@ -13,6 +13,16 @@ CORS_ORIGINS               Comma-separated allowed dashboard origins.
                            Defaults to http://localhost:3000.
 AUTOTRADER_CONTROL_TOKEN   Required shared secret for strategy start/stop calls.
                            Keep this secret only in the deployment environment.
+MAINNET_EXECUTION_ENABLED   Future offline-policy flag; defaults false.
+MAINNET_EMERGENCY_STOP      Future offline-policy stop; defaults true.
+MAINNET_MAX_TRADE_USDC      Future offline-policy per-trade cap; defaults 0.
+MAINNET_MAX_DAILY_USDC      Future offline-policy daily exposure cap; defaults 0.
+MAINNET_MAX_DAILY_LOSS_USDC Future offline-policy daily realized-loss cap; defaults 0.
+MAINNET_MAX_SLIPPAGE_BPS    Future offline-policy slippage cap; defaults 0.
+MAINNET_MAX_GAS_ETH         Future offline-policy fee cap; defaults 0.
+
+The Mainnet settings configure only the non-executing proposal validator. They
+never add a wallet, approval, signing, or broadcast capability.
 
 This application intentionally operates in paper mode. The included strategy,
 exchange, and blockchain layers are simulations/stubs and must not be presented
@@ -37,6 +47,7 @@ from slowapi.util import get_remote_address
 
 from autotrader.agent import AutoTrader
 from autotrader.api.deps import get_agent, init_agent
+from autotrader.blockchain.mainnet_policy import MainnetExecutionPolicy
 from autotrader.core.logger import get_logger
 
 log = get_logger("api.server")
@@ -259,6 +270,7 @@ def strategies():
 
 
 @app.get("/strategies/status", tags=["strategies"])
+@app.get("/api/strategies/status", tags=["strategies"])
 def strategies_status():
     """Compatibility status shape for simple dashboards and deployment checks."""
     names = {
@@ -294,6 +306,26 @@ def stop_strategy(
     """Stop a paper strategy. Body: ``{\"name\": \"market_maker\"}``."""
     _validate(name)
     return get_agent().stop(name)
+
+
+# ── Base Mainnet readiness (non-executing) ────────────────────────────────────
+
+@app.get("/api/mainnet/safety", tags=["mainnet"])
+def mainnet_safety():
+    """Expose the active, non-secret policy state without enabling execution.
+
+    The policy is loaded server-side from the Railway environment on each
+    request. It exposes only configuration state and always states that signing,
+    approvals, and broadcasting are not implemented in this application.
+    """
+    policy = MainnetExecutionPolicy.from_environment()
+    return {
+        **policy.status(),
+        "mode": "paper",
+        "wallet_capability": "not_implemented",
+        "approval_capability": "not_implemented",
+        "broadcast_capability": "not_implemented",
+    }
 
 
 # ── Health ────────────────────────────────────────────────────────────────────

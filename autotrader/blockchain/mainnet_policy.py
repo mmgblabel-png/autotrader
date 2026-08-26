@@ -1,15 +1,17 @@
 """Fail-closed policy checks for *proposed* Base Mainnet swaps.
 
 This module deliberately does not import a wallet SDK, an RPC client, or a DEX
-SDK. It cannot request a MetaMask signature, issue an ERC-20 approval, or
-broadcast a transaction. Its sole purpose is to reject unsafe proposed
-transactions before a future, separately-audited browser-only signer is built.
+SDK. It cannot request a MetaMask signature, issue an ERC-20 approval, build
+transaction calldata, or broadcast a transaction. Its sole purpose is to reject
+unsafe proposed transactions before a future, separately-audited browser-only
+signer is built.
 """
 
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass, field
-from decimal import Decimal
+from decimal import Decimal, InvalidOperation
 from time import time
 from typing import Final
 
@@ -18,6 +20,7 @@ BASE_USDC: Final[str] = "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913"
 BASE_WETH: Final[str] = "0x4200000000000000000000000000000000000006"
 UNISWAP_V3_SWAP_ROUTER_02: Final[str] = "0x2626664c2603336e57b271c5c0b26f421741e481"
 MAX_PROPOSAL_TTL_SECONDS: Final[int] = 120
+MAX_SLIPPAGE_BPS_HARD_LIMIT: Final[int] = 100
 
 
 class PolicyViolation(ValueError):
@@ -36,6 +39,47 @@ def _address(value: str) -> str:
     except ValueError as exc:
         raise PolicyViolation("Address contains non-hexadecimal characters.") from exc
     return normalised
+
+
+def _env_bool(name: str, default: bool) -> bool:
+    """Read only explicit booleans; malformed values fall back to the safe default."""
+    raw = os.getenv(name)
+    if raw is None:
+        return default
+    value = raw.strip().lower()
+    if value in {"1", "true", "yes", "on"}:
+        return True
+    if value in {"0", "false", "no", "off"}:
+        return False
+    return default
+
+
+def _env_nonnegative_decimal(name: str, default: Decimal = Decimal("0")) -> Decimal:
+    """Read a finite non-negative decimal; malformed values fail closed to zero."""
+    raw = os.getenv(name)
+    if raw is None:
+        return default
+    try:
+        value = Decimal(raw.strip())
+    except (InvalidOperation, AttributeError):
+        return default
+    if not value.is_finite() or value < 0:
+        return default
+    return value
+
+
+def _env_slippage_bps() -> int:
+    """Read a bounded slippage limit; invalid/unsafe values fail closed to zero."""
+    raw = os.getenv("MAINNET_MAX_SLIPPAGE_BPS")
+    if raw is None:
+        return 0
+    try:
+        value = int(raw.strip())
+    except (ValueError, AttributeError):
+        return 0
+    if not 0 <= value <= MAX_SLIPPAGE_BPS_HARD_LIMIT:
+        return 0
+    return value
 
 
 @dataclass(frozen=True)
@@ -59,17 +103,18 @@ class TradeIntent:
 class MainnetExecutionPolicy:
     """A deliberately narrow policy for a future manual USDC/WETH swap flow.
 
-    ``execution_enabled`` and both financial caps default to fail closed. Even if
-    a caller creates an intent that passes policy, this module returns metadata
-    only; actual signing must always be initiated by an explicit user action in
-    MetaMask and is intentionally outside this package.
+    Financial limits use non-negative decimal units: USDC for trade/exposure/loss
+    and ETH for network fee. ``execution_enabled`` and every financial cap
+    default to fail closed. Even if a caller creates an intent that passes this
+    policy, the module returns metadata only; signing is outside this package.
     """
 
     execution_enabled: bool = False
     emergency_stop: bool = True
     max_trade_usdc: Decimal = Decimal("0")
     max_daily_usdc: Decimal = Decimal("0")
-    max_slippage_bps: int = 30
+    max_daily_loss_usdc: Decimal = Decimal("0")
+    max_slippage_bps: int = 0
     max_network_fee_eth: Decimal = Decimal("0")
     allowed_pairs: frozenset[tuple[str, str]] = field(
         default_factory=lambda: frozenset(
@@ -78,8 +123,53 @@ class MainnetExecutionPolicy:
     )
     allowed_router: str = UNISWAP_V3_SWAP_ROUTER_02
 
-    def validate(self, intent: TradeIntent, *, daily_used_usdc: Decimal = Decimal("0"), now_epoch: int | None = None) -> None:
-        """Validate one proposal, raising :class:`PolicyViolation` on any fault."""
+    @classmethod
+    def from_environment(cls) -> "MainnetExecutionPolicy":
+        """Load future Railway policy settings with safe defaults.
+
+        These settings do not create an execution capability. They only configure
+        the offline validator. Invalid values never relax a lock: monetary limits
+        and slippage become zero, while execution remains disabled and the stop
+        remains active unless explicitly set otherwise.
+        """
+        return cls(
+            execution_enabled=_env_bool("MAINNET_EXECUTION_ENABLED", False),
+            emergency_stop=_env_bool("MAINNET_EMERGENCY_STOP", True),
+            max_trade_usdc=_env_nonnegative_decimal("MAINNET_MAX_TRADE_USDC"),
+            max_daily_usdc=_env_nonnegative_decimal("MAINNET_MAX_DAILY_USDC"),
+            max_daily_loss_usdc=_env_nonnegative_decimal("MAINNET_MAX_DAILY_LOSS_USDC"),
+            max_slippage_bps=_env_slippage_bps(),
+            max_network_fee_eth=_env_nonnegative_decimal("MAINNET_MAX_GAS_ETH"),
+        )
+
+    def status(self) -> dict[str, object]:
+        """Return non-secret policy state and state the absent execution capability."""
+        return {
+            "chain_id": BASE_MAINNET_CHAIN_ID,
+            "execution_enabled": self.execution_enabled,
+            "emergency_stop": self.emergency_stop,
+            "max_trade_usdc": str(self.max_trade_usdc),
+            "max_daily_usdc": str(self.max_daily_usdc),
+            "max_daily_loss_usdc": str(self.max_daily_loss_usdc),
+            "max_slippage_bps": self.max_slippage_bps,
+            "max_network_fee_eth": str(self.max_network_fee_eth),
+            "execution_capability": "not_implemented",
+        }
+
+    def validate(
+        self,
+        intent: TradeIntent,
+        *,
+        daily_used_usdc: Decimal = Decimal("0"),
+        daily_realized_loss_usdc: Decimal = Decimal("0"),
+        now_epoch: int | None = None,
+    ) -> None:
+        """Validate a proposal using server-reconciled usage and loss figures.
+
+        A future executor must supply values reconciled from its durable server
+        ledger, not client-provided dashboard data. This validator cannot itself
+        query a wallet, price feed, transaction receipt, or blockchain.
+        """
         now = int(time()) if now_epoch is None else now_epoch
         if not self.execution_enabled:
             raise PolicyViolation("Mainnet execution is disabled by policy.")
@@ -103,9 +193,15 @@ class MainnetExecutionPolicy:
         if intent.amount_in_usdc > self.max_trade_usdc:
             raise PolicyViolation("Input amount exceeds the per-trade cap.")
         if self.max_daily_usdc <= 0:
-            raise PolicyViolation("Daily cap is unset; execution is fail-closed.")
+            raise PolicyViolation("Daily exposure cap is unset; execution is fail-closed.")
         if daily_used_usdc < 0 or daily_used_usdc + intent.amount_in_usdc > self.max_daily_usdc:
             raise PolicyViolation("Input amount exceeds the daily exposure cap.")
+        if self.max_daily_loss_usdc <= 0:
+            raise PolicyViolation("Daily loss cap is unset; execution is fail-closed.")
+        if daily_realized_loss_usdc < 0:
+            raise PolicyViolation("Daily realized loss cannot be negative.")
+        if daily_realized_loss_usdc >= self.max_daily_loss_usdc:
+            raise PolicyViolation("Daily loss stop is active.")
         if intent.min_amount_out <= 0:
             raise PolicyViolation("Minimum output must be positive.")
         if not 0 <= intent.slippage_bps <= self.max_slippage_bps:
