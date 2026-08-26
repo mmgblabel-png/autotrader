@@ -201,7 +201,7 @@ def test_public_site_renders_approved_artifacts_only(publisher_client: TestClien
         f"/site/wegmetdiekilos-bronze/articles/{draft_blog['id']}"
     )
     assert article.status_code == 200
-    assert "Gezond afvallen begint met een plan" in article.text
+    assert "WegMetDieKilos – Bronze Plan: eerst vergelijken" in article.text
     status = publisher_client.get("/api/publisher/status", headers=control())
     assert status.status_code == 200
     assert status.json()["approved_artifact_count"] == 2

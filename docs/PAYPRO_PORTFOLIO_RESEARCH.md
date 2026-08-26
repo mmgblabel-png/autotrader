@@ -50,3 +50,42 @@ The eventual shortlist should favor clear topical relevance, conservative claim 
 | Sunsbest red-light products | The public page contains extensive disease, treatment, wound-healing, anti-ageing, pain, immune, and health-outcome claims. Source: https://www.paypro.nl/producten/Sunsbestnl/119481/8624?ppa=true | Exclude from the current automated portfolio because its product claims substantially exceed the approved non-medical policy boundary. |
 
 The research therefore supports a conservative portfolio of the existing WegMetDieKilos campaign plus potentially one Yoga subscription, the fermenting course, and—only after account-link verification and stronger health safeguards—Mijn Keto Menu. It does not support adding five additional products merely to maximise commission potential.
+
+
+## Authenticated candidate detail — Practice Happy with Yoga
+
+Read-only inspection of authenticated campaign detail `1323` verified the following facts for the monthly Practice Happy with Yoga offer:
+
+| Field | Verified value |
+|---|---|
+| Sale price | €12.50 per month |
+| Commission | €8.00 first term, then €4.00 on later terms |
+| PayPro score | 156 |
+| Merchant | Happy with Yoga B.V. |
+| Cookie lifetime | 30 days |
+| Deeplinking | Allowed |
+| Indirect commission | Yes |
+| Tracking availability | The authenticated campaign detail displays an Affiliate link field labelled for placement on the owner’s website |
+
+The visible page describes an online yoga platform with hundreds of lessons and courses. The detail view confirms that recurring commissions also apply to future terms. This was an inspection only: no promotion campaign was joined, no terms were accepted, and no link was copied into production.
+
+
+The authenticated portfolio was restored after transient browser-control interruptions. At the time of inspection, the conservative Yoga and Fermenteren candidates continued to appear as `Promoot campagne` candidates in the campaign list; no enrollment or promotion-state change was made.
+
+
+## Authenticated candidate detail — Online Cursus Fermenteren
+
+Read-only inspection of authenticated campaign detail `2206` verified the following facts:
+
+| Field | Verified value |
+|---|---|
+| Sale price | €59.00 |
+| Commission | €25.00 per sale |
+| PayPro score | 142 |
+| Merchant | LerenFermenteren.nl |
+| Cookie lifetime | 365 days |
+| Deeplinking | Allowed |
+| Indirect commission | Yes |
+| Tracking availability | The authenticated page displays an Affiliate link field for website placement |
+
+The merchant describes a course with more than 35 instructional videos and practical fermentation recipes, and offers a media kit via `https://www.lerenfermenteren.nl/samenwerken`. The merchant’s own “high conversion” and refund-rate statements are not treated as independent performance evidence and will not be repeated as campaign claims. This was an inspection only: no campaign was joined, no terms were accepted, and no affiliate destination was placed into production.

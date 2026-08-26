@@ -1,4 +1,4 @@
-"""Marketing content agent for approval-gated affiliate drafts."""
+"""Responsible, product-specific campaign marketing drafts."""
 
 from __future__ import annotations
 
@@ -11,84 +11,115 @@ from campaign_automaton.agents.base import BaseAgent
 class MarketingAgent(BaseAgent):
     name = "MarketingAgent"
     objective = (
-        "Create helpful, non-spammy Dutch content drafts that invite an informed next step "
-        "toward the WegMetDieKilos quiz without promising outcomes."
+        "Create helpful, non-spammy Dutch content drafts that describe the current campaign's "
+        "verified product facts, invite an informed next step, and never promise outcomes."
     )
+
+    @staticmethod
+    def _facts(campaign: dict[str, Any]) -> list[str]:
+        facts = [str(item).strip() for item in campaign.get("product_facts", [])]
+        return [fact for fact in facts if fact]
 
     def deterministic(
         self, campaign: dict[str, Any], context: dict[str, Any]
     ) -> dict[str, Any]:
         channels = context.get("requested_channels") or campaign.get("channels", [])
         tracking_urls = context.get("tracking_urls", {})
+        product_name = str(campaign["product_name"])
+        facts = self._facts(campaign)
+        fact_list = "\n".join(f"- {fact}" for fact in facts[:5]) or (
+            "- Controleer de informatie, voorwaarden en privacyverklaring van de aanbieder."
+        )
+        safe_context = (
+            "Deze informatie is bedoeld om rustig te vergelijken en is geen medisch, financieel "
+            "of persoonlijk advies."
+        )
         deliverables: list[dict[str, str]] = []
         for channel in channels:
             link = tracking_urls.get(channel, campaign["product_url"])
             if channel == "blog":
-                title = "Gezond afvallen begint met een plan dat bij je leven past"
+                title = f"{product_name}: eerst vergelijken, dan pas kiezen"
                 content = f"""# {title}
 
-Een nieuwe afslankpoging begint vaak met enthousiasme, maar wordt pas waardevol als de aanpak ook op drukke, gewone dagen uitvoerbaar blijft. Richt je daarom niet op snelle beloften. Kijk eerst naar je huidige routine, de momenten waarop keuzes lastig worden en één kleine gewoonte die je deze week kunt testen.
+Wie zich oriënteert op {product_name} hoeft niet meteen te beslissen. Begin met wat je zoekt, hoeveel tijd je realistisch wilt vrijmaken en welke informatie je nodig hebt om een bewuste keuze te maken. {safe_context}
 
-## Drie vragen voor een realistische start
+## Wat we uit de aanbiederinformatie kunnen bevestigen
 
-1. Welk gedrag wil je verbeteren zonder je hele dag om te gooien?
-2. Welke omgeving of afspraak helpt je om dat gedrag vol te houden?
-3. Hoe beoordeel je voortgang breder dan alleen met het getal op de weegschaal?
+{fact_list}
 
-Een persoonlijk vertrekpunt kan helpen om keuzes overzichtelijk te maken. WegMetDieKilos presenteert een korte quiz die rekening houdt met je leeftijd en je naar een persoonlijk plan leidt. Bekijk rustig of de aanpak bij je past en lees altijd de voorwaarden.
+## Een rustige manier om te beoordelen
 
-[Start de drie-minutenquiz]({link})
+1. Lees de productbeschrijving en voorwaarden volledig.
+2. Vergelijk het aanbod met je eigen doel, budget en beschikbare tijd.
+3. Controleer privacy-, annulerings- en restitutievoorwaarden voordat je beslist.
+4. Vraag gekwalificeerd advies als je medische vragen of bijzondere omstandigheden hebt.
 
-Dit is algemene leefstijlinformatie en geen medisch advies. Bespreek gezondheidsklachten, medicatie, zwangerschap of een eetstoornis met een gekwalificeerde zorgprofessional."""
+[Lees de productinformatie en voorwaarden]({link})
+
+{safe_context}"""
                 kind = "blog_article"
-                data = {"primary_intent": "gezond afvallen", "cta": "quiz"}
+                data = {"primary_intent": "informed_product_research", "cta": "product_information"}
             elif channel == "email":
-                title = "E-maildraft: een haalbare eerste stap"
-                content = f"""Onderwerp: Welke kleine stap past deze week bij jou?
+                title = f"E-maildraft: rustig kennismaken met {product_name}"
+                content = f"""Onderwerp: Past {product_name} bij wat jij zoekt?
 
 Hallo {{voornaam}},
 
-Gezonder leven hoeft niet te beginnen met een perfect schema. Kies één gewoonte die concreet, haalbaar en meetbaar is. Denk aan een vast moment voor een wandeling, een eenvoudige maaltijdvoorbereiding of eerder naar bed gaan.
+Een goed aanbod hoeft niet voor iedereen de juiste keuze te zijn. Neem daarom eerst de tijd om de inhoud, voorwaarden en praktische verwachtingen van {product_name} te bekijken.
 
-Wil je eerst verkennen welk soort plan bij jouw levensfase kan passen? De WegMetDieKilos-quiz duurt volgens de aanbieders ongeveer drie minuten. Bekijk de uitkomst kritisch en controleer de voorwaarden voordat je beslist.
+Wat je kunt controleren:
+{fact_list}
 
-Bekijk de quiz: {link}
+Lees de informatie kritisch en besluit alleen als dit aansluit bij jouw situatie.
 
-Je ontvangt dit bericht omdat je je hebt aangemeld voor leefstijltips. Afmelden kan via de uitschrijflink onderaan iedere e-mail."""
+Bekijk de productinformatie: {link}
+
+{safe_context}
+
+Je ontvangt dit bericht alleen als je je hebt aangemeld voor relevante informatie. Afmelden kan via de uitschrijflink onderaan iedere e-mail."""
                 kind = "email_sequence"
                 data = {"sequence_step": 1, "audience": "opt-in only"}
             elif channel == "social":
-                title = "Social post: kleine stap, persoonlijk vertrekpunt"
-                content = f"""Gezond afvallen begint zelden met een extreme verandering. Welke kleine gewoonte zou jouw week al iets makkelijker maken?
+                title = f"Social draft: rustig vergelijken met {product_name}"
+                content = f"""Niet elk aanbod past bij iedereen. Als je {product_name} verkent, lees dan eerst de inhoud, voorwaarden en praktische verwachtingen.
 
-Wie behoefte heeft aan meer structuur, kan de korte WegMetDieKilos-quiz bekijken en beoordelen of het voorgestelde plan aansluit. Geen snelle belofte, wel een bewust vertrekpunt.
+Een paar feiten uit de aanbiederinformatie:
+{fact_list}
 
-{link}"""
+Bekijk rustig of dit bij je past: {link}
+
+{safe_context}"""
                 kind = "social_post"
                 data = {"format": "organic", "platform_adaptation_required": True}
             elif channel == "landing_page":
-                title = "Landingspagina: ontdek een persoonlijk vertrekpunt"
-                content = f"""# Ontdek welk vertrekpunt bij jouw levensfase past
+                title = f"Landingspagina: {product_name} rustig verkennen"
+                content = f"""# {product_name} rustig verkennen
 
-Geen wondermiddel en geen garantie op een bepaald resultaat. Wel een korte quiz die je helpt verkennen welk persoonlijk afslankplan mogelijk bij je situatie aansluit.
+Geen wondermiddel en geen garantie op een bepaald resultaat. Wel een overzichtelijk vertrekpunt om de productinformatie, voorwaarden en praktische verwachtingen rustig te bekijken.
 
-## Wat je vooraf kunt doen
+## Wat we uit de aanbiederinformatie kunnen bevestigen
 
-- Bepaal welk doel voor jou realistisch en verantwoord voelt.
-- Bekijk of de aanpak past bij je dagelijkse routine.
-- Lees de voorwaarden, privacy-informatie en het restitutiebeleid.
+{fact_list}
+
+## Controleer dit voordat je kiest
+
+- Past de inhoud bij wat je zoekt en bij de tijd die je beschikbaar hebt?
+- Lees de voorwaarden, privacy-informatie en restitutiebeleid.
+- Baseer je keuze niet op testimonials, haast of beloofde uitkomsten.
 - Vraag professioneel advies bij medische vragen of bijzondere omstandigheden.
 
-[Doe de drie-minutenquiz]({link})"""
+[Lees de productinformatie]({link})
+
+{safe_context}"""
                 kind = "landing_page_copy"
-                data = {"cta": "quiz", "claims_level": "conservative"}
+                data = {"cta": "product_information", "claims_level": "conservative"}
             elif channel == "community":
-                title = "Communitybijdrage: waarde-eerst antwoord"
+                title = f"Communitytemplate: relevante context voor {product_name}"
                 content = (
                     "Begin met een inhoudelijk antwoord op de concrete vraag van het lid. "
-                    "Noem een affiliatelink alleen als de communityregels dit toestaan, de link "
-                    "direct relevant is en de affiliaterelatie duidelijk wordt vermeld. Plaats "
-                    "nooit dezelfde reactie in meerdere groepen en stuur geen ongevraagde DM."
+                    f"Noem {product_name} alleen als het direct relevant is, de communityregels dit "
+                    "toestaan en de affiliaterelatie duidelijk wordt vermeld. Plaats nooit dezelfde "
+                    "reactie in meerdere groepen en stuur geen ongevraagde DM."
                 )
                 kind = "community_response_template"
                 data = {"requires_rule_check": True, "requires_question_context": True}
@@ -104,14 +135,14 @@ Geen wondermiddel en geen garantie op een bepaald resultaat. Wel een korte quiz 
                 }
             )
         return {
-            "summary": f"{len(deliverables)} kanaalspecifieke concepten gegenereerd.",
+            "summary": f"{len(deliverables)} product-specifieke concepten gegenereerd voor {product_name}.",
             "confidence": 0.7,
             "assumptions": [
-                "De opgegeven product- en trackinglink is door de eigenaar gecontroleerd.",
-                "De huidige quizpositionering blijft actief.",
+                "De opgegeven productfeiten en trackinglink zijn door de eigenaar gecontroleerd.",
+                "Alle externe publicatie blijft onderworpen aan afzonderlijke eigenaarstoestemming.",
             ],
             "sources_needed": [
-                "Definitieve prijs en Bronze Plan-inhoud voor eventuele uitgebreidere productcopy",
+                "Actuele productvoorwaarden en restitutiebeleid van de aanbieder",
                 "Merkrichtlijnen en goedgekeurde visuele assets",
             ],
             "deliverables": deliverables,

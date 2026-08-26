@@ -230,3 +230,27 @@ def test_analytics_requires_minimum_sample_before_conversion_experiment(runtime)
     assert result["confidence"] == 0.45
     assert "dataset is nog te klein" in result["summary"]
     assert "verbeter nog niets" in result["deliverables"][0]["content"]
+
+
+
+def test_marketing_drafts_are_product_specific(runtime):
+    campaign = runtime.store.get_campaign("wegmetdiekilos-bronze")
+    campaign["product_name"] = "Practice Happy with Yoga"
+    campaign["product_facts"] = [
+        "Online yogaplatform met lessen en cursussen.",
+        "Maandabonnement kost €12,50 per maand.",
+    ]
+    result = runtime.orchestrator.marketing.deterministic(
+        campaign,
+        {
+            "requested_channels": ["landing_page", "blog"],
+            "tracking_urls": {
+                "landing_page": "https://example.test/yoga-landing",
+                "blog": "https://example.test/yoga-blog",
+            },
+        },
+    )
+    content = "\n".join(item["content"] for item in result["deliverables"])
+    assert "Practice Happy with Yoga" in content
+    assert "Online yogaplatform met lessen en cursussen." in content
+    assert "WegMetDieKilos" not in content
