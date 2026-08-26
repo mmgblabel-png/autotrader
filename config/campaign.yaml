@@ -1,0 +1,37 @@
+campaign:
+  name: "WegMetDieKilos – Bronze Plan"
+  slug: "wegmetdiekilos-bronze"
+  product_name: "WegMetDieKilos – Bronze Plan"
+  audience: >-
+    Nederlandstalige volwassenen die op een gezonde, realistische manier willen afvallen
+    en eerst willen onderzoeken of een persoonlijk digitaal plan bij hun levensfase en
+    dagelijkse routine past.
+  market: "Nederland"
+  language: "nl-NL"
+  channels:
+    - blog
+    - email
+    - social
+    - landing_page
+    - community
+  goals:
+    - "Kwalitatieve, vrijwillige bezoekers naar de productquiz leiden"
+    - "Opt-in leads opbouwen met waardevolle leefstijlcontent"
+    - "Klikken en toegestane conversies pseudoniem meten"
+    - "Content iteratief verbeteren op basis van voldoende data"
+  product_facts:
+    - "De huidige bestemming positioneert het aanbod als een app om op een gezonde manier af te vallen."
+    - "De huidige bestemming biedt een persoonlijke start volgens leeftijd."
+    - "De huidige bestemming nodigt bezoekers uit voor een drie-minutenquiz."
+    - "De huidige bestemming toont leeftijdsgroepen 18–25, 26–35, 36–45 en 46+."
+  prohibited_claims:
+    - "Geen gegarandeerd gewichtsverlies of gegarandeerde resultaten."
+    - "Geen concrete kilo's of termijnen zonder verifieerbaar bewijs en juridische goedkeuring."
+    - "Geen medische diagnose, behandeling of genezingsclaims."
+    - "Geen verzonnen testimonials, schaarste, prijzen of productfuncties."
+    - "Geen ongevraagde e-mail, DM, profielscraping of gekochte contactlijsten."
+  schedule_cron: "0 9 * * 1"
+  metadata:
+    owner: "PayPro affiliate operator"
+    mode: "draft_only"
+    source_checked_at: "2026-08-26"

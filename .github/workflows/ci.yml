@@ -1,0 +1,34 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ["3.11", "3.12"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+      - run: pip install -e ".[dev]"
+      - run: pytest
+      - run: ruff check campaign_automaton tests
+      - name: Check committed secret and database files
+        run: |
+          test ! -f .env
+          test -z "$(find . -path ./.git -prune -o \( -name '*.db' -o -name '*.db-wal' -o -name '*.db-shm' \) -print)"
+
+  docker:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: docker build -t paypro-campaign-automaton:ci .
