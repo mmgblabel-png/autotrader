@@ -41,6 +41,7 @@ def settings(tmp_path: Path) -> Settings:
         heartbeat_interval_seconds=30.0,
         auto_run_due_campaigns=False,
         draft_only=True,
+        website_enabled=False,
         log_level="WARNING",
     )
 

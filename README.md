@@ -2,7 +2,7 @@
 
 **WegMetDieKilos PayPro Campaign Automaton** is an approval-gated AI campaign runtime adapted from the architectural ideas in [Conway Research’s Automaton](https://github.com/Conway-Research/automaton). It preserves the useful continuous-loop, heartbeat, persistent-memory, policy, skills, audit, observability, and optimization patterns while replacing wallet, autonomous payment, infrastructure replication, and unrestricted self-modification with safe affiliate campaign workflows.[1]
 
-> The application creates drafts, research plans, SEO plans, analytics reports, and optimization proposals. It does **not** send unsolicited messages, scrape personal profiles, purchase leads, publish autonomously, make medical claims, or guarantee weight-loss outcomes.
+> The application creates drafts, research plans, SEO plans, analytics reports, and optimization proposals. Its optional self-hosted website renders only owner-approved, policy-cleared artifacts after an explicit website opt-in. It does **not** send unsolicited messages, scrape personal profiles, purchase leads, publish through third-party accounts autonomously, make medical claims, or guarantee weight-loss outcomes.
 
 ## What is implemented
 
@@ -499,3 +499,17 @@ The original Conway Automaton repository is MIT-licensed, permitting use, modifi
 [6]: https://docs.railway.com/deployments/reference "Railway Docs — Deployments reference"
 [7]: https://docs.railway.com/infrastructure-as-code "Railway Docs — Infrastructure as Code"
 [8]: https://github.com/Conway-Research/automaton/blob/main/LICENSE "Conway Automaton MIT License"
+
+
+## Self-hosted campaign website
+
+The application can host its own campaign website at `/site/<campaign-slug>` without requiring WordPress or a social-media account. It renders **only the latest owner-approved artifacts that have passed policy review**. Draft, rejected, blocked, and unreviewed artifacts remain inaccessible. Calls to action use the first-party `/r/<campaign-slug>` tracker before the visitor is redirected to the verified PayPro destination.
+
+The website is private by default. Set `WEBSITE_ENABLED=true` only after reviewing the landing-page and blog artifacts and deciding that they may be visible publicly. The protected status endpoint provides the enabled state and publishable artifact types:
+
+```bash
+curl -H "X-Control-Token: $CONTROL_TOKEN" \
+  "$BASE/api/publisher/status"
+```
+
+Set `WEBSITE_ENABLED=false` to hide the public routes immediately; campaign records and approved artifacts are retained in SQLite for later review. Public visibility is distinct from scheduled draft generation and must be approved explicitly by the owner.

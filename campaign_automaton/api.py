@@ -4,11 +4,13 @@ from __future__ import annotations
 
 import hmac
 from contextlib import asynccontextmanager
+from pathlib import Path
 from typing import Annotated, Any
 
 from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request, status
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import RedirectResponse
+from fastapi.responses import HTMLResponse, RedirectResponse
+from fastapi.staticfiles import StaticFiles
 
 from campaign_automaton.models import (
     ApprovalRequest,
@@ -21,6 +23,7 @@ from campaign_automaton.models import (
     TrackingEventCreate,
     WebhookEvent,
 )
+from campaign_automaton.publisher import PublicPublisher
 from campaign_automaton.runtime import Runtime, build_runtime
 from campaign_automaton.store import StoreError
 
@@ -90,6 +93,8 @@ def create_app() -> FastAPI:
         allow_methods=["GET", "POST", "PATCH", "OPTIONS"],
         allow_headers=["Content-Type", "X-Control-Token", "X-Webhook-Token", "Idempotency-Key"],
     )
+    static_dir = Path(__file__).with_name("static")
+    app.mount("/static", StaticFiles(directory=static_dir), name="static")
 
     @app.exception_handler(StoreError)
     async def store_error_handler(_: Request, exc: StoreError):
@@ -107,6 +112,33 @@ def create_app() -> FastAPI:
             "health": "/api/health",
             "mode": "approval-gated",
         }
+
+    @app.get("/site/{campaign_slug}", response_class=HTMLResponse, include_in_schema=False)
+    def public_site(campaign_slug: str, request: Request) -> HTMLResponse:
+        publisher = PublicPublisher(get_runtime(request).settings, get_runtime(request).store)
+        if not publisher.enabled():
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Public site is not enabled.")
+        return HTMLResponse(publisher.home(campaign_slug))
+
+    @app.get("/site/{campaign_slug}/articles/{artifact_id}", response_class=HTMLResponse, include_in_schema=False)
+    def public_article(campaign_slug: str, artifact_id: str, request: Request) -> HTMLResponse:
+        publisher = PublicPublisher(get_runtime(request).settings, get_runtime(request).store)
+        if not publisher.enabled():
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Public site is not enabled.")
+        artifact = publisher.article(campaign_slug, artifact_id)
+        if artifact is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Published article not found.")
+        return HTMLResponse(publisher.article_page(campaign_slug, artifact))
+
+    @app.get("/api/publisher/status", tags=["publisher"])
+    def publisher_status(
+        request: Request,
+        campaign_slug: str = "wegmetdiekilos-bronze",
+        _: None = Depends(require_control),
+    ) -> dict[str, Any]:
+        return PublicPublisher(get_runtime(request).settings, get_runtime(request).store).status(
+            campaign_slug
+        )
 
     @app.get("/api/health", response_model=HealthResponse, tags=["health"])
     def health(request: Request) -> HealthResponse:
@@ -134,6 +166,7 @@ def create_app() -> FastAPI:
             "llm_mode": runtime.llm.mode,
             "llm_model": runtime.settings.llm_model,
             "auto_run_due_campaigns": runtime.settings.auto_run_due_campaigns,
+            "website_enabled": runtime.settings.website_enabled,
             "data_dir": str(runtime.settings.data_dir),
         }
 

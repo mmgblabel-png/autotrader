@@ -142,3 +142,66 @@ def test_clone_campaign_and_decide_optimization(client: TestClient):
     )
     assert decision.status_code == 200
     assert decision.json()["status"] == "accepted"
+
+
+@pytest.fixture()
+def publisher_client(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    root = Path(__file__).resolve().parents[1]
+    monkeypatch.setenv("APP_ENV", "test")
+    monkeypatch.setenv("DATA_DIR", str(tmp_path))
+    monkeypatch.setenv("DATABASE_PATH", str(tmp_path / "publisher.db"))
+    monkeypatch.setenv("CAMPAIGN_CONFIG_PATH", str(root / "config" / "campaign.yaml"))
+    monkeypatch.setenv("PUBLIC_BASE_URL", "http://testserver")
+    monkeypatch.setenv("CONTROL_TOKEN", "test-control-token")
+    monkeypatch.setenv("WEBHOOK_TOKEN", "test-webhook-token")
+    monkeypatch.setenv("LLM_PROVIDER", "deterministic")
+    monkeypatch.setenv("HEARTBEAT_ENABLED", "false")
+    monkeypatch.setenv("WEBSITE_ENABLED", "true")
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    with TestClient(create_app()) as test_client:
+        yield test_client
+
+
+def test_public_site_is_disabled_by_default(client: TestClient):
+    response = client.get("/site/wegmetdiekilos-bronze")
+    assert response.status_code == 404
+
+
+def test_public_site_renders_approved_artifacts_only(publisher_client: TestClient):
+    run = publisher_client.post(
+        "/api/campaigns/wegmetdiekilos-bronze/runs",
+        headers=control(),
+        json={"workflow": "content", "channels": ["landing_page", "blog"], "force": True},
+    )
+    assert run.status_code == 200
+    artifacts = publisher_client.get(
+        "/api/campaigns/wegmetdiekilos-bronze/artifacts", headers=control()
+    ).json()["artifacts"]
+    draft_blog = next(item for item in artifacts if item["artifact_type"] == "blog_article")
+    assert publisher_client.get(
+        f"/site/wegmetdiekilos-bronze/articles/{draft_blog['id']}"
+    ).status_code == 404
+
+    for artifact in artifacts:
+        if artifact["artifact_type"] in {"blog_article", "landing_page_copy"}:
+            reviewed = publisher_client.post(
+                f"/api/artifacts/{artifact['id']}/review",
+                headers=control(),
+                json={"decision": "approved", "reviewer": "test-owner", "notes": "reviewed"},
+            )
+            assert reviewed.status_code == 200
+
+    site = publisher_client.get("/site/wegmetdiekilos-bronze")
+    assert site.status_code == 200
+    assert "Geen wondermiddel en geen garantie" in site.text
+    assert "Affiliate disclosure" in site.text
+    assert "/r/wegmetdiekilos-bronze?src=website-home" in site.text
+
+    article = publisher_client.get(
+        f"/site/wegmetdiekilos-bronze/articles/{draft_blog['id']}"
+    )
+    assert article.status_code == 200
+    assert "Gezond afvallen begint met een plan" in article.text
+    status = publisher_client.get("/api/publisher/status", headers=control())
+    assert status.status_code == 200
+    assert status.json()["approved_artifact_count"] == 2
