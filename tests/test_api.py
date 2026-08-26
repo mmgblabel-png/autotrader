@@ -205,3 +205,38 @@ def test_public_site_renders_approved_artifacts_only(publisher_client: TestClien
     status = publisher_client.get("/api/publisher/status", headers=control())
     assert status.status_code == 200
     assert status.json()["approved_artifact_count"] == 2
+
+
+
+def test_public_portfolio_lists_active_approved_campaigns_only(publisher_client: TestClient):
+    empty_portfolio = publisher_client.get("/site")
+    assert empty_portfolio.status_code == 200
+    assert "WegMetDieKilos" not in empty_portfolio.text
+
+    activated = publisher_client.patch(
+        "/api/campaigns/wegmetdiekilos-bronze",
+        headers=control(),
+        json={"status": "active"},
+    )
+    assert activated.status_code == 200
+    run = publisher_client.post(
+        "/api/campaigns/wegmetdiekilos-bronze/runs",
+        headers=control(),
+        json={"workflow": "content", "channels": ["landing_page"], "force": True},
+    )
+    assert run.status_code == 200
+    artifacts = publisher_client.get(
+        "/api/campaigns/wegmetdiekilos-bronze/artifacts", headers=control()
+    ).json()["artifacts"]
+    landing = next(item for item in artifacts if item["artifact_type"] == "landing_page_copy")
+    approved = publisher_client.post(
+        f"/api/artifacts/{landing['id']}/review",
+        headers=control(),
+        json={"decision": "approved", "reviewer": "test-owner", "notes": "checked"},
+    )
+    assert approved.status_code == 200
+
+    portfolio = publisher_client.get("/site")
+    assert portfolio.status_code == 200
+    assert "WegMetDieKilos – Bronze Plan" in portfolio.text
+    assert "/site/wegmetdiekilos-bronze" in portfolio.text

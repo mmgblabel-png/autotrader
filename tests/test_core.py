@@ -218,3 +218,15 @@ async def test_scheduled_occurrence_has_its_own_idempotency_key(settings):
     full_campaign_runs = [item for item in runs if item["workflow"] == "full_campaign"]
     assert len(full_campaign_runs) == 2
     assert manual["id"] != tick["executed_runs"][0]
+
+
+
+def test_analytics_requires_minimum_sample_before_conversion_experiment(runtime):
+    campaign = runtime.store.get_campaign("wegmetdiekilos-bronze")
+    result = runtime.orchestrator.analytics.deterministic(
+        campaign,
+        {"metrics": {"views": 25, "clicks": 6, "conversions": 0}},
+    )
+    assert result["confidence"] == 0.45
+    assert "dataset is nog te klein" in result["summary"]
+    assert "verbeter nog niets" in result["deliverables"][0]["content"]

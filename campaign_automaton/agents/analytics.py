@@ -28,10 +28,19 @@ class AnalyticsAgent(BaseAgent):
                 "trackinglinks en eventintegratie voordat contentprestaties worden beoordeeld."
             )
             hypothesis = "Valideer de meetketen met testevents voordat een inhoudelijk experiment start."
-        elif clicks and not conversions:
+        elif views < 100 or clicks < 20:
             finding = (
-                "Er zijn klikken maar nog geen geregistreerde conversies. Dit kan aan de "
-                "propositie, landingspagina, meetkoppeling of kleine steekproef liggen."
+                "De dataset is nog te klein voor een betrouwbare omzetconclusie. Verzamel eerst "
+                "minimaal 100 views en 20 klikken per campagne, en controleer de conversiekoppeling."
+            )
+            hypothesis = (
+                "Behoud de huidige goedgekeurde versie als controle en verbeter nog niets op basis "
+                "van deze kleine steekproef."
+            )
+        elif not conversions:
+            finding = (
+                "Er zijn voldoende klikken maar nog geen geregistreerde conversies. Dit kan aan de "
+                "propositie, landingspagina of meetkoppeling liggen."
             )
             hypothesis = (
                 "Test één duidelijker waarde-eerst CTA-variant en verifieer tegelijk de "
@@ -60,7 +69,7 @@ class AnalyticsAgent(BaseAgent):
         }
         return {
             "summary": finding,
-            "confidence": 0.45 if clicks < 20 else 0.7,
+            "confidence": 0.45 if views < 100 or clicks < 20 else 0.7,
             "assumptions": ["Trackingevents zijn correct en niet dubbel geregistreerd."],
             "sources_needed": [
                 "Gevalideerde conversiecallback of periodieke export",

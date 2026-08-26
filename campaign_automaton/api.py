@@ -113,6 +113,13 @@ def create_app() -> FastAPI:
             "mode": "approval-gated",
         }
 
+    @app.get("/site", response_class=HTMLResponse, include_in_schema=False)
+    def public_portfolio(request: Request) -> HTMLResponse:
+        publisher = PublicPublisher(get_runtime(request).settings, get_runtime(request).store)
+        if not publisher.enabled():
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Public site is not enabled.")
+        return HTMLResponse(publisher.portfolio())
+
     @app.get("/site/{campaign_slug}", response_class=HTMLResponse, include_in_schema=False)
     def public_site(campaign_slug: str, request: Request) -> HTMLResponse:
         publisher = PublicPublisher(get_runtime(request).settings, get_runtime(request).store)

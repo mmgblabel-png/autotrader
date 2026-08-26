@@ -176,10 +176,13 @@ class PublicPublisher:
                 return artifact
         return None
 
-    def page(self, campaign_slug: str, body: str, *, title: str, description: str) -> str:
+    def page(
+        self, campaign_slug: str | None, body: str, *, title: str, description: str
+    ) -> str:
         safe_title = html.escape(title)
         safe_description = html.escape(description, quote=True)
         current_year = "2026"
+        home_href = "/site" if campaign_slug is None else f"/site/{html.escape(campaign_slug)}"
         return f"""<!doctype html>
 <html lang="nl">
 <head>
@@ -202,12 +205,12 @@ class PublicPublisher:
     .lede {{ max-width:600px; margin:24px 0 30px; color:#eef7ed; font-size:1.13rem; }} .cta {{ display:inline-flex; padding:13px 18px; align-items:center; border-radius:999px; background:#fff; color:#154c35; text-decoration:none; font-weight:800; }} .cta:hover {{ background:#e9f5e8; }}
     .notice {{ border-left:4px solid var(--gold); background:#fff5de; padding:14px 17px; margin:28px 0; border-radius:0 12px 12px 0; }} .grid {{ display:grid; gap:20px; grid-template-columns:repeat(3,1fr); margin:38px 0; }}
     .card {{ padding:24px; border:1px solid var(--line); border-radius:16px; background:#fff; }} .card h2 {{ font-size:1.25rem; margin:0 0 8px; }} .content {{ width:min(780px,100%); margin:52px auto 0; }} .article-list {{ display:grid; gap:16px; margin-top:28px; }} .article-link {{ display:block; padding:20px; border:1px solid var(--line); border-radius:14px; background:#fff; color:var(--ink); text-decoration:none; }} .article-link:hover {{ border-color:var(--green); }}
-    .affiliate {{ margin-top:40px; padding:20px; border-radius:15px; background:var(--sage); font-size:.93rem; }} footer {{ border-top:1px solid var(--line); padding:28px 0 46px; color:#526057; font-size:.9rem; }} ul,ol {{ padding-left:1.3rem; }}
+    .affiliate {{ margin-top:40px; padding:20px; border-radius:15px; background:var(--sage); font-size:.93rem; }} .portfolio-grid {{ display:grid; gap:18px; grid-template-columns:repeat(auto-fit,minmax(260px,1fr)); margin-top:30px; }} .product-card {{ display:flex; min-height:240px; flex-direction:column; justify-content:space-between; padding:26px; border:1px solid var(--line); border-radius:16px; background:#fff; }} .product-card h2 {{ margin:0 0 10px; font-size:1.45rem; }} .product-card p {{ margin:0 0 20px; color:#526057; }} footer {{ border-top:1px solid var(--line); padding:28px 0 46px; color:#526057; font-size:.9rem; }} ul,ol {{ padding-left:1.3rem; }}
     @media (max-width:760px) {{ .shell {{ width:min(100% - 28px,1120px); }} .grid {{ grid-template-columns:1fr; }} .hero {{ min-height:530px; background-position:68% center; }} .hero-card {{ padding:62px 0; }} .nav span {{ display:none; }} }}
   </style>
 </head>
 <body>
-<header><nav class="nav shell"><a class="brand" href="/site/{html.escape(campaign_slug)}">Rustig vooruit</a><a href="#meer">Meer lezen <span>over een haalbare start</span></a></nav></header>
+<header><nav class="nav shell"><a class="brand" href="{home_href}">Rustig vooruit</a><a href="#meer">Meer lezen <span>over een haalbare start</span></a></nav></header>
 <main>{body}</main>
 <footer><div class="shell">© {current_year} Rustig vooruit · Onafhankelijke leefstijlinformatie. Geen medisch advies.</div></footer>
 </body>
@@ -219,6 +222,43 @@ class PublicPublisher:
         return (
             '<div class="notice"><strong>Transparantie.</strong> '
             f"{html.escape(self.settings.affiliate_disclosure)}</div>"
+        )
+
+    def portfolio(self) -> str:
+        """Render an index of active campaigns that are ready for public display."""
+        cards: list[str] = []
+        for campaign in self.store.list_campaigns():
+            if campaign.get("status") != "active":
+                continue
+            latest = self.latest_by_type(campaign["slug"])
+            if "landing_page_copy" not in latest:
+                continue
+            facts = campaign.get("product_facts") or []
+            summary = ""
+            if facts:
+                first = facts[0]
+                summary = first if isinstance(first, str) else str(first.get("fact", ""))
+            if not summary:
+                summary = "Lees rustig de onafhankelijke toelichting en bepaal of dit aanbod bij je past."
+            cards.append(
+                '<article class="product-card">'
+                f'<div><p class="eyebrow" style="color:#1e6a48">Goedgekeurde keuze</p>'
+                f'<h2>{html.escape(campaign["product_name"])}</h2>'
+                f'<p>{html.escape(summary)}</p></div>'
+                f'<a class="cta" href="/site/{html.escape(campaign["slug"])}">Bekijk de toelichting</a>'
+                "</article>"
+            )
+        products = "".join(cards) or (
+            "<p>Er zijn nog geen eigenaar-goedgekeurde productpagina’s beschikbaar.</p>"
+        )
+        body = f"""
+<section class="hero"><div class="shell hero-card"><p class="eyebrow">Rustig kiezen · Transparant vergelijken</p><h1>Een kleine selectie die je op je eigen tempo kunt verkennen.</h1><p class="lede">Alleen eigenaar-goedgekeurde informatie, duidelijke affiliatevermelding en geen snelle beloften.</p></div></section>
+<section class="content" id="meer"><h2>Goedgekeurde mogelijkheden</h2><p>Elke pagina bevat praktische context, de belangrijkste aandachtspunten en een transparante link. Neem bij medische vragen of bijzondere omstandigheden contact op met een gekwalificeerde professional.</p><div class="portfolio-grid">{products}</div></section>"""
+        return self.page(
+            None,
+            body,
+            title="Rustig vooruit | Goedgekeurde keuzes",
+            description="Een transparante selectie van eigenaar-goedgekeurde leefstijl- en leerproducten.",
         )
 
     def home(self, campaign_slug: str) -> str:
