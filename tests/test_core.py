@@ -475,3 +475,124 @@ def test_api_risk_status_marks_paper_mode(api_client):
     payload = response.json()
     assert payload["mode"] == "paper"
     assert payload["slippage_alerts"] == []
+
+
+# ── Base Mainnet readiness policy (offline, non-custodial) ────────────────────
+
+
+def _mainnet_intent(**overrides):
+    from decimal import Decimal
+
+    from autotrader.blockchain.mainnet_policy import (
+        BASE_MAINNET_CHAIN_ID,
+        BASE_USDC,
+        BASE_WETH,
+        UNISWAP_V3_SWAP_ROUTER_02,
+        TradeIntent,
+    )
+
+    payload = {
+        "proposal_id": "proposal-7dc5b4a9e4c2",
+        "chain_id": BASE_MAINNET_CHAIN_ID,
+        "token_in": BASE_USDC,
+        "token_out": BASE_WETH,
+        "router": UNISWAP_V3_SWAP_ROUTER_02,
+        "amount_in_usdc": Decimal("5"),
+        "min_amount_out": Decimal("0.001"),
+        "quoted_at_epoch": 1_000,
+        "expires_at_epoch": 1_100,
+        "slippage_bps": 20,
+        "estimated_network_fee_eth": Decimal("0.0001"),
+    }
+    payload.update(overrides)
+    return TradeIntent(**payload)
+
+
+def _enabled_mainnet_policy(**overrides):
+    from decimal import Decimal
+
+    from autotrader.blockchain.mainnet_policy import MainnetExecutionPolicy
+
+    payload = {
+        "execution_enabled": True,
+        "emergency_stop": False,
+        "max_trade_usdc": Decimal("10"),
+        "max_daily_usdc": Decimal("25"),
+        "max_slippage_bps": 30,
+        "max_network_fee_eth": Decimal("0.001"),
+    }
+    payload.update(overrides)
+    return MainnetExecutionPolicy(**payload)
+
+
+def test_mainnet_policy_fails_closed_by_default():
+    from autotrader.blockchain.mainnet_policy import MainnetExecutionPolicy, PolicyViolation
+
+    with pytest.raises(PolicyViolation, match="disabled"):
+        MainnetExecutionPolicy().validate(_mainnet_intent(), now_epoch=1_050)
+
+
+def test_mainnet_policy_accepts_bounded_allowlisted_metadata_only_intent():
+    policy = _enabled_mainnet_policy()
+    intent = _mainnet_intent()
+    policy.validate(intent, daily_used_usdc=0, now_epoch=1_050)
+    summary = policy.proposal_summary(intent)
+    assert summary["execution_capability"] == "not_implemented"
+    assert summary["chain_id"] == 8453
+    assert "data" not in summary and "signed" not in summary
+
+
+def test_mainnet_policy_rejects_emergency_stop():
+    from autotrader.blockchain.mainnet_policy import PolicyViolation
+
+    with pytest.raises(PolicyViolation, match="Emergency stop"):
+        _enabled_mainnet_policy(emergency_stop=True).validate(_mainnet_intent(), now_epoch=1_050)
+
+
+@pytest.mark.parametrize(
+    "field,value,reason",
+    [
+        ("chain_id", 84532, "Base Mainnet"),
+        ("token_out", "0x0000000000000000000000000000000000000001", "allowlisted"),
+        ("router", "0x0000000000000000000000000000000000000002", "Router"),
+        ("slippage_bps", 31, "Slippage"),
+        ("expires_at_epoch", 1_050, "expired"),
+        ("estimated_network_fee_eth", __import__("decimal").Decimal("0.01"), "network fee"),
+    ],
+)
+def test_mainnet_policy_rejects_unsafe_intents(field, value, reason):
+    from autotrader.blockchain.mainnet_policy import PolicyViolation
+
+    with pytest.raises(PolicyViolation, match=reason):
+        _enabled_mainnet_policy().validate(
+            _mainnet_intent(**{field: value}), now_epoch=1_050
+        )
+
+
+def test_mainnet_policy_rejects_exposure_over_caps():
+    from decimal import Decimal
+
+    from autotrader.blockchain.mainnet_policy import PolicyViolation
+
+    with pytest.raises(PolicyViolation, match="per-trade"):
+        _enabled_mainnet_policy(max_trade_usdc=Decimal("4")).validate(
+            _mainnet_intent(), now_epoch=1_050
+        )
+    with pytest.raises(PolicyViolation, match="daily exposure"):
+        _enabled_mainnet_policy().validate(
+            _mainnet_intent(), daily_used_usdc=Decimal("21"), now_epoch=1_050
+        )
+
+
+def test_mainnet_policy_rejects_unset_financial_caps():
+    from decimal import Decimal
+
+    from autotrader.blockchain.mainnet_policy import PolicyViolation
+
+    for override, phrase in [
+        ({"max_trade_usdc": Decimal("0")}, "Per-trade cap"),
+        ({"max_daily_usdc": Decimal("0")}, "Daily cap"),
+        ({"max_network_fee_eth": Decimal("0")}, "Network-fee cap"),
+    ]:
+        with pytest.raises(PolicyViolation, match=phrase):
+            _enabled_mainnet_policy(**override).validate(_mainnet_intent(), now_epoch=1_050)
