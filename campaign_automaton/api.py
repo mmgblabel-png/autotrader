@@ -87,6 +87,9 @@ def create_app() -> FastAPI:
     except Exception:
         runtime_settings = None
     origins = list(runtime_settings.cors_origins) if runtime_settings else ["http://localhost:3000"]
+    for development_origin in ("http://localhost:3000", "http://127.0.0.1:3000"):
+        if development_origin not in origins:
+            origins.append(development_origin)
     app.add_middleware(
         CORSMiddleware,
         allow_origins=origins,
