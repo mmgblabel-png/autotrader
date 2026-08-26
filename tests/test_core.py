@@ -518,6 +518,7 @@ def _enabled_mainnet_policy(**overrides):
         "emergency_stop": False,
         "max_trade_usdc": Decimal("10"),
         "max_daily_usdc": Decimal("25"),
+        "max_daily_loss_usdc": Decimal("5"),
         "max_slippage_bps": 30,
         "max_network_fee_eth": Decimal("0.001"),
     }
@@ -591,8 +592,113 @@ def test_mainnet_policy_rejects_unset_financial_caps():
 
     for override, phrase in [
         ({"max_trade_usdc": Decimal("0")}, "Per-trade cap"),
-        ({"max_daily_usdc": Decimal("0")}, "Daily cap"),
+        ({"max_daily_usdc": Decimal("0")}, "Daily exposure cap"),
         ({"max_network_fee_eth": Decimal("0")}, "Network-fee cap"),
     ]:
         with pytest.raises(PolicyViolation, match=phrase):
             _enabled_mainnet_policy(**override).validate(_mainnet_intent(), now_epoch=1_050)
+
+
+def test_mainnet_policy_rejects_daily_loss_stop():
+    from decimal import Decimal
+
+    from autotrader.blockchain.mainnet_policy import PolicyViolation
+
+    with pytest.raises(PolicyViolation, match="Daily loss stop"):
+        _enabled_mainnet_policy(max_daily_loss_usdc=Decimal("2")).validate(
+            _mainnet_intent(), daily_realized_loss_usdc=Decimal("2"), now_epoch=1_050
+        )
+
+
+def test_mainnet_policy_environment_defaults_fail_closed(monkeypatch):
+    from autotrader.blockchain.mainnet_policy import MainnetExecutionPolicy
+
+    for name in [
+        "MAINNET_EXECUTION_ENABLED",
+        "MAINNET_EMERGENCY_STOP",
+        "MAINNET_MAX_TRADE_USDC",
+        "MAINNET_MAX_DAILY_USDC",
+        "MAINNET_MAX_DAILY_LOSS_USDC",
+        "MAINNET_MAX_SLIPPAGE_BPS",
+        "MAINNET_MAX_GAS_ETH",
+    ]:
+        monkeypatch.delenv(name, raising=False)
+    policy = MainnetExecutionPolicy.from_environment()
+    assert policy.execution_enabled is False
+    assert policy.emergency_stop is True
+    assert str(policy.max_trade_usdc) == "0"
+    assert str(policy.max_daily_usdc) == "0"
+    assert str(policy.max_daily_loss_usdc) == "0"
+    assert policy.max_slippage_bps == 0
+    assert str(policy.max_network_fee_eth) == "0"
+
+
+def test_mainnet_policy_environment_invalid_values_fail_closed(monkeypatch):
+    from autotrader.blockchain.mainnet_policy import MainnetExecutionPolicy
+
+    monkeypatch.setenv("MAINNET_EXECUTION_ENABLED", "not-a-boolean")
+    monkeypatch.setenv("MAINNET_EMERGENCY_STOP", "not-a-boolean")
+    monkeypatch.setenv("MAINNET_MAX_TRADE_USDC", "-1")
+    monkeypatch.setenv("MAINNET_MAX_DAILY_USDC", "nan")
+    monkeypatch.setenv("MAINNET_MAX_DAILY_LOSS_USDC", "broken")
+    monkeypatch.setenv("MAINNET_MAX_SLIPPAGE_BPS", "101")
+    monkeypatch.setenv("MAINNET_MAX_GAS_ETH", "-0.01")
+    policy = MainnetExecutionPolicy.from_environment()
+    assert policy.execution_enabled is False
+    assert policy.emergency_stop is True
+    assert str(policy.max_trade_usdc) == "0"
+    assert str(policy.max_daily_usdc) == "0"
+    assert str(policy.max_daily_loss_usdc) == "0"
+    assert policy.max_slippage_bps == 0
+    assert str(policy.max_network_fee_eth) == "0"
+
+
+def test_mainnet_policy_environment_explicit_values(monkeypatch):
+    from autotrader.blockchain.mainnet_policy import MainnetExecutionPolicy
+
+    monkeypatch.setenv("MAINNET_EXECUTION_ENABLED", "true")
+    monkeypatch.setenv("MAINNET_EMERGENCY_STOP", "false")
+    monkeypatch.setenv("MAINNET_MAX_TRADE_USDC", "10")
+    monkeypatch.setenv("MAINNET_MAX_DAILY_USDC", "25")
+    monkeypatch.setenv("MAINNET_MAX_DAILY_LOSS_USDC", "5")
+    monkeypatch.setenv("MAINNET_MAX_SLIPPAGE_BPS", "25")
+    monkeypatch.setenv("MAINNET_MAX_GAS_ETH", "0.001")
+    policy = MainnetExecutionPolicy.from_environment()
+    assert policy.execution_enabled is True
+    assert policy.emergency_stop is False
+    assert str(policy.max_trade_usdc) == "10"
+    assert str(policy.max_daily_usdc) == "25"
+    assert str(policy.max_daily_loss_usdc) == "5"
+    assert policy.max_slippage_bps == 25
+    assert str(policy.max_network_fee_eth) == "0.001"
+
+
+def test_api_strategies_status_alias_matches_legacy_route(api_client):
+    legacy = api_client.get("/strategies/status")
+    alias = api_client.get("/api/strategies/status")
+    assert legacy.status_code == 200
+    assert alias.status_code == 200
+    assert alias.json() == legacy.json()
+
+
+def test_api_mainnet_safety_defaults_to_nonexecuting(api_client, monkeypatch):
+    for name in [
+        "MAINNET_EXECUTION_ENABLED",
+        "MAINNET_EMERGENCY_STOP",
+        "MAINNET_MAX_TRADE_USDC",
+        "MAINNET_MAX_DAILY_USDC",
+        "MAINNET_MAX_DAILY_LOSS_USDC",
+        "MAINNET_MAX_SLIPPAGE_BPS",
+        "MAINNET_MAX_GAS_ETH",
+    ]:
+        monkeypatch.delenv(name, raising=False)
+    response = api_client.get("/api/mainnet/safety")
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["mode"] == "paper"
+    assert payload["execution_enabled"] is False
+    assert payload["emergency_stop"] is True
+    assert payload["max_daily_loss_usdc"] == "0"
+    assert payload["execution_capability"] == "not_implemented"
+    assert payload["wallet_capability"] == "not_implemented"
+    assert payload["broadcast_capability"] == "not_implemented"
