@@ -5,9 +5,7 @@ Examples:
     python main.py init
     python main.py run --campaign wegmetdiekilos-bronze --force
 """
-
 from campaign_automaton.cli import main
-
 
 if __name__ == "__main__":
     main()

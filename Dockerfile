@@ -19,7 +19,9 @@ COPY app.py main.py ./
 
 RUN mkdir -p /data && chown -R app:app /app /data && chmod +x /app/scripts/start.sh
 
-USER app
+# Railway volumes are mounted after image construction and can be root-owned.
+# The startup script performs the limited ownership handoff, then execs as `app`.
+USER root
 
 EXPOSE 8000
 
