@@ -1,6 +1,16 @@
 from __future__ import annotations
 
-from campaign_automaton.models import RunRequest, TrackingEventCreate
+from dataclasses import replace
+from datetime import datetime
+from zoneinfo import ZoneInfo
+
+from campaign_automaton.models import (
+    CampaignStatus,
+    CampaignUpdate,
+    RunRequest,
+    TrackingEventCreate,
+)
+from campaign_automaton.runtime import build_runtime
 
 
 def test_default_campaign_is_seeded(runtime):
@@ -158,6 +168,20 @@ async def test_heartbeat_executes_queued_run_once(runtime):
     second = await runtime.scheduler.tick()
     assert second["executed_runs"] == []
     assert len(runtime.store.latest_heartbeats()) == 2
+
+
+async def test_due_campaign_schedule_uses_europe_amsterdam(settings):
+    live_runtime = build_runtime(replace(settings, auto_run_due_campaigns=True))
+    live_runtime.store.update_campaign(
+        "wegmetdiekilos-bronze", CampaignUpdate(status=CampaignStatus.ACTIVE)
+    )
+    result = await live_runtime.scheduler.tick()
+    assert result["status"] == "ok"
+    campaign = live_runtime.store.get_campaign("wegmetdiekilos-bronze")
+    next_run = datetime.fromisoformat(campaign["next_run_at"])
+    local_next_run = next_run.astimezone(ZoneInfo("Europe/Amsterdam"))
+    assert local_next_run.hour == 9
+    assert next_run.tzinfo is not None
 
 
 def test_policy_allows_explicit_negation_but_blocks_positive_claim(runtime):

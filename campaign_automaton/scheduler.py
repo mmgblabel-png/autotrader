@@ -8,6 +8,7 @@ import socket
 import uuid
 from datetime import UTC, datetime
 from typing import Any
+from zoneinfo import ZoneInfo
 
 from croniter import croniter
 
@@ -80,10 +81,11 @@ class HeartbeatScheduler:
                             self.orchestrator.execute_run, run["id"]
                         )
                         details["executed_runs"].append(result["id"])
-                    next_run = croniter(
-                        campaign["schedule_cron"], datetime.now(UTC)
-                    ).get_next(datetime)
-                    self.store.set_next_run(campaign["id"], next_run.isoformat())
+                    local_now = datetime.now(ZoneInfo(self.settings.schedule_timezone))
+                    next_run = croniter(campaign["schedule_cron"], local_now).get_next(datetime)
+                    self.store.set_next_run(
+                        campaign["id"], next_run.astimezone(UTC).isoformat()
+                    )
             self.tick_count += 1
             self.last_tick_at = utc_now()
             self.last_error = None

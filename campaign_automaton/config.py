@@ -10,6 +10,7 @@ import os
 from dataclasses import dataclass
 from pathlib import Path
 from urllib.parse import urlparse
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 DEFAULT_PRODUCT_URL = (
     "https://www.paypro.nl/producten/WegMetDieKilos_Bronze_Plan/114766/183297"
@@ -74,6 +75,7 @@ class Settings:
     heartbeat_enabled: bool
     heartbeat_interval_seconds: float
     auto_run_due_campaigns: bool
+    schedule_timezone: str
     draft_only: bool
     website_enabled: bool
     log_level: str
@@ -107,6 +109,10 @@ class Settings:
             raise ValueError("WEBHOOK_TOKEN is required in production")
         if self.production and self.public_base_url.startswith("http://"):
             raise ValueError("PUBLIC_BASE_URL must use HTTPS in production")
+        try:
+            ZoneInfo(self.schedule_timezone)
+        except ZoneInfoNotFoundError as exc:
+            raise ValueError("SCHEDULE_TIMEZONE must be a valid IANA timezone") from exc
 
 
 def load_settings() -> Settings:
@@ -149,6 +155,7 @@ def load_settings() -> Settings:
         heartbeat_enabled=_bool("HEARTBEAT_ENABLED", True),
         heartbeat_interval_seconds=_float("HEARTBEAT_INTERVAL_SECONDS", 30.0, 1.0),
         auto_run_due_campaigns=_bool("AUTO_RUN_DUE_CAMPAIGNS", False),
+        schedule_timezone=os.getenv("SCHEDULE_TIMEZONE", "Europe/Amsterdam").strip(),
         draft_only=_bool("DRAFT_ONLY", True),
         website_enabled=_bool("WEBSITE_ENABLED", False),
         log_level=os.getenv("LOG_LEVEL", "INFO").upper(),
