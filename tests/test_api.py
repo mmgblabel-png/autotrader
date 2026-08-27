@@ -221,6 +221,13 @@ def test_signed_paypro_payment_callback_updates_verified_review_window(client: T
         headers={"PayPro-Signature": "invalid", "PayPro-Timestamp": str(int(time.time()))},
     )
     assert invalid.status_code == 400
+    stale_timestamp = str(int(time.time()) - 601)
+    stale = client.post(
+        "/api/webhooks/paypro",
+        content=body,
+        headers=paypro_headers(body, timestamp=stale_timestamp),
+    )
+    assert stale.status_code == 400
     first = client.post("/api/webhooks/paypro", content=body, headers=paypro_headers(body))
     second = client.post("/api/webhooks/paypro", content=body, headers=paypro_headers(body))
     assert first.status_code == 200
