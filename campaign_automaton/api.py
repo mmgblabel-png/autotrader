@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import hmac
 from contextlib import asynccontextmanager
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Annotated, Any
 
@@ -171,17 +171,46 @@ def create_app() -> FastAPI:
         """Return aggregated public portfolio data for the read-only Event Farm game.
 
         The endpoint deliberately excludes affiliate destinations, content drafts, audit notes,
-        source metadata, tokens, and personal information. It is safe for a public browser game
-        to request on load and every 60 seconds while the page remains open.
+        tokens, personal information, and raw event metadata. Source attribution is exposed only
+        as a small allowlisted channel taxonomy with aggregate counts, making it safe for a public
+        browser game to request on load and every 60 seconds while the page remains open.
         """
         runtime = get_runtime(request)
+        now = datetime.now(UTC)
         verification_sources = {
             "railway-live-verification",
             "website-live-verification",
             "internal-verification",
         }
+        public_source_labels = {
+            "railway-live-verification": "Railway verification",
+            "website-live-verification": "Website verification",
+            "internal-verification": "Internal verification",
+            "direct": "Direct visit",
+            "organic": "Organic search",
+            "google": "Google search",
+            "social": "Social media",
+            "facebook": "Facebook",
+            "instagram": "Instagram",
+            "linkedin": "LinkedIn",
+            "email": "Email newsletter",
+            "newsletter": "Email newsletter",
+            "website": "Website referral",
+            "paypro": "PayPro referral",
+        }
+        metric_names = ("views", "clicks", "signups", "conversions")
+
+        def empty_metrics() -> dict[str, int]:
+            return {metric: 0 for metric in metric_names}
+
+        def public_source(source: Any) -> str:
+            normalized = str(source or "").strip().lower()
+            return public_source_labels.get(normalized, "Other tracked source")
+
         campaigns: list[dict[str, Any]] = []
-        totals = {"views": 0, "clicks": 0, "signups": 0, "conversions": 0}
+        totals = empty_metrics()
+        source_totals: dict[str, dict[str, int]] = {}
+        next_run_times: list[datetime] = []
         for campaign in runtime.store.list_campaigns():
             if campaign["status"] != "active":
                 continue
@@ -193,19 +222,45 @@ def create_app() -> FastAPI:
                 data_quality = "verification_only"
             else:
                 data_quality = "observed_events"
-            public_metrics = {
-                metric: int(metrics[metric])
-                for metric in ("views", "clicks", "signups", "conversions")
-            }
+            public_metrics = {metric: int(metrics[metric]) for metric in metric_names}
             for metric, value in public_metrics.items():
                 totals[metric] += value
+            source_metrics: dict[str, dict[str, int]] = {}
+            for row in metrics["by_source"]:
+                label = public_source(row["source"])
+                source_metrics.setdefault(label, empty_metrics())
+                source_totals.setdefault(label, empty_metrics())
+                event_type = str(row["event_type"])
+                if "." in event_type:
+                    event_type = event_type.rsplit(".", maxsplit=1)[-1].lower()
+                metric_key = {
+                    "view": "views",
+                    "click": "clicks",
+                    "signup": "signups",
+                    "conversion": "conversions",
+                }.get(event_type)
+                if metric_key:
+                    count = int(row["count"])
+                    source_metrics[label][metric_key] += count
+                    source_totals[label][metric_key] += count
+            next_run_at = campaign.get("next_run_at")
+            if next_run_at:
+                next_run_times.append(datetime.fromisoformat(next_run_at).astimezone(UTC))
             campaigns.append(
                 {
                     "slug": campaign["slug"],
                     "product_name": campaign["product_name"],
                     "metrics": public_metrics,
                     "data_quality": data_quality,
-                    "next_run_at": campaign.get("next_run_at"),
+                    "next_run_at": next_run_at,
+                    "source_breakdown": [
+                        {"source": label, "metrics": values}
+                        for label, values in sorted(
+                            source_metrics.items(),
+                            key=lambda item: sum(item[1].values()),
+                            reverse=True,
+                        )
+                    ],
                 }
             )
         snapshot_quality = (
@@ -213,17 +268,41 @@ def create_app() -> FastAPI:
             if campaigns and all(row["data_quality"] == "verification_only" for row in campaigns)
             else "mixed_or_observed"
         )
+        review_at = min(next_run_times) if next_run_times else now + timedelta(hours=24)
+        review_started_at = review_at - timedelta(hours=24)
+        campaign_count = max(1, len(campaigns))
+        required_views = 100 * campaign_count
+        required_clicks = 20 * campaign_count
+        view_progress = min(1.0, totals["views"] / required_views)
+        click_progress = min(1.0, totals["clicks"] / required_clicks)
+        evidence_progress = int(min(view_progress, click_progress) * 100)
+        learning_state = (
+            "verification_only"
+            if snapshot_quality == "verification_only"
+            else "reviewable" if evidence_progress == 100 else "collecting_evidence"
+        )
         return {
             "schema_version": 1,
-            "refreshed_at": datetime.now(UTC).isoformat(),
+            "refreshed_at": now.isoformat(),
             "refresh_interval_seconds": 60,
             "data_quality": snapshot_quality,
             "lifecycle": totals,
             "campaigns": campaigns,
+            "source_breakdown": [
+                {"source": label, "metrics": values}
+                for label, values in sorted(
+                    source_totals.items(), key=lambda item: sum(item[1].values()), reverse=True
+                )
+            ],
             "review_window": {
                 "hours": 24,
+                "started_at": review_started_at.isoformat(),
+                "review_at": review_at.isoformat(),
                 "minimum_views_per_campaign": 100,
                 "minimum_clicks_per_campaign": 20,
+                "learning_state": learning_state,
+                "evidence_progress_percent": evidence_progress,
+                "strategy_change_allowed": learning_state == "reviewable",
                 "recommendation": (
                     "Collect evidence before proposing a reversible, owner-approved strategy change."
                 ),

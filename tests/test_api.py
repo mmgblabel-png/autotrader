@@ -61,6 +61,37 @@ def test_public_farm_snapshot_is_token_free_and_aggregated(client: TestClient):
     assert "product_url" not in campaign
     assert "by_source" not in campaign
     assert "metadata" not in campaign
+    assert payload["source_breakdown"] == []
+    assert payload["review_window"]["learning_state"] == "collecting_evidence"
+    assert "review_at" in payload["review_window"]
+
+
+def test_public_farm_snapshot_uses_allowlisted_source_aggregation(client: TestClient):
+    client.patch(
+        "/api/campaigns/wegmetdiekilos-bronze",
+        headers=control(),
+        json={"status": "active"},
+    )
+    recorded = client.post(
+        "/api/events",
+        headers=control(),
+        json={
+            "campaign_slug": "wegmetdiekilos-bronze",
+            "event_type": "click",
+            "source": "social",
+            "medium": "affiliate",
+            "metadata": {"tracking": "test"},
+        },
+    )
+    assert recorded.status_code == 201
+    snapshot = client.get("/api/public/farm-snapshot").json()
+    assert snapshot["source_breakdown"] == [
+        {
+            "source": "Social media",
+            "metrics": {"views": 0, "clicks": 1, "signups": 0, "conversions": 0},
+        }
+    ]
+    assert snapshot["campaigns"][0]["source_breakdown"] == snapshot["source_breakdown"]
 
 
 def test_control_endpoints_require_token(client: TestClient):
