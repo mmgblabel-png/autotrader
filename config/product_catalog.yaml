@@ -1,0 +1,31 @@
+catalog:
+  market: "United States"
+  language: "en-US"
+  channels: [blog, social, landing_page]
+  shared_prohibited_claims:
+    - "Do not state a price, discount, stock level, delivery date, sales rank, review count, star rating, or commission rate in public content."
+    - "Do not make health, medical, safety, therapeutic, product-outcome, or conversion-rate claims."
+    - "Do not cloak, shorten, append parameters to, or route traffic through an Amazon Associates Special Link."
+    - "Do not use email, SMS/MMS, offline material, paid-search routing to Amazon, unsolicited messages, or unverified community channels."
+    - "Do not copy customer reviews, create testimonials, manufacture urgency, or invent scarcity."
+  products:
+    - {priority: 1, slug: roku-streaming-stick-hd, product: "Roku Streaming Stick HD with Voice Remote", category: Electronics, angle: "HDMI, HD resolution, power, network, and service setup", verify: "selected variant, TV connection, current US availability"}
+    - {priority: 2, slug: owala-freesip-24oz-index, product: "Owala FreeSip insulated stainless-steel water bottle, 24 oz", category: "Home & Kitchen", angle: "capacity, lid style, cleaning routine, carry, and cupholder fit", verify: "exact colour, size, care instructions, and delivery eligibility"}
+    - {priority: 3, slug: chomchom-roller, product: "ChomChom Roller pet-hair remover", category: "Pet Supplies", angle: "upholstery and textile hair-removal tasks", verify: "exact version and intended surfaces"}
+    - {priority: 4, slug: kitchen-gizmo-snap-n-strain, product: "Kitchen Gizmo Snap N Strain clip-on strainer", category: "Home & Kitchen", angle: "cookware-rim fit, storage space, and cooking routine", verify: "pot/pan compatibility and care instructions"}
+    - {priority: 5, slug: anker-4-port-usb-hub, product: "Anker Ultra Slim 4-Port USB 3.0 Hub", category: Electronics, angle: "existing ports, peripherals, and power needs", verify: "port type, power or charging support, and device compatibility"}
+    - {priority: 6, slug: rainleaf-microfiber-towel, product: "Rainleaf microfiber travel and gym towel", category: "Sports & Outdoors", angle: "towel size, packing space, care, and activity context", verify: "selected size, material, and care instructions"}
+    - {priority: 7, slug: upsimples-11x14-picture-frame, product: "upsimples 11x14 picture frame", category: "Home & Kitchen", angle: "photo size, mat dimensions, placement, and wall plan", verify: "frame/mat dimensions and mounting requirements"}
+    - {priority: 8, slug: amazon-basics-velvet-hangers, product: "Amazon Basics slim velvet non-slip hangers, 50-pack", category: "Home & Kitchen", angle: "closet dimensions, garment type, and quantity needed", verify: "pack size, dimensions, and current product guidance"}
+    - {priority: 9, slug: five-star-5-subject-notebook, product: "Five Star spiral notebook, 5-subject", category: "Office Products", angle: "course/project needs, page count, ruling, and notebook size", verify: "exact edition, sheet count, and included features"}
+    - {priority: 10, slug: sharpie-s-gel-pens, product: "Sharpie S-Gel gel pens, 12-count", category: "Office Products", angle: "ink colour, point size, and everyday writing task", verify: "selected ink colour, point size, and pack count"}
+    - {priority: 11, slug: ti-30xiis-calculator, product: "TI-30XIIS scientific calculator", category: "Office Products", angle: "course or examination calculator requirements", verify: "the exact model is permitted for the intended use"}
+    - {priority: 12, slug: amazon-basics-laminating-sheets, product: "Amazon Basics clear thermal laminating sheets", category: "Office Products", angle: "document size, pouch thickness, and laminator fit", verify: "sheet size, thickness, and machine compatibility"}
+    - {priority: 13, slug: niimbot-d110-label-maker, product: "NIIMBOT D110 label maker", category: Electronics, angle: "labelling task, app/device support, and refill needs", verify: "model, compatible label rolls, and phone or tablet support"}
+    - {priority: 14, slug: apple-airtag-2nd-generation, product: "Apple AirTag (2nd Generation)", category: Electronics, angle: "existing device ecosystem and intended item-finding task", verify: "selected package and device compatibility"}
+    - {priority: 15, slug: scotch-heavy-duty-packing-tape, product: "Scotch heavy-duty shipping packing tape", category: "Office Products", angle: "box type, tape length, dispenser needs, and packing task", verify: "roll count, dispenser inclusion, and intended use"}
+    - {priority: 16, slug: heavy-duty-moving-bags, product: "6-pack heavy-duty large moving bags", category: "Home & Kitchen", angle: "moving/storage load, dimensions, and carrying plan", verify: "dimensions, load guidance, handles, and closure details"}
+    - {priority: 17, slug: zulay-kitchen-milk-frother, product: "Zulay Kitchen handheld milk frother", category: "Home & Kitchen", angle: "drink routine, storage space, power method, and cleaning", verify: "power method, included accessories, and care instructions"}
+    - {priority: 18, slug: earth-rated-waste-bags, product: "Earth Rated dog-waste refill bags", category: "Pet Supplies", angle: "bag count, dispenser compatibility, scent preference, and walking routine", verify: "current bag count, dispenser fit, and material information"}
+    - {priority: 19, slug: amazon-basics-waste-bags, product: "Amazon Basics dog-waste bags with dispenser and leash clip", category: "Pet Supplies", angle: "pack format, dispenser, clip, and replacement-bag needs", verify: "pack details, dispenser, leash clip, and materials"}
+    - {priority: 20, slug: selkirk-slk-neo-paddles, product: "Selkirk Sport SLK Neo pickleball paddles set", category: "Sports & Outdoors", angle: "players, starter-set contents, grip, and play context", verify: "set contents, paddle specifications, and use suitability"}

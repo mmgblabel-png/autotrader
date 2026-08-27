@@ -88,6 +88,7 @@ class PolicyEngine:
         channel: str,
         sales_intent: bool = True,
         add_disclosure: bool = True,
+        direct_link_configured: bool | None = None,
     ) -> EvaluatedContent:
         findings: list[PolicyFinding] = []
         lowered = content.lower()
@@ -148,6 +149,11 @@ class PolicyEngine:
                 )
 
         if self.settings.affiliate_provider == "amazon" and sales_intent:
+            direct_link_configured = (
+                bool(self.settings.amazon_associate_url)
+                if direct_link_configured is None
+                else direct_link_configured
+            )
             if channel in {"email", "sms", "mms", "offline"}:
                 findings.append(
                     PolicyFinding(
@@ -164,7 +170,7 @@ class PolicyEngine:
                         message="Community Special Link content is blocked until the owner verifies that the channel is an approved Associate Site and permits the promotion.",
                     )
                 )
-            if not self.settings.amazon_associate_url:
+            if not direct_link_configured:
                 findings.append(
                     PolicyFinding(
                         code="amazon_special_link_missing",

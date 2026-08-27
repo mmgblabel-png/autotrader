@@ -264,3 +264,16 @@ def test_amazon_policy_blocks_special_link_content_in_email(runtime):
         item.code == "amazon_special_link_channel_prohibited"
         for item in evaluated.result.findings
     )
+
+
+def test_campaign_specific_direct_link_allows_marketing_draft_without_global_url(runtime):
+    evaluated = runtime.policy.evaluate_content(
+        "A product-research guide with an unmodified direct Amazon link.",
+        channel="landing_page",
+        sales_intent=True,
+        direct_link_configured=True,
+    )
+    assert evaluated.result.allowed is True
+    assert not any(
+        item.code == "amazon_special_link_missing" for item in evaluated.result.findings
+    )

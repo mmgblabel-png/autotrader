@@ -120,6 +120,9 @@ class CampaignOrchestrator:
                         channel=item["channel"],
                         sales_intent=sales_intent,
                         add_disclosure=sales_intent,
+                        direct_link_configured=bool(
+                            context["affiliate_status"].get("ready", False)
+                        ),
                     )
                     artifact = self.store.create_artifact(
                         campaign_id=campaign["id"],
@@ -191,6 +194,7 @@ class CampaignOrchestrator:
             "research": [self.research],
             "seo": [self.research, self.seo],
             "content": [self.research, self.seo, self.marketing],
+            "marketing": [self.marketing],
             "analytics": [self.analytics],
         }
         if workflow not in workflows:

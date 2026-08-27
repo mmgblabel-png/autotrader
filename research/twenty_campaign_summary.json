@@ -1,0 +1,190 @@
+{
+  "totals": {
+    "campaigns": 20,
+    "artifacts": 164,
+    "allowed": 104,
+    "blocked": 60
+  },
+  "campaigns": [
+    {
+      "priority": 1,
+      "slug": "roku-streaming-stick-hd",
+      "category": "Electronics",
+      "artifacts": 12,
+      "allowed": 9,
+      "blocked": 3,
+      "status": "draft"
+    },
+    {
+      "priority": 2,
+      "slug": "owala-freesip-24oz-index",
+      "category": "Home & Kitchen",
+      "artifacts": 8,
+      "allowed": 5,
+      "blocked": 3,
+      "status": "draft"
+    },
+    {
+      "priority": 3,
+      "slug": "chomchom-roller",
+      "category": "Pet Supplies",
+      "artifacts": 8,
+      "allowed": 5,
+      "blocked": 3,
+      "status": "draft"
+    },
+    {
+      "priority": 4,
+      "slug": "kitchen-gizmo-snap-n-strain",
+      "category": "Home & Kitchen",
+      "artifacts": 8,
+      "allowed": 5,
+      "blocked": 3,
+      "status": "draft"
+    },
+    {
+      "priority": 5,
+      "slug": "anker-4-port-usb-hub",
+      "category": "Electronics",
+      "artifacts": 8,
+      "allowed": 5,
+      "blocked": 3,
+      "status": "draft"
+    },
+    {
+      "priority": 6,
+      "slug": "rainleaf-microfiber-towel",
+      "category": "Sports & Outdoors",
+      "artifacts": 8,
+      "allowed": 5,
+      "blocked": 3,
+      "status": "draft"
+    },
+    {
+      "priority": 7,
+      "slug": "upsimples-11x14-picture-frame",
+      "category": "Home & Kitchen",
+      "artifacts": 8,
+      "allowed": 5,
+      "blocked": 3,
+      "status": "draft"
+    },
+    {
+      "priority": 8,
+      "slug": "amazon-basics-velvet-hangers",
+      "category": "Home & Kitchen",
+      "artifacts": 8,
+      "allowed": 5,
+      "blocked": 3,
+      "status": "draft"
+    },
+    {
+      "priority": 9,
+      "slug": "five-star-5-subject-notebook",
+      "category": "Office Products",
+      "artifacts": 8,
+      "allowed": 5,
+      "blocked": 3,
+      "status": "draft"
+    },
+    {
+      "priority": 10,
+      "slug": "sharpie-s-gel-pens",
+      "category": "Office Products",
+      "artifacts": 8,
+      "allowed": 5,
+      "blocked": 3,
+      "status": "draft"
+    },
+    {
+      "priority": 11,
+      "slug": "ti-30xiis-calculator",
+      "category": "Office Products",
+      "artifacts": 8,
+      "allowed": 5,
+      "blocked": 3,
+      "status": "draft"
+    },
+    {
+      "priority": 12,
+      "slug": "amazon-basics-laminating-sheets",
+      "category": "Office Products",
+      "artifacts": 8,
+      "allowed": 5,
+      "blocked": 3,
+      "status": "draft"
+    },
+    {
+      "priority": 13,
+      "slug": "niimbot-d110-label-maker",
+      "category": "Electronics",
+      "artifacts": 8,
+      "allowed": 5,
+      "blocked": 3,
+      "status": "draft"
+    },
+    {
+      "priority": 14,
+      "slug": "apple-airtag-2nd-generation",
+      "category": "Electronics",
+      "artifacts": 8,
+      "allowed": 5,
+      "blocked": 3,
+      "status": "draft"
+    },
+    {
+      "priority": 15,
+      "slug": "scotch-heavy-duty-packing-tape",
+      "category": "Office Products",
+      "artifacts": 8,
+      "allowed": 5,
+      "blocked": 3,
+      "status": "draft"
+    },
+    {
+      "priority": 16,
+      "slug": "heavy-duty-moving-bags",
+      "category": "Home & Kitchen",
+      "artifacts": 8,
+      "allowed": 5,
+      "blocked": 3,
+      "status": "draft"
+    },
+    {
+      "priority": 17,
+      "slug": "zulay-kitchen-milk-frother",
+      "category": "Home & Kitchen",
+      "artifacts": 8,
+      "allowed": 5,
+      "blocked": 3,
+      "status": "draft"
+    },
+    {
+      "priority": 18,
+      "slug": "earth-rated-waste-bags",
+      "category": "Pet Supplies",
+      "artifacts": 8,
+      "allowed": 5,
+      "blocked": 3,
+      "status": "draft"
+    },
+    {
+      "priority": 19,
+      "slug": "amazon-basics-waste-bags",
+      "category": "Pet Supplies",
+      "artifacts": 8,
+      "allowed": 5,
+      "blocked": 3,
+      "status": "draft"
+    },
+    {
+      "priority": 20,
+      "slug": "selkirk-slk-neo-paddles",
+      "category": "Sports & Outdoors",
+      "artifacts": 8,
+      "allowed": 5,
+      "blocked": 3,
+      "status": "draft"
+    }
+  ]
+}
