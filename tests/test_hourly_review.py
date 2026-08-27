@@ -10,6 +10,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from campaign_automaton.api import create_app
+from campaign_automaton.config import load_settings
 from campaign_automaton.hourly_review import HourlySalesReviewer
 from campaign_automaton.models import CampaignStatus, CampaignUpdate, TrackingEventCreate
 from campaign_automaton.runtime import build_runtime
@@ -160,6 +161,26 @@ async def test_daily_tiktok_review_queue_creates_one_draft_only_candidate(settin
     assert candidate["metadata"]["post_attempted"] is False
     assert candidate["metadata"]["owner_confirmation_required"] is True
     assert "Niet uploaden of posten" in candidate["content"]
+
+
+def test_daily_tiktok_review_defaults_to_production_only(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    root = Path(__file__).resolve().parents[1]
+    monkeypatch.setenv("DATA_DIR", str(tmp_path))
+    monkeypatch.setenv("DATABASE_PATH", str(tmp_path / "config.db"))
+    monkeypatch.setenv("CAMPAIGN_CONFIG_PATH", str(root / "config" / "campaign.yaml"))
+    monkeypatch.setenv("PUBLIC_BASE_URL", "https://example.test")
+    monkeypatch.setenv("CONTROL_TOKEN", "test-control-token")
+    monkeypatch.setenv("WEBHOOK_TOKEN", "test-webhook-token")
+    monkeypatch.setenv("APP_ENV", "production")
+
+    production_settings = load_settings()
+    assert production_settings.daily_tiktok_review_enabled is True
+
+    monkeypatch.setenv("APP_ENV", "development")
+    development_settings = load_settings()
+    assert development_settings.daily_tiktok_review_enabled is False
 
 
 def test_hourly_review_endpoints_are_owner_only(client: TestClient):

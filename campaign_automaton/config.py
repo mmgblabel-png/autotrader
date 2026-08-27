@@ -122,9 +122,11 @@ class Settings:
 def load_settings() -> Settings:
     data_dir = Path(os.getenv("DATA_DIR", "./data")).expanduser().resolve()
     database_default = data_dir / "campaign_automaton.db"
+    app_env = os.getenv("APP_ENV", "development")
+    production_default = app_env.lower() in {"production", "prod"}
     settings = Settings(
         app_name=os.getenv("APP_NAME", "WegMetDieKilos Campaign Automaton"),
-        app_env=os.getenv("APP_ENV", "development"),
+        app_env=app_env,
         data_dir=data_dir,
         database_path=Path(os.getenv("DATABASE_PATH", str(database_default)))
         .expanduser()
@@ -161,7 +163,9 @@ def load_settings() -> Settings:
         heartbeat_interval_seconds=_float("HEARTBEAT_INTERVAL_SECONDS", 30.0, 1.0),
         auto_run_due_campaigns=_bool("AUTO_RUN_DUE_CAMPAIGNS", False),
         hourly_sales_review_enabled=_bool("HOURLY_SALES_REVIEW_ENABLED", False),
-        daily_tiktok_review_enabled=_bool("DAILY_TIKTOK_REVIEW_ENABLED", False),
+        daily_tiktok_review_enabled=_bool(
+            "DAILY_TIKTOK_REVIEW_ENABLED", production_default
+        ),
         daily_tiktok_review_campaigns=_csv(
             "DAILY_TIKTOK_REVIEW_CAMPAIGNS",
             "freds-bouwtekeningen,communicatie-canvas",

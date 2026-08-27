@@ -27,7 +27,7 @@ Set these through the Railway dashboard or CLI before the first production deplo
 | `WEBHOOK_TOKEN` | Yes | Different `openssl rand -hex 32` value |
 | `DRAFT_ONLY` | Yes | `true` |
 | `AUTO_RUN_DUE_CAMPAIGNS` | Yes | `false` for setup |
-| `DAILY_TIKTOK_REVIEW_ENABLED` | Optional | `true` only for one internal, policy-checked review candidate per day; it never uploads or posts to TikTok |
+| `DAILY_TIKTOK_REVIEW_ENABLED` | Optional | Defaults to `true` in production unless explicitly set to `false`; creates one internal, policy-checked review candidate per day and never uploads or posts to TikTok |
 | `DAILY_TIKTOK_REVIEW_CAMPAIGNS` | Optional | Comma-separated active campaign slugs eligible for internal review, for example `freds-bouwtekeningen,communicatie-canvas` |
 | `OPENAI_API_KEY` | Optional | Omit for deterministic mode |
 | `OPENAI_BASE_URL` | Optional | OpenAI-compatible endpoint |
