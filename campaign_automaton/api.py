@@ -151,6 +151,20 @@ def create_app() -> FastAPI:
             )
         )
 
+    @app.get("/site/{campaign_slug}/c/{creative_id}", response_class=HTMLResponse, include_in_schema=False)
+    def public_creative(
+        campaign_slug: str,
+        creative_id: str,
+        request: Request,
+    ) -> HTMLResponse:
+        publisher = PublicPublisher(get_runtime(request).settings, get_runtime(request).store)
+        if not publisher.enabled():
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Public site is not enabled.")
+        creative = publisher.creative(campaign_slug, creative_id)
+        if creative is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Creative page not found.")
+        return HTMLResponse(creative)
+
     @app.get("/site/{campaign_slug}/articles/{artifact_id}", response_class=HTMLResponse, include_in_schema=False)
     def public_article(campaign_slug: str, artifact_id: str, request: Request) -> HTMLResponse:
         publisher = PublicPublisher(get_runtime(request).settings, get_runtime(request).store)
@@ -238,7 +252,7 @@ def create_app() -> FastAPI:
         campaigns: list[dict[str, Any]] = []
         totals = empty_metrics()
         source_totals: dict[str, dict[str, int]] = {}
-        attribution_totals: dict[tuple[str, str, str], dict[str, int]] = {}
+        attribution_totals: dict[tuple[str, str, str, str, str], dict[str, int]] = {}
         history_totals: dict[str, dict[str, int]] = {}
         next_run_times: list[datetime] = []
         for campaign in runtime.store.list_campaigns():
@@ -279,8 +293,15 @@ def create_app() -> FastAPI:
                 medium_label = public_medium_labels.get(str(row["medium"]).lower(), "Other channel")
                 content_id = safe_content_id(str(row["content_id"]), fallback="Unlabeled asset")
                 attribution_key = (source_label, medium_label, content_id)
+                portfolio_attribution_key = (
+                    campaign["slug"],
+                    campaign["product_name"],
+                    source_label,
+                    medium_label,
+                    content_id,
+                )
                 attribution_metrics.setdefault(attribution_key, empty_metrics())
-                attribution_totals.setdefault(attribution_key, empty_metrics())
+                attribution_totals.setdefault(portfolio_attribution_key, empty_metrics())
                 event_type = str(row["event_type"]).rsplit(".", maxsplit=1)[-1].lower()
                 metric_key = {
                     "view": "views", "click": "clicks", "signup": "signups", "conversion": "conversions"
@@ -288,7 +309,7 @@ def create_app() -> FastAPI:
                 if metric_key:
                     count = int(row["count"])
                     attribution_metrics[attribution_key][metric_key] += count
-                    attribution_totals[attribution_key][metric_key] += count
+                    attribution_totals[portfolio_attribution_key][metric_key] += count
             history = runtime.store.campaign_daily_metrics(campaign["id"])
             for point in history:
                 history_totals.setdefault(point["date"], empty_metrics())
@@ -314,7 +335,12 @@ def create_app() -> FastAPI:
                     ],
                     "attribution_breakdown": [
                         {
-                            "source": key[0], "medium": key[1], "content": key[2], "metrics": values
+                            "campaign_slug": campaign["slug"],
+                            "campaign_name": campaign["product_name"],
+                            "source": key[0],
+                            "medium": key[1],
+                            "content": key[2],
+                            "metrics": values,
                         }
                         for key, values in sorted(
                             attribution_metrics.items(),
@@ -357,7 +383,14 @@ def create_app() -> FastAPI:
                 )
             ],
             "attribution_breakdown": [
-                {"source": key[0], "medium": key[1], "content": key[2], "metrics": values}
+                {
+                    "campaign_slug": key[0],
+                    "campaign_name": key[1],
+                    "source": key[2],
+                    "medium": key[3],
+                    "content": key[4],
+                    "metrics": values,
+                }
                 for key, values in sorted(
                     attribution_totals.items(), key=lambda item: sum(item[1].values()), reverse=True
                 )

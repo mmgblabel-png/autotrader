@@ -94,6 +94,8 @@ def test_public_farm_snapshot_uses_allowlisted_source_aggregation(client: TestCl
     assert snapshot["campaigns"][0]["source_breakdown"] == snapshot["source_breakdown"]
     assert snapshot["attribution_breakdown"] == [
         {
+            "campaign_slug": "wegmetdiekilos-bronze",
+            "campaign_name": "WegMetDieKilos – Bronze Plan",
             "source": "Social media",
             "medium": "Affiliate",
             "content": "Unlabeled asset",
@@ -102,6 +104,27 @@ def test_public_farm_snapshot_uses_allowlisted_source_aggregation(client: TestCl
     ]
     assert len(snapshot["history"]) == 7
     assert snapshot["history"][-1]["metrics"]["clicks"] == 1
+
+
+def test_public_creative_page_preserves_named_attribution(publisher_client: TestClient):
+    run = publisher_client.post(
+        "/api/campaigns/wegmetdiekilos-bronze/runs",
+        headers=control(),
+        json={"workflow": "content", "channels": ["landing_page"], "force": True},
+    )
+    assert run.status_code == 200
+    artifact = publisher_client.get(
+        "/api/campaigns/wegmetdiekilos-bronze/artifacts", headers=control()
+    ).json()["artifacts"][0]
+    reviewed = publisher_client.post(
+        f"/api/artifacts/{artifact['id']}/review",
+        headers=control(),
+        json={"decision": "approved", "reviewer": "test-owner", "notes": "approved"},
+    )
+    assert reviewed.status_code == 200
+    page = publisher_client.get("/site/wegmetdiekilos-bronze/c/small-step-reel")
+    assert page.status_code == 200
+    assert "src=instagram&medium=social&content=small-step-reel" in page.text
 
 
 def test_control_endpoints_require_token(client: TestClient):

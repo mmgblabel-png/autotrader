@@ -26,6 +26,75 @@ _ALLOWED_SOURCES = {
 }
 _ALLOWED_MEDIA = {"affiliate", "social", "email", "organic", "referral", "paid", "display"}
 
+_CREATIVE_VARIANTS: dict[str, tuple[dict[str, str], ...]] = {
+    "wegmetdiekilos-bronze": (
+        {
+            "id": "small-step-reel",
+            "source": "instagram",
+            "medium": "social",
+            "content": "small-step-reel",
+            "eyebrow": "Instagram reel · Kleine stap",
+            "headline": "Begin met één haalbare volgende stap.",
+            "lede": "Een rustige uitnodiging om de quiz te bekijken, zonder snelle beloften of druk.",
+            "cta": "Bekijk de quiz op je eigen tempo",
+        },
+        {
+            "id": "compare-calmly-post",
+            "source": "facebook",
+            "medium": "social",
+            "content": "compare-calmly-post",
+            "eyebrow": "Facebook post · Rustig vergelijken",
+            "headline": "Neem tijd om te vergelijken voordat je kiest.",
+            "lede": "Lees de uitgangspunten en voorwaarden in je eigen tempo, en kies alleen wat bij je past.",
+            "cta": "Lees de korte toelichting",
+        },
+    ),
+    "practice-happy-yoga": (
+        {
+            "id": "quiet-practice-reel",
+            "source": "instagram",
+            "medium": "social",
+            "content": "quiet-practice-reel",
+            "eyebrow": "Instagram reel · Rustige oefening",
+            "headline": "Maak ruimte voor een rustig oefenmoment.",
+            "lede": "Een heldere, laagdrempelige introductie tot de cursusvoorwaarden en je eigen afweging.",
+            "cta": "Bekijk de cursusinformatie",
+        },
+        {
+            "id": "weekly-routine-email",
+            "source": "newsletter",
+            "medium": "email",
+            "content": "weekly-routine-email",
+            "eyebrow": "E-mail · Wekelijks ritme",
+            "headline": "Een klein moment in je week, zonder prestatiedruk.",
+            "lede": "Lees de informatie en voorwaarden rustig door voordat je beslist of dit aanbod relevant is.",
+            "cta": "Lees de cursusinformatie",
+        },
+    ),
+    "online-cursus-fermenteren": (
+        {
+            "id": "kitchen-skill-reel",
+            "source": "instagram",
+            "medium": "social",
+            "content": "kitchen-skill-reel",
+            "eyebrow": "Instagram reel · Keukenvaardigheid",
+            "headline": "Leer een nieuwe keukenvaardigheid stap voor stap.",
+            "lede": "Bekijk de cursusinformatie en bepaal zelf of de opbouw en voorwaarden passen bij je leerdoel.",
+            "cta": "Bekijk de cursusinformatie",
+        },
+        {
+            "id": "ferment-basics-email",
+            "source": "newsletter",
+            "medium": "email",
+            "content": "ferment-basics-email",
+            "eyebrow": "E-mail · Fermenteren basis",
+            "headline": "Nieuwsgierig naar een gestructureerde introductie?",
+            "lede": "Lees de cursusinformatie en de voorwaarden voordat je beslist of deze leerroute aansluit bij je interesse.",
+            "cta": "Lees de cursusinformatie",
+        },
+    ),
+}
+
 
 def safe_tracking_value(value: str, *, allowed: set[str], fallback: str) -> str:
     """Keep public URL attribution aggregate, bounded, and free of arbitrary query text."""
@@ -150,6 +219,29 @@ class PublicPublisher:
 
     def enabled(self) -> bool:
         return self.settings.website_enabled
+
+    def creative(self, campaign_slug: str, creative_id: str) -> str | None:
+        """Render one pre-approved factual creative route with a distinct attribution tag."""
+        variant = next(
+            (item for item in _CREATIVE_VARIANTS.get(campaign_slug, ()) if item["id"] == creative_id),
+            None,
+        )
+        if variant is None or "landing_page_copy" not in self.latest_by_type(campaign_slug):
+            return None
+        cta = (
+            f"/r/{campaign_slug}?src={variant['source']}&medium={variant['medium']}"
+            f"&content={variant['content']}"
+        )
+        body = f"""
+<section class="hero"><div class="shell hero-card"><p class="eyebrow">{html.escape(variant['eyebrow'])}</p><h1>{html.escape(variant['headline'])}</h1><p class="lede">{html.escape(variant['lede'])}</p><a class="cta" href="{cta}">{html.escape(variant['cta'])}</a></div></section>
+<section class="content" id="meer"><div class="notice"><strong>Transparantie.</strong> {html.escape(self.settings.affiliate_disclosure)}</div><h2>Lees rustig verder</h2><p>Deze pagina is een specifieke campagnevariant. De tag wordt alleen als geaggregeerde bron-, kanaal- en inhoudsmeting vastgelegd wanneer je op de knop klikt.</p><p><a href="/site/{html.escape(campaign_slug)}">← Naar de volledige toelichting</a></p></section>"""
+        campaign = self.store.get_campaign(campaign_slug)
+        return self.page(
+            campaign_slug,
+            body,
+            title=f"{variant['headline']} | Rustig vooruit",
+            description=f"Een transparante introductie tot {campaign['product_name']}.",
+        )
 
     def status(self, campaign_slug: str) -> dict[str, Any]:
         campaign = self.store.get_campaign(campaign_slug)
