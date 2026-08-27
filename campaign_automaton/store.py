@@ -24,7 +24,7 @@ from campaign_automaton.models import (
     utc_now,
 )
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 
 
 class StoreError(RuntimeError):
@@ -126,6 +126,18 @@ class SQLiteStore:
                     occurred_at TEXT NOT NULL
                 );
                 CREATE INDEX IF NOT EXISTS idx_events_campaign ON tracking_events(campaign_id, occurred_at);
+                CREATE TABLE IF NOT EXISTS hourly_sales_reviews (
+                    id TEXT PRIMARY KEY,
+                    campaign_id TEXT NOT NULL REFERENCES campaigns(id) ON DELETE CASCADE,
+                    hour_bucket TEXT NOT NULL,
+                    metrics_json TEXT NOT NULL,
+                    readiness_json TEXT NOT NULL,
+                    recommendation_json TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    UNIQUE(campaign_id, hour_bucket)
+                );
+                CREATE INDEX IF NOT EXISTS idx_hourly_sales_reviews_campaign
+                    ON hourly_sales_reviews(campaign_id, hour_bucket DESC);
                 CREATE TABLE IF NOT EXISTS memories (
                     id TEXT PRIMARY KEY,
                     campaign_id TEXT REFERENCES campaigns(id) ON DELETE CASCADE,
@@ -196,7 +208,8 @@ class SQLiteStore:
                 """
             )
             row = db.execute("SELECT MAX(version) AS version FROM schema_version").fetchone()
-            if not row or row["version"] is None:
+            current_version = int(row["version"] or 0) if row else 0
+            if current_version < SCHEMA_VERSION:
                 db.execute(
                     "INSERT INTO schema_version(version, applied_at) VALUES (?, ?)",
                     (SCHEMA_VERSION, utc_now()),
@@ -637,6 +650,83 @@ class SQLiteStore:
         values["conversion_rate"] = round(conversions / clicks, 4) if clicks else 0.0
         values["by_source"] = [dict(row) for row in by_source]
         return values
+
+    def create_hourly_sales_review(
+        self,
+        campaign_id: str,
+        hour_bucket: str,
+        metrics: dict[str, Any],
+        readiness: dict[str, Any],
+        recommendation: dict[str, Any],
+    ) -> tuple[dict[str, Any], bool]:
+        """Create one review per campaign per UTC hour, or return its prior record."""
+        review_id = str(uuid.uuid4())
+        with self._write_lock, self.connection() as db:
+            try:
+                db.execute(
+                    """INSERT INTO hourly_sales_reviews(
+                    id, campaign_id, hour_bucket, metrics_json, readiness_json,
+                    recommendation_json, created_at
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?)""",
+                    (
+                        review_id,
+                        campaign_id,
+                        hour_bucket,
+                        json.dumps(metrics, ensure_ascii=False),
+                        json.dumps(readiness, ensure_ascii=False),
+                        json.dumps(recommendation, ensure_ascii=False),
+                        utc_now(),
+                    ),
+                )
+                created = True
+            except sqlite3.IntegrityError:
+                row = db.execute(
+                    """SELECT * FROM hourly_sales_reviews
+                    WHERE campaign_id = ? AND hour_bucket = ?""",
+                    (campaign_id, hour_bucket),
+                ).fetchone()
+                if row is None:
+                    raise
+                return self._decode_hourly_sales_review(row), False
+            row = db.execute(
+                "SELECT * FROM hourly_sales_reviews WHERE id = ?", (review_id,)
+            ).fetchone()
+        return self._decode_hourly_sales_review(row), created
+
+    def get_hourly_sales_review(
+        self, campaign_id: str, hour_bucket: str
+    ) -> dict[str, Any] | None:
+        with self.connection() as db:
+            row = db.execute(
+                """SELECT * FROM hourly_sales_reviews
+                WHERE campaign_id = ? AND hour_bucket = ?""",
+                (campaign_id, hour_bucket),
+            ).fetchone()
+        return self._decode_hourly_sales_review(row) if row else None
+
+    def latest_hourly_sales_review(self, campaign_id: str) -> dict[str, Any] | None:
+        with self.connection() as db:
+            row = db.execute(
+                """SELECT * FROM hourly_sales_reviews WHERE campaign_id = ?
+                ORDER BY hour_bucket DESC LIMIT 1""",
+                (campaign_id,),
+            ).fetchone()
+        return self._decode_hourly_sales_review(row) if row else None
+
+    def list_hourly_sales_reviews(self, campaign_id: str, limit: int = 72) -> list[dict[str, Any]]:
+        with self.connection() as db:
+            rows = db.execute(
+                """SELECT * FROM hourly_sales_reviews WHERE campaign_id = ?
+                ORDER BY hour_bucket DESC LIMIT ?""",
+                (campaign_id, limit),
+            ).fetchall()
+        return [self._decode_hourly_sales_review(row) for row in rows]
+
+    @staticmethod
+    def _decode_hourly_sales_review(row: sqlite3.Row) -> dict[str, Any]:
+        return SQLiteStore._decode(
+            row, ("metrics_json", "readiness_json", "recommendation_json")
+        )
 
     def campaign_attribution(self, campaign_id: str) -> list[dict[str, Any]]:
         """Return aggregate channel attribution without event metadata or identifiers."""

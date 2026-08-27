@@ -41,6 +41,7 @@ def settings(tmp_path: Path) -> Settings:
         heartbeat_enabled=False,
         heartbeat_interval_seconds=30.0,
         auto_run_due_campaigns=False,
+        hourly_sales_review_enabled=False,
         schedule_timezone="Europe/Amsterdam",
         draft_only=True,
         website_enabled=False,

@@ -337,9 +337,30 @@ The heartbeat uses a database lease to avoid overlapping work. Each tick recover
 | `HEARTBEAT_ENABLED` | `true` | Start background heartbeat with the API |
 | `HEARTBEAT_INTERVAL_SECONDS` | `30` | Minimum tick delay |
 | `AUTO_RUN_DUE_CAMPAIGNS` | `false` | Do not spend model requests automatically during setup |
+| `HOURLY_SALES_REVIEW_ENABLED` | `false` | Create one internal, owner-only factual review per active campaign per UTC hour; it never creates content, publishes, sends, or spends. |
 | Campaign `schedule_cron` | `0 9 * * 1` | Weekly Monday schedule when auto-run is enabled |
 
 Run only one SQLite-backed service instance. If the system later migrates to PostgreSQL with a proper queue, the API and workers may be separated safely.
+
+### Hourly owner report
+
+Set `HOURLY_SALES_REVIEW_ENABLED=true` only after the service, persistent volume, and owner token have been validated. The heartbeat then stores one idempotent report per active campaign per UTC hour. Each report separates verification checks from observed campaign events, shows hour-over-hour aggregate movement, flags content readiness, and records a single owner-review recommendation. It cannot claim a sale unless a verified PayPro conversion callback exists.
+
+```bash
+curl -H "X-Control-Token: $CONTROL_TOKEN" \
+  "$BASE/api/campaigns/wegmetdiekilos-bronze/hourly-reviews/latest"
+
+curl -H "X-Control-Token: $CONTROL_TOKEN" \
+  "$BASE/api/campaigns/wegmetdiekilos-bronze/hourly-reviews?limit=72"
+```
+
+The report is private, informational, and approval-gated. It does not publish a draft, send outreach, purchase traffic, alter affiliate configuration, or guarantee a sale. Review a proposed action and explicitly authorise any public or paid activity separately.
+
+### Ten-agent sales-readiness council
+
+When an hourly report is created, ten deterministic advisors share a sanitized aggregate context in dependency order: **measurement integrity, funnel stage, attribution integrity, offer facts, audience definition, content readiness, landing-page readiness, consent and claims, acquisition handoff, and experiment guardrail**. Their findings are retained in the private review record and feed one final recommendation. They receive no secrets, affiliate URLs, visitor identifiers, health data, draft text, or external account access. They do not call a model, generate new content, approve artifacts, publish, send, or spend.
+
+The final guardrail can allow only a **proposal** for one reversible, owner-reviewed experiment after at least 100 observed views and 20 observed clicks. It never applies that proposal. Technical verification events are excluded from customer-evidence counts.
 
 ## Railway deployment
 
