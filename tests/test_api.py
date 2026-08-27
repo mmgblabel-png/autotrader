@@ -129,9 +129,14 @@ def test_public_creative_page_preserves_named_attribution(publisher_client: Test
         json={"workflow": "content", "channels": ["landing_page"], "force": True},
     )
     assert run.status_code == 200
-    artifact = publisher_client.get(
+    artifacts = publisher_client.get(
         "/api/campaigns/wegmetdiekilos-bronze/artifacts", headers=control()
-    ).json()["artifacts"][0]
+    ).json()["artifacts"]
+    artifact = next(
+        item
+        for item in artifacts
+        if item["agent"] == "MarketingAgent" and item["channel"] == "landing_page"
+    )
     reviewed = publisher_client.post(
         f"/api/artifacts/{artifact['id']}/review",
         headers=control(),
