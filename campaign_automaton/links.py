@@ -25,7 +25,9 @@ class AffiliateLinkBuilder:
     def __init__(self, settings: Settings) -> None:
         self.settings = settings
 
-    def destination(self, campaign: dict, source: str, content_id: str = "") -> str:
+    def destination(
+        self, campaign: dict, source: str, content_id: str = "", medium: str = "affiliate"
+    ) -> str:
         product_url = campaign.get("product_url") or self.settings.paypro_product_url
         template = self.settings.paypro_affiliate_url_template
         target = template.format(
@@ -36,15 +38,17 @@ class AffiliateLinkBuilder:
             target,
             {
                 "utm_source": source,
-                "utm_medium": "affiliate",
+                "utm_medium": medium,
                 "utm_campaign": campaign["slug"],
                 "utm_content": content_id,
             },
         )
 
-    def tracking_url(self, campaign_slug: str, source: str, content_id: str = "") -> str:
+    def tracking_url(
+        self, campaign_slug: str, source: str, content_id: str = "", medium: str = "affiliate"
+    ) -> str:
         path = f"{self.settings.public_base_url}/r/{campaign_slug}"
-        return _with_query(path, {"src": source, "content": content_id})
+        return _with_query(path, {"src": source, "medium": medium, "content": content_id})
 
     def affiliate_status(self) -> dict[str, str | bool]:
         template_uses_id = "{affiliate_id}" in self.settings.paypro_affiliate_url_template

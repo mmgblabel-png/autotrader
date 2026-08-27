@@ -24,7 +24,13 @@ from campaign_automaton.models import (
     TrackingEventCreate,
     WebhookEvent,
 )
-from campaign_automaton.publisher import PublicPublisher
+from campaign_automaton.publisher import (
+    _ALLOWED_MEDIA,
+    _ALLOWED_SOURCES,
+    PublicPublisher,
+    safe_content_id,
+    safe_tracking_value,
+)
 from campaign_automaton.runtime import Runtime, build_runtime
 from campaign_automaton.store import StoreError
 
@@ -126,11 +132,24 @@ def create_app() -> FastAPI:
         return HTMLResponse(publisher.portfolio())
 
     @app.get("/site/{campaign_slug}", response_class=HTMLResponse, include_in_schema=False)
-    def public_site(campaign_slug: str, request: Request) -> HTMLResponse:
+    def public_site(
+        campaign_slug: str,
+        request: Request,
+        utm_source: str = Query(default="website", max_length=100),
+        utm_medium: str = Query(default="referral", max_length=100),
+        utm_content: str = Query(default="hero-cta", max_length=100),
+    ) -> HTMLResponse:
         publisher = PublicPublisher(get_runtime(request).settings, get_runtime(request).store)
         if not publisher.enabled():
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Public site is not enabled.")
-        return HTMLResponse(publisher.home(campaign_slug))
+        return HTMLResponse(
+            publisher.home(
+                campaign_slug,
+                safe_tracking_value(utm_source, allowed=_ALLOWED_SOURCES, fallback="website"),
+                safe_tracking_value(utm_medium, allowed=_ALLOWED_MEDIA, fallback="referral"),
+                safe_content_id(utm_content),
+            )
+        )
 
     @app.get("/site/{campaign_slug}/articles/{artifact_id}", response_class=HTMLResponse, include_in_schema=False)
     def public_article(campaign_slug: str, artifact_id: str, request: Request) -> HTMLResponse:
@@ -198,6 +217,15 @@ def create_app() -> FastAPI:
             "website": "Website referral",
             "paypro": "PayPro referral",
         }
+        public_medium_labels = {
+            "affiliate": "Affiliate",
+            "social": "Social",
+            "email": "Email",
+            "organic": "Organic",
+            "referral": "Referral",
+            "paid": "Paid campaign",
+            "display": "Display",
+        }
         metric_names = ("views", "clicks", "signups", "conversions")
 
         def empty_metrics() -> dict[str, int]:
@@ -210,6 +238,8 @@ def create_app() -> FastAPI:
         campaigns: list[dict[str, Any]] = []
         totals = empty_metrics()
         source_totals: dict[str, dict[str, int]] = {}
+        attribution_totals: dict[tuple[str, str, str], dict[str, int]] = {}
+        history_totals: dict[str, dict[str, int]] = {}
         next_run_times: list[datetime] = []
         for campaign in runtime.store.list_campaigns():
             if campaign["status"] != "active":
@@ -243,6 +273,27 @@ def create_app() -> FastAPI:
                     count = int(row["count"])
                     source_metrics[label][metric_key] += count
                     source_totals[label][metric_key] += count
+            attribution_metrics: dict[tuple[str, str, str], dict[str, int]] = {}
+            for row in runtime.store.campaign_attribution(campaign["id"]):
+                source_label = public_source(row["source"])
+                medium_label = public_medium_labels.get(str(row["medium"]).lower(), "Other channel")
+                content_id = safe_content_id(str(row["content_id"]), fallback="Unlabeled asset")
+                attribution_key = (source_label, medium_label, content_id)
+                attribution_metrics.setdefault(attribution_key, empty_metrics())
+                attribution_totals.setdefault(attribution_key, empty_metrics())
+                event_type = str(row["event_type"]).rsplit(".", maxsplit=1)[-1].lower()
+                metric_key = {
+                    "view": "views", "click": "clicks", "signup": "signups", "conversion": "conversions"
+                }.get(event_type)
+                if metric_key:
+                    count = int(row["count"])
+                    attribution_metrics[attribution_key][metric_key] += count
+                    attribution_totals[attribution_key][metric_key] += count
+            history = runtime.store.campaign_daily_metrics(campaign["id"])
+            for point in history:
+                history_totals.setdefault(point["date"], empty_metrics())
+                for metric, value in point["metrics"].items():
+                    history_totals[point["date"]][metric] += int(value)
             next_run_at = campaign.get("next_run_at")
             if next_run_at:
                 next_run_times.append(datetime.fromisoformat(next_run_at).astimezone(UTC))
@@ -261,6 +312,17 @@ def create_app() -> FastAPI:
                             reverse=True,
                         )
                     ],
+                    "attribution_breakdown": [
+                        {
+                            "source": key[0], "medium": key[1], "content": key[2], "metrics": values
+                        }
+                        for key, values in sorted(
+                            attribution_metrics.items(),
+                            key=lambda item: sum(item[1].values()),
+                            reverse=True,
+                        )
+                    ],
+                    "history": history,
                 }
             )
         snapshot_quality = (
@@ -293,6 +355,16 @@ def create_app() -> FastAPI:
                 for label, values in sorted(
                     source_totals.items(), key=lambda item: sum(item[1].values()), reverse=True
                 )
+            ],
+            "attribution_breakdown": [
+                {"source": key[0], "medium": key[1], "content": key[2], "metrics": values}
+                for key, values in sorted(
+                    attribution_totals.items(), key=lambda item: sum(item[1].values()), reverse=True
+                )
+            ],
+            "history": [
+                {"date": day, "metrics": values}
+                for day, values in sorted(history_totals.items())
             ],
             "review_window": {
                 "hours": 24,
@@ -516,6 +588,7 @@ def create_app() -> FastAPI:
         campaign_slug: str,
         request: Request,
         src: str = Query(default="unknown", max_length=100),
+        medium: str = Query(default="affiliate", max_length=100),
         content: str = Query(default="", max_length=100),
     ) -> RedirectResponse:
         runtime = get_runtime(request)
@@ -523,13 +596,18 @@ def create_app() -> FastAPI:
         event = TrackingEventCreate(
             campaign_slug=campaign_slug,
             event_type="click",
-            source=src,
-            medium="affiliate",
-            content_id=content,
+            source=safe_tracking_value(src, allowed=_ALLOWED_SOURCES, fallback="website"),
+            medium=safe_tracking_value(medium, allowed=_ALLOWED_MEDIA, fallback="affiliate"),
+            content_id=safe_content_id(content),
             metadata={"tracking": "first_party_redirect"},
         )
         runtime.store.record_tracking_event(event)
-        destination = runtime.links.destination(campaign, src, content)
+        destination = runtime.links.destination(
+            campaign,
+            safe_tracking_value(src, allowed=_ALLOWED_SOURCES, fallback="website"),
+            safe_content_id(content),
+            safe_tracking_value(medium, allowed=_ALLOWED_MEDIA, fallback="affiliate"),
+        )
         return RedirectResponse(destination, status_code=302)
 
     return app

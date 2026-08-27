@@ -19,6 +19,24 @@ from campaign_automaton.store import SQLiteStore
 
 _LINK = re.compile(r"\[([^\]]+)\]\((https?://[^\s)]+)\)")
 _ORDERED = re.compile(r"^\d+\.\s+(.+)$")
+_TRACKING_VALUE = re.compile(r"^[a-z0-9][a-z0-9._-]{0,79}$", re.IGNORECASE)
+_ALLOWED_SOURCES = {
+    "direct", "organic", "google", "social", "facebook", "instagram", "linkedin",
+    "email", "newsletter", "website", "paypro",
+}
+_ALLOWED_MEDIA = {"affiliate", "social", "email", "organic", "referral", "paid", "display"}
+
+
+def safe_tracking_value(value: str, *, allowed: set[str], fallback: str) -> str:
+    """Keep public URL attribution aggregate, bounded, and free of arbitrary query text."""
+    normalized = value.strip().lower()
+    return normalized if normalized in allowed else fallback
+
+
+def safe_content_id(value: str, fallback: str = "hero-cta") -> str:
+    """Return a bounded content tag so personal or arbitrary query text is never stored."""
+    normalized = value.strip().lower()
+    return normalized if _TRACKING_VALUE.fullmatch(normalized) else fallback
 
 
 @dataclass(frozen=True, slots=True)
@@ -261,11 +279,20 @@ class PublicPublisher:
             description="Een transparante selectie van eigenaar-goedgekeurde leefstijl- en leerproducten.",
         )
 
-    def home(self, campaign_slug: str) -> str:
+    def home(
+        self,
+        campaign_slug: str,
+        source: str = "website",
+        medium: str = "referral",
+        content_id: str = "hero-cta",
+    ) -> str:
         latest = self.latest_by_type(campaign_slug)
         landing = latest.get("landing_page_copy")
         articles = [item for item in self._approved(self.store.get_campaign(campaign_slug)["id"]) if item.artifact_type == "blog_article"]
-        cta = f"/r/{campaign_slug}?src=website-home&content=hero-cta"
+        cta = (
+            f"/r/{campaign_slug}?src={html.escape(source, quote=True)}"
+            f"&medium={html.escape(medium, quote=True)}&content={html.escape(content_id, quote=True)}"
+        )
         landing_content = landing.content if landing else ""
         landing_html = render_markdown(landing_content) if landing else (
             "<h2>In voorbereiding</h2><p>Er is nog geen eigenaar-goedgekeurde landingspagina beschikbaar.</p>"

@@ -8,9 +8,10 @@ import threading
 import uuid
 from collections.abc import Iterator
 from contextlib import contextmanager
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, date, datetime, time, timedelta
 from pathlib import Path
 from typing import Any
+from zoneinfo import ZoneInfo
 
 from campaign_automaton.models import (
     ArtifactStatus,
@@ -636,6 +637,60 @@ class SQLiteStore:
         values["conversion_rate"] = round(conversions / clicks, 4) if clicks else 0.0
         values["by_source"] = [dict(row) for row in by_source]
         return values
+
+    def campaign_attribution(self, campaign_id: str) -> list[dict[str, Any]]:
+        """Return aggregate channel attribution without event metadata or identifiers."""
+        with self.connection() as db:
+            rows = db.execute(
+                """SELECT source, medium, COALESCE(artifact_id, '') AS content_id,
+                event_type, COUNT(*) AS count
+                FROM tracking_events WHERE campaign_id = ?
+                GROUP BY source, medium, artifact_id, event_type
+                ORDER BY count DESC""",
+                (campaign_id,),
+            ).fetchall()
+        return [dict(row) for row in rows]
+
+    def campaign_daily_metrics(
+        self, campaign_id: str, days: int = 7, timezone_name: str = "Europe/Amsterdam"
+    ) -> list[dict[str, Any]]:
+        """Return complete local-day metric buckets for public charting without raw events."""
+        timezone = ZoneInfo(timezone_name)
+        end_date = datetime.now(timezone).date()
+        start_date = end_date - timedelta(days=max(1, days) - 1)
+        buckets: dict[date, dict[str, int]] = {
+            start_date + timedelta(days=offset): {
+                "views": 0,
+                "clicks": 0,
+                "signups": 0,
+                "conversions": 0,
+            }
+            for offset in range((end_date - start_date).days + 1)
+        }
+        start_at = datetime.combine(start_date, time.min, tzinfo=timezone).astimezone(UTC).isoformat()
+        with self.connection() as db:
+            rows = db.execute(
+                """SELECT occurred_at, event_type, COUNT(*) AS count
+                FROM tracking_events
+                WHERE campaign_id = ? AND occurred_at >= ?
+                GROUP BY occurred_at, event_type""",
+                (campaign_id, start_at),
+            ).fetchall()
+        metric_keys = {
+            "view": "views",
+            "click": "clicks",
+            "signup": "signups",
+            "conversion": "conversions",
+        }
+        for row in rows:
+            occurred_at = datetime.fromisoformat(str(row["occurred_at"])).astimezone(timezone)
+            metric_key = metric_keys.get(str(row["event_type"]).rsplit(".", maxsplit=1)[-1].lower())
+            if metric_key and occurred_at.date() in buckets:
+                buckets[occurred_at.date()][metric_key] += int(row["count"])
+        return [
+            {"date": day.isoformat(), "metrics": metrics}
+            for day, metrics in sorted(buckets.items())
+        ]
 
     def remember(
         self,

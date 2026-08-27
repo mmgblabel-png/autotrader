@@ -92,6 +92,16 @@ def test_public_farm_snapshot_uses_allowlisted_source_aggregation(client: TestCl
         }
     ]
     assert snapshot["campaigns"][0]["source_breakdown"] == snapshot["source_breakdown"]
+    assert snapshot["attribution_breakdown"] == [
+        {
+            "source": "Social media",
+            "medium": "Affiliate",
+            "content": "Unlabeled asset",
+            "metrics": {"views": 0, "clicks": 1, "signups": 0, "conversions": 0},
+        }
+    ]
+    assert len(snapshot["history"]) == 7
+    assert snapshot["history"][-1]["metrics"]["clicks"] == 1
 
 
 def test_control_endpoints_require_token(client: TestClient):
@@ -251,7 +261,7 @@ def test_public_site_renders_approved_artifacts_only(publisher_client: TestClien
     assert site.status_code == 200
     assert "Geen wondermiddel en geen garantie" in site.text
     assert "Affiliate disclosure" in site.text
-    assert "/r/wegmetdiekilos-bronze?src=website-home" in site.text
+    assert "/r/wegmetdiekilos-bronze?src=website&medium=referral&content=hero-cta" in site.text
 
     article = publisher_client.get(
         f"/site/wegmetdiekilos-bronze/articles/{draft_blog['id']}"
