@@ -8,7 +8,17 @@ import uuid
 from datetime import UTC, datetime
 from typing import Any
 
-from campaign_automaton.agents import AnalyticsAgent, MarketingAgent, ResearchAgent, SEOAgent
+from campaign_automaton.agents import (
+    AnalyticsAgent,
+    AttributionIntegrityAgent,
+    ComplianceAgent,
+    DistributionAgent,
+    EditorialQualityAgent,
+    MarketingAgent,
+    OperationsReliabilityAgent,
+    ResearchAgent,
+    SEOAgent,
+)
 from campaign_automaton.config import Settings
 from campaign_automaton.links import AffiliateLinkBuilder
 from campaign_automaton.llm import LLMClient
@@ -20,7 +30,7 @@ log = logging.getLogger(__name__)
 
 
 class CampaignOrchestrator:
-    """Run research, SEO, marketing, and analytics as a durable campaign workflow."""
+    """Run a bounded, approval-gated nine-agent campaign workflow."""
 
     def __init__(
         self,
@@ -36,9 +46,14 @@ class CampaignOrchestrator:
         self.policy = policy
         self.links = links
         self.research = ResearchAgent(llm)
+        self.compliance = ComplianceAgent(llm)
         self.seo = SEOAgent(llm)
+        self.editorial = EditorialQualityAgent(llm)
         self.marketing = MarketingAgent(llm)
+        self.distribution = DistributionAgent(llm)
+        self.attribution = AttributionIntegrityAgent(llm)
         self.analytics = AnalyticsAgent(llm)
+        self.operations = OperationsReliabilityAgent(llm)
 
     def queue_run(
         self,
@@ -82,6 +97,7 @@ class CampaignOrchestrator:
             "memories": self.store.recall(campaign["id"], limit=12),
             "requested_channels": run["requested_channels"],
             "metrics": self.store.campaign_metrics(campaign["id"]),
+            "attribution": self.store.campaign_attribution(campaign["id"]),
             "affiliate_status": self.links.affiliate_status(),
             "tracking_urls": {
                 channel: self.links.tracking_url(campaign["slug"], channel)
@@ -187,11 +203,28 @@ class CampaignOrchestrator:
 
     def _agents_for_workflow(self, workflow: str) -> list[Any]:
         workflows = {
-            "full_campaign": [self.research, self.seo, self.marketing, self.analytics],
-            "research": [self.research],
-            "seo": [self.research, self.seo],
-            "content": [self.research, self.seo, self.marketing],
-            "analytics": [self.analytics],
+            "full_campaign": [
+                self.research,
+                self.compliance,
+                self.seo,
+                self.editorial,
+                self.marketing,
+                self.distribution,
+                self.attribution,
+                self.analytics,
+                self.operations,
+            ],
+            "research": [self.research, self.compliance],
+            "seo": [self.research, self.compliance, self.seo, self.editorial],
+            "content": [
+                self.research,
+                self.compliance,
+                self.seo,
+                self.editorial,
+                self.marketing,
+                self.distribution,
+            ],
+            "analytics": [self.attribution, self.analytics, self.operations],
         }
         if workflow not in workflows:
             raise ValueError(f"unknown workflow: {workflow}")

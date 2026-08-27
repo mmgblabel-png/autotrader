@@ -92,3 +92,45 @@ The merchant describes a course with more than 35 instructional videos and pract
 
 
 Promotion-flow access was initiated only after explicit owner confirmation. The campaign list presents the relevant control as `Promoot campagne`; the web view’s horizontal table control did not expose the button directly, so an alternate PayPro detail-route approach is required to inspect and accept any final enrollment terms. No enrollment state changed at this point.
+
+## Expansion screening — health category, read-only
+
+The authenticated PayPro Health category showed 45 campaigns. Beyond the existing portfolio, visible non-medical candidates were `Mindfulness voor het Dagelijkse leven - Happy with Yoga` (€30), `Yoga Stap voor Stap - Happy with Yoga` (€27), `Yoga Nidra - Happy with Yoga` (€17.50), and `Fermentatie Handboek` (€5). These are discovery leads only: their public positioning, exact account-issued affiliate link, and promotion terms still require separate verification.
+
+The same view displayed Naturecan CBD, Sunsbest, Afslank Receptenbijbel, and Keto Brons Plan. They remain excluded from the automation shortlist because their visible product positioning falls outside the project’s non-medical, no-outcome-claim policy boundary.
+
+## Authenticated candidate detail — Freds Bouwtekeningen
+
+Read-only inspection of authenticated campaign detail `34` verified a €70 sale price, €27 commission, score 128, 365-day cookie, deeplinking allowed, and indirect commission. The detail view describes access to more than 10,000 DIY drawings and projects for do-it-yourself users and small trades businesses. Its merchant terms explicitly prohibit Adwords or similar advertising and prohibit placing affiliate links in third-party Facebook groups; links are allowed on the affiliate's own website or page under their control. This makes the campaign compatible only with the project’s owned website and opt-in content approach. The merchant’s self-reported conversion-rate claim is not treated as independent performance evidence. No enrollment or link placement was performed.
+
+## Authenticated candidate detail — Communicatie Canvas Micro Learnings
+
+Read-only inspection of authenticated campaign detail `25458` verified a €13 commission, score 0, merchant Konnekst, 365-day cookie, deeplinking allowed, and no indirect commission. The merchant describes a nine-part video series with short, practical communication lessons for managers. Any owner-created campaign copy will be limited to that factual course format and audience, and will not repeat the merchant's unsupported performance, conversion, or income statements. The account detail displays an affiliate-link field for website placement. No enrollment or link placement was performed.
+
+## Authenticated candidate detail — PromptSchool.online AI course
+
+Read-only inspection of authenticated campaign detail `25548` verified commission of €74.70 plus 30% of sale price, score 0, merchant Puursimpel, 30-day cookie, deeplinking allowed, and no indirect commission. The merchant describes a Dutch-language course with video lessons, examples, templates, and prompts for AI tools. Any generated copy must retain this factual learning focus and avoid the merchant's time-saving, income, “expert,” and conversion claims. The account detail displays an affiliate-link field for website placement. No enrollment or link placement was performed.
+
+## Additional health-category candidate leads
+
+The authenticated Health category additionally displayed `Mindfulness voor het Dagelijkse leven - Happy with Yoga` (€30), `Yoga Stap voor Stap - Happy with Yoga` (€27), and `Yoga Nidra - Happy with Yoga` (€17.50), as well as `Fermentatie Handboek` (€5). These will be treated as individual products rather than substitutes for the existing Yoga subscription and fermentation course. Each still requires a read-only detail and product-page review before any private campaign record can be created.
+
+## Authenticated candidate detail — Mindfulness voor het Dagelijkse leven
+
+Read-only inspection of authenticated campaign detail `99` verified a €88 sale price, €30 commission, score 80, merchant Happy with Yoga B.V., 30-day cookie, deeplinking allowed, and indirect commission. The merchant describes an eight-week course with audio files, videos, and daily emails. Any generated copy must describe only those course-format facts and avoid outcome claims about stress, calm, or mental-health effects. The account detail displays an affiliate-link field for website placement. No enrollment or link placement was performed.
+
+## Authenticated candidate detail — Yoga Stap voor Stap
+
+Read-only inspection of authenticated campaign detail `427` verified a €57 sale price, €27 commission, score 78, merchant Happy with Yoga B.V., 30-day cookie, deeplinking allowed, and indirect commission. The merchant describes a nine-lesson beginner course covering foundational yoga postures, with bonus breathing videos, yoga series, and an ebook. Generated copy will describe only this course structure and avoid health, treatment, flexibility, or outcome claims. The account detail displays an affiliate-link field for website placement. No enrollment or link placement was performed.
+
+## Authenticated candidate detail — Yoga Nidra
+
+Read-only inspection of authenticated campaign detail `133` verified a €57 sale price, €17.50 commission, score 73, merchant Happy with Yoga B.V., 30-day cookie, deeplinking allowed, and indirect commission. The merchant describes a course based on guided exercises and visualisations. Because its page uses physical, mental, emotional, and sleep-related outcome language, any owner-created copy will be strictly restricted to the factual course format and must not reproduce health, relaxation, sleep, or treatment claims. The account detail displays an affiliate-link field for website placement. No enrollment or link placement was performed.
+
+## Verified account-issued destination availability
+
+The authenticated account detail pages displayed account-issued website destinations ending in affiliate identifier `183297` for all six candidates: Freds Bouwtekeningen (product 8620), Communicatie Canvas Micro Learnings (119186), PromptSchool AI course (122439), Mindfulness voor het Dagelijkse leven (31881), Yoga Stap voor Stap (27953), and Yoga Nidra (39703). The account-issued URLs were captured only for private, later campaign-record preparation; no new product was enrolled, activated, or published.
+
+The authenticated Health campaign list was restored after a transient read-only browser-control interruption. No promotion, enrollment, or account state change occurred during the restoration.
+
+The list continues to show the three candidate course pages as individual `Promoot campagne` entries and the separate, excluded medical or outcome-heavy offers. This confirms the planned six-product research route remains read-only and does not alter PayPro promotion status.

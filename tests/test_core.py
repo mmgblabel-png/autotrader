@@ -27,13 +27,18 @@ def test_full_workflow_creates_agent_artifacts(runtime):
     assert result["status"] == "awaiting_approval"
     assert result["summary"]["agents"] == [
         "ResearchAgent",
+        "ComplianceAgent",
         "SEOAgent",
+        "EditorialQualityAgent",
         "MarketingAgent",
+        "DistributionAgent",
+        "AttributionIntegrityAgent",
         "AnalyticsAgent",
+        "OperationsReliabilityAgent",
     ]
     campaign = runtime.store.get_campaign("wegmetdiekilos-bronze")
     artifacts = runtime.store.list_artifacts(campaign["id"])
-    assert len(artifacts) >= 8
+    assert len(artifacts) >= 13
     marketing = [item for item in artifacts if item["agent"] == "MarketingAgent"]
     assert marketing
     assert all("commissie ontvangen" in item["content"] for item in marketing)
