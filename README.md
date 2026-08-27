@@ -33,7 +33,8 @@ Accordingly, this branch implements the following constraints.
 | No internal redirect | The legacy `/r/<campaign>` endpoint returns `410 Gone` while `AFFILIATE_PROVIDER=amazon`. |
 | Prominent disclosure | Generated Amazon CTA copy places `Disclosure: As an Amazon Associate I earn from qualifying purchases. (paid link)` immediately beside the link. |
 | Draft-first operation | A missing Special Link blocks marketing artifacts from approval. `DRAFT_ONLY=true` blocks outbound publication even after a link is configured. |
-| Conservative facts | Policy checks block copied customer review/rating claims, outcome promises, email/DM spam, sensitive-data abuse, and redirect/cloaking risk. |
+| Channel restriction | Policy blocks Amazon Special Links in email, SMS/MMS, offline materials, and unverified community content; drafts are limited to permitted, owner-controlled channels. |
+| Conservative facts | Policy checks block copied customer review/rating claims, outcome promises, spam, sensitive-data abuse, and redirect/cloaking risk. |
 | Human control | Every artifact begins as a draft; a person must verify facts, disclosure, link, channel rules, and approval before any external publishing. |
 
 Amazon states that a standard qualifying session generally ends after 24 hours, when an order is placed, or when another Associate’s Special Link is clicked; cart additions can have a longer qualification window subject to the program rules.[6] This is an attribution rule, not a reason to use pressure tactics, automatic redirects, or incentives. Amazon’s rules also bar ordering on behalf of another person, artificially generating clicks, and using Amazon marks in prohibited paid-search placements.[5]
@@ -68,7 +69,7 @@ The four-agent sequence is **Research → SEO → Marketing → Analytics**. Eve
 |---|---|---|
 | `ResearchAgent` | Defines audience segments, intent themes, public-source research needs, and assumptions. | Research brief and source gaps. |
 | `SEOAgent` | Converts research into helpful topic clusters and a search-intent plan. | Editorial and metadata guidance. |
-| `MarketingAgent` | Prepares factual, channel-specific product-research drafts. | Blog, opt-in email, social, landing-page, and community-response drafts. |
+| `MarketingAgent` | Prepares factual, channel-specific product-research drafts. | Blog, approved social-account, and landing-page drafts; it skips Amazon Special Link drafts for email, SMS/MMS, offline material, and unverified community channels. |
 | `AnalyticsAgent` | Explains measured signals and proposes one reversible test at a time. | Uncertainty statement, experiment proposal, and stop/continue criteria. |
 
 ## Repository structure
@@ -165,7 +166,7 @@ The workflow is intentionally unable to publish directly. Before any outside use
 | Facts | Product facts match the current listing; variable price, rank, rating, stock, discount, delivery, and review language are absent unless used through an approved Amazon source. |
 | Market | The audience can use the target Amazon storefront and reasonably purchase the product. |
 | Channel rules | The destination channel permits affiliate promotion and the content is adapted to its rules. |
-| Consent | Email is opt-in with an unsubscribe path; community content responds to a relevant question and follows community rules. |
+| Channel permission | Use the Special Link only on an owner-controlled, approved Associate Site or social account that permits affiliate promotion. Do not use it in email, SMS/MMS, offline material, popups, Amazon customer-content areas, or an unverified community channel. |
 | Claims | No health, medical, fitness, productivity, scarcity, guarantee, or invented testimonial claim is present. |
 
 Artifacts can be inspected and approved through the CLI after this review.

@@ -1,5 +1,3 @@
-"""SEO planning agent."""
-
 from __future__ import annotations
 
 import json
@@ -18,76 +16,82 @@ class SEOAgent(BaseAgent):
     def deterministic(
         self, campaign: dict[str, Any], context: dict[str, Any]
     ) -> dict[str, Any]:
+        product_name = str(campaign["product_name"])
         clusters = [
             {
-                "pillar": "Gezond afvallen",
-                "intent": "informatief",
+                "pillar": "Streaming device compatibility",
+                "intent": "informational",
                 "supporting_topics": [
-                    "Waarom kleine gewoontes beter vol te houden zijn",
-                    "Hoe maak je een realistisch persoonlijk plan?",
-                    "Veelgemaakte valkuilen bij een crashdieet",
+                    "How to check whether a TV has the right HDMI connection",
+                    "What to verify about television resolution before choosing an HD streaming device",
+                    "Streaming-device connection and placement checklist",
                 ],
             },
             {
-                "pillar": "Persoonlijk afslankplan",
-                "intent": "commercieel onderzoekend",
+                "pillar": f"{product_name} product research",
+                "intent": "commercial investigation",
                 "supporting_topics": [
-                    "Welke vragen horen bij een verantwoord startplan?",
-                    "Wat kun je verwachten van digitale begeleiding?",
-                    "Checklist: past een afslankapp bij jou?",
+                    "Which product details should be checked in the current listing",
+                    "Questions to ask before choosing an HD streaming device",
+                    "When an HD device may be less suitable than a 4K alternative",
                 ],
             },
             {
-                "pillar": "Afvallen per levensfase",
-                "intent": "informatief",
+                "pillar": "Practical setup planning",
+                "intent": "informational",
                 "supporting_topics": [
-                    "Routine en herstel in verschillende levensfasen",
-                    "Wanneer vraag je professioneel advies?",
-                    "Zo evalueer je jouw voortgang zonder obsessie met de weegschaal",
+                    "Where a TV-stick device connects and receives power",
+                    "Why current network and service requirements should be verified",
+                    "How to compare device alternatives without relying on temporary offers",
                 ],
             },
         ]
         calendar = [
-            {"week": 1, "asset": "pillar_blog", "topic": "Gezond afvallen met haalbare stappen"},
-            {"week": 2, "asset": "checklist", "topic": "Past een persoonlijk afslankplan bij jou?"},
-            {"week": 3, "asset": "faq", "topic": "Verantwoord beginnen met een afslankapp"},
-            {"week": 4, "asset": "comparison_guide", "topic": "Crashdieet versus duurzame gewoontes"},
+            {"week": 1, "asset": "pillar_blog", "topic": "Streaming-device compatibility checklist"},
+            {"week": 2, "asset": "checklist", "topic": "Questions to verify before choosing an HD streaming stick"},
+            {"week": 3, "asset": "faq", "topic": "HD, 4K, connection, and current listing details"},
+            {"week": 4, "asset": "comparison_guide", "topic": "Choosing a streaming-device form factor for your TV"},
         ]
         data = {
             "topic_clusters": clusters,
             "editorial_calendar": calendar,
             "on_page_rules": [
-                "Gebruik één primaire zoekintentie per pagina.",
-                "Schrijf eerst voor de lezer; verwerk termen natuurlijk.",
-                "Markeer aannames en link naar betrouwbare gezondheidsinformatie waar passend.",
-                "Plaats affiliatevermelding dicht bij de eerste commerciële link.",
-                "Voeg FAQ-schema alleen toe als de vragen en antwoorden zichtbaar op de pagina staan.",
+                "Use one primary search intent per page and answer it before introducing a product.",
+                "Write for the reader; use terms naturally and do not repeat trademarks unnecessarily.",
+                "Separate stable specifications from variable price, offers, stock, delivery, and service availability.",
+                "Place the Associate disclosure close to any permitted direct Special Link.",
+                "Do not reuse customer reviews, star ratings, marketplace badges, or ranking claims without approved data rights.",
+                "Add structured FAQ data only when the questions and answers are visibly present and independently verified.",
             ],
             "internal_linking": [
-                "Link informatieve artikelen naar de centrale gids over gezond afvallen.",
-                "Link commerciële gidsen naar de quiz via de interne trackinglink.",
-                "Link medische context naar gezaghebbende publieke gezondheidsbronnen.",
+                "Link informational pages to a compatibility checklist on the operator's site.",
+                "Link product-research pages only to a direct, owner-supplied Amazon Special Link when it is permitted and disclosed.",
+                "Do not route paid-search traffic directly or indirectly through a redirect to Amazon.",
             ],
         }
         return {
-            "summary": "SEO-plan met drie clusters en een vierweekse waarde-eerst kalender.",
+            "summary": f"Prepared a conservative SEO plan for {product_name} with three research-first topic clusters.",
             "confidence": 0.6,
-            "assumptions": ["Zoekvolumes en concurrentieniveaus zijn nog niet gevalideerd."],
+            "assumptions": [
+                "Search volume, ranking difficulty, and audience demand remain unvalidated.",
+                "Each listed topic will be checked against current manufacturer and Amazon information before publication.",
+            ],
             "sources_needed": [
-                "Google Search Console-data van de eigen site",
-                "Gevalideerde zoekvolumes uit een toegestaan SEO-platform",
-                "Bestaande URL-inventaris voor het interne linkplan",
+                "Owner-authorized Search Console or keyword-platform data",
+                "Manufacturer compatibility and setup documentation",
+                "Current product detail-page information for the exact selected variant",
+                "Existing website inventory for any internal-link plan",
             ],
             "deliverables": [
                 {
                     "kind": "seo_plan",
                     "channel": "seo",
-                    "title": f"SEO-contentplan – {campaign['name']}",
+                    "title": f"SEO content plan — {campaign['name']}",
                     "content": (
-                        "Bouw eerst autoriteit met nuttige uitleg over gezond en duurzaam "
-                        "afvallen. Verbind informatieve zoekintenties met transparante, rustige "
-                        "CTA's naar de quiz. Valideer zoekvolume en concurrentie voordat de "
-                        "redactionele prioriteit definitief wordt vastgesteld."
+                        "Build useful product-research content around compatibility, connection, resolution, and setup questions. "
+                        "Answer the practical question first, distinguish fixed specifications from variable listing details, "
+                        "and use a transparent direct Special Link only after verifying the exact product and disclosure. "
+                        "Do not optimize for Amazon trademark keywords in paid search or rely on ranking/review claims."
                     ),
                     "data_json": json.dumps(data, ensure_ascii=False),
                 }

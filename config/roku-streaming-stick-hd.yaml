@@ -1,0 +1,49 @@
+campaign:
+  name: "Roku Streaming Stick HD — Amazon Associate Test"
+  slug: "roku-streaming-stick-hd"
+  product_name: "Roku Streaming Stick HD with Voice Remote"
+  product_url: "https://www.amazon.com/dp/B0DXXYS4BJ"
+  audience: >-
+    US-based adults who are actively comparing a compact HD streaming device for an existing
+    HDMI-equipped television and want to verify compatibility, connection, and setup requirements
+    before considering the current Amazon listing. Excludes audiences unable to shop Amazon.com.
+  market: "United States"
+  language: "en-US"
+  channels: [blog, social, landing_page]
+  goals:
+    - "Answer practical compatibility and setup questions before any purchase call-to-action."
+    - "Test one US audience and one factual content angle without claiming fast conversion or outcomes."
+    - "Use the exact owner-supplied Amazon Special Link only after a human verifies it and the disclosure."
+    - "Use Amazon Associates reporting as the source of record for ordered items, shipped revenue, and earnings."
+  product_facts:
+    - "The selected product is the Roku Streaming Stick HD with Voice Remote, model 3840R."
+    - "Roku states that the HD model supports up to 1080p resolution and uses an HDMI connection."
+    - "Roku lists dual-band Wi-Fi and built-in HDMI and USB-C for power."
+    - "Roku states that the included voice remote has TV power, volume, and mute controls, which work with most TVs."
+    - "Roku describes a compact stick design that plugs into a TV and is powered from the TV."
+    - "The product requires an HDMI-equipped television; buyers must check their own TV, network, service, regional, account, and content requirements."
+    - "Price, offers, stock, delivery eligibility, return terms, platform ranking, service availability, ratings, reviews, badges, and commission rate are variable and must not be used in public copy without current approved sources."
+  prohibited_claims:
+    - "Do not promise streaming quality, speed, entertainment value, savings, cable replacement, compatibility, setup time, or performance outcomes."
+    - "Do not use trademark bids, paid search ads that point directly or indirectly to Amazon, incentives, artificial clicks, customer-account information, or purchases on behalf of anyone."
+    - "Do not state a price, discount, stock level, delivery date, sales rank, review count, star rating, current content catalog, Amazon badge, or commission rate in public content without an approved live source."
+    - "Do not copy or quote customer reviews or display customer ratings without permitted Amazon API use."
+    - "Do not cloak, shorten, append parameters to, or send visitors through an automated redirect before an Amazon Special Link."
+    - "Do not use Special Links in email, SMS/MMS, offline material, pop-ups, pop-unders, transitional pages, Amazon customer-content areas, or unverified community channels."
+    - "Do not send unsolicited messages, scrape profiles, purchase leads, or create false scarcity, endorsements, or testimonials."
+  schedule_cron: "0 9 * * 1"
+  metadata:
+    owner: "Amazon Associate operator"
+    mode: "draft_only"
+    direct_links_only: true
+    selected_asin: "B0DXXYS4BJ"
+    live_reviewed_at: "2026-08-27"
+    target_storefront: "Amazon.com"
+    browser_delivery_location_note: "The reviewed product could not ship to the current Netherlands delivery location; campaign is US-only."
+    source_urls:
+      - "https://www.amazon.com/Best-Sellers-Electronics/zgbs/electronics"
+      - "https://www.amazon.com/dp/B0DXXYS4BJ"
+      - "https://www.roku.com/products/players/roku-streaming-stick"
+      - "https://affiliate-program.amazon.com/help/node/topic/GRXPHT8U84RAYDXZ"
+      - "https://affiliate-program.amazon.com/help/operating/participation/"
+    link_activation_requirement: "Owner must paste an exact SiteStripe or Associates Central Special Link for this product into AMAZON_ASSOCIATE_URL before approving any CTA."

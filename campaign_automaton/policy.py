@@ -148,6 +148,22 @@ class PolicyEngine:
                 )
 
         if self.settings.affiliate_provider == "amazon" and sales_intent:
+            if channel in {"email", "sms", "mms", "offline"}:
+                findings.append(
+                    PolicyFinding(
+                        code="amazon_special_link_channel_prohibited",
+                        severity="block",
+                        message="Amazon Special Links must not be used in email, SMS/MMS, or offline promotion.",
+                    )
+                )
+            if channel == "community":
+                findings.append(
+                    PolicyFinding(
+                        code="amazon_community_permission_required",
+                        severity="block",
+                        message="Community Special Link content is blocked until the owner verifies that the channel is an approved Associate Site and permits the promotion.",
+                    )
+                )
             if not self.settings.amazon_associate_url:
                 findings.append(
                     PolicyFinding(
@@ -226,13 +242,14 @@ class PolicyEngine:
                 )
             )
         if self.settings.affiliate_provider == "amazon" and action in {
-            "cloak_link", "redirect_affiliate_link", "auto_redirect_to_amazon", "purchase_on_behalf"
+            "cloak_link", "redirect_affiliate_link", "auto_redirect_to_amazon", "purchase_on_behalf",
+            "send_email", "send_sms", "send_mms", "offline_promotion"
         }:
             findings.append(
                 PolicyFinding(
                     code="amazon_prohibited_action",
                     severity="block",
-                    message="Amazon campaign links must be direct and customers must make their own transactions.",
+                    message="Amazon Special Links must remain direct, use permitted channels, and customers must make their own transactions.",
                 )
             )
         return PolicyResult(

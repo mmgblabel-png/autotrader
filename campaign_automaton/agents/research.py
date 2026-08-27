@@ -1,5 +1,3 @@
-"""Research agent for audience, intent, keyword, and community hypotheses."""
-
 from __future__ import annotations
 
 import json
@@ -18,75 +16,82 @@ class ResearchAgent(BaseAgent):
     def deterministic(
         self, campaign: dict[str, Any], context: dict[str, Any]
     ) -> dict[str, Any]:
+        product_name = str(campaign["product_name"])
+        market = str(campaign["market"])
         segments = [
             {
-                "segment": "Gezond en duurzaam willen afvallen",
-                "need": "Een haalbare aanpak die past in het dagelijks leven.",
-                "message_angle": "Kleine, realistische stappen en een persoonlijk vertrekpunt.",
+                "segment": "Compatibility-first shoppers",
+                "need": "Understand whether the product fits their existing device, space, and routine.",
+                "message_angle": "Use a practical compatibility checklist before considering the current listing.",
             },
             {
-                "segment": "Opnieuw structuur zoeken",
-                "need": "Duidelijkheid na eerdere pogingen zonder harde beloften.",
-                "message_angle": "Focus op routine, reflectie en verantwoorde verwachtingen.",
+                "segment": "Replacement or upgrade researchers",
+                "need": "Compare a familiar device category without being pressured into unnecessary features.",
+                "message_angle": "Explain what to verify, what can vary, and when an alternative may fit better.",
             },
             {
-                "segment": "Digitale begeleiding verkiezen",
-                "need": "Een laagdrempelige app-ervaring en een plan dat bij de levensfase past.",
-                "message_angle": "Start met de drie-minutenquiz en ontdek of de aanpak aansluit.",
+                "segment": "Value-conscious household buyers",
+                "need": "Make an informed decision based on current product details and their own budget.",
+                "message_angle": "Separate stable product facts from price, availability, delivery, and offer details that change.",
             },
         ]
         keyword_themes = [
-            "gezond afvallen",
-            "duurzaam afvallen",
-            "persoonlijk afslankplan",
-            "afvallen app",
-            "afvallen zonder crashdieet",
-            "gezonde gewoontes afvallen",
-            "afslankplan op leeftijd",
+            f"{product_name} compatibility",
+            f"{product_name} setup requirements",
+            f"{product_name} alternatives",
+            "how to choose a streaming device",
+            f"{product_name} features to verify",
+            "HD streaming device compatibility checklist",
         ]
         community_plan = [
-            "Bestudeer openbaar vindbare vragen in relevante Nederlandse gezondheids- en leefstijlcommunities zonder profielen of contactgegevens te verzamelen.",
-            "Noteer terugkerende vragen op onderwerpniveau en link naar de openbare bron voor handmatige verificatie.",
-            "Reageer alleen waardevol en transparant wanneer de community zelfpromotie en affiliatelinks toestaat.",
+            "Study publicly visible, product-relevant questions at the topic level without collecting profiles or contact data.",
+            "Record recurring compatibility and comparison questions with a public source URL for owner verification.",
+            "Provide an answer only where a community permits the format and the response directly addresses a real question.",
+            "Do not place Amazon Special Links in customer-content areas on Amazon, unsolicited messages, or channels that prohibit affiliate links.",
         ]
         data = {
             "segments": segments,
             "keyword_themes": keyword_themes,
             "community_plan": community_plan,
             "competitor_review_fields": [
-                "positionering",
-                "bewijsvoering",
-                "prijs en voorwaarden",
-                "privacy en toestemming",
-                "claims",
-                "contentgaten",
+                "device compatibility",
+                "installation and setup requirements",
+                "ongoing service requirements",
+                "price and delivery variability",
+                "return terms",
+                "claims and disclosure placement",
+                "content gaps",
             ],
             "verified_facts": campaign.get("product_facts", []),
         }
         return {
-            "summary": "Een hypothese-gedreven onderzoeksbrief met veilige segmenten en zoekthema's.",
+            "summary": (
+                f"Prepared a hypothesis-led, {market}-focused research brief for {product_name} "
+                "using only campaign-supplied facts."
+            ),
             "confidence": 0.62,
             "assumptions": [
-                "De doelgroep bevindt zich primair in Nederland.",
-                "De quiz en app zijn relevante onderdelen van de huidige klantreis.",
+                "The campaign audience is able to use the target Amazon storefront.",
+                "The owner will verify current compatibility, price, availability, delivery, and returns before approving copy.",
+                "No conversion result can be inferred before a controlled test accumulates valid report data.",
             ],
             "sources_needed": [
-                "Actuele productvoorwaarden en prijs van het Bronze Plan",
-                "Gevalideerde productfuncties en inclusies",
-                "Toegestane promotierichtlijnen per gekozen community",
-                "Geanonimiseerde Search Console- of advertentiezoektermdata",
+                "Current manufacturer specifications and compatibility guidance",
+                "Current Amazon detail-page information for the exact selected variant",
+                "Permitted, aggregate search-demand data from an owner-approved source",
+                "Promotion and disclosure rules for each external channel considered",
             ],
             "deliverables": [
                 {
                     "kind": "research_brief",
                     "channel": "research",
-                    "title": f"Onderzoeksbrief – {campaign['name']}",
+                    "title": f"Research brief — {campaign['name']}",
                     "content": (
-                        "Onderzoek eerst de vragen, barrières en taal van mensen die gezond en "
-                        "duurzaam willen afvallen. Gebruik openbare bronnen uitsluitend op "
-                        "geaggregeerd onderwerpniveau. Prioriteer vragen over haalbaarheid, "
-                        "routine, persoonlijke aansluiting en verantwoorde verwachtingen. "
-                        "Verifieer productfuncties en voorwaarden voordat ze in verkoopcopy komen."
+                        f"Start with the questions a {product_name} shopper must answer before deciding: "
+                        "existing-device compatibility, physical connection or placement, network or service needs, "
+                        "and the difference between stable specifications and details that change. Use public, "
+                        "aggregate topic research only. Verify product facts, terms, and the destination before any "
+                        "commercial draft is approved; do not infer conversion likelihood from bestseller rank alone."
                     ),
                     "data_json": json.dumps(data, ensure_ascii=False),
                 }

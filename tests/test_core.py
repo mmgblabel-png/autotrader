@@ -33,7 +33,7 @@ def test_full_workflow_creates_agent_artifacts(runtime):
     ]
     campaign = runtime.store.get_campaign("owala-freesip-24oz")
     artifacts = runtime.store.list_artifacts(campaign["id"])
-    assert len(artifacts) >= 7
+    assert len(artifacts) >= 6
     marketing = [item for item in artifacts if item["agent"] == "MarketingAgent"]
     assert marketing
     assert all("As an Amazon Associate" in item["content"] for item in marketing)
@@ -250,3 +250,17 @@ def test_marketing_drafts_are_product_specific(runtime):
     assert "Practice Happy with Yoga" in content
     assert "A reusable water bottle with a locking push-button lid." in content
     assert "WegMetDieKilos" not in content
+
+
+def test_amazon_policy_blocks_special_link_content_in_email(runtime):
+    evaluated = runtime.policy.evaluate_content(
+        "Disclosure: As an Amazon Associate I earn from qualifying purchases. (paid link)\n\n"
+        "[View product](https://www.amazon.com/dp/B0DXXYS4BJ?tag=spmg00-20)",
+        channel="email",
+        sales_intent=True,
+    )
+    assert evaluated.result.allowed is False
+    assert any(
+        item.code == "amazon_special_link_channel_prohibited"
+        for item in evaluated.result.findings
+    )

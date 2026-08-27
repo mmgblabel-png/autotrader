@@ -21,14 +21,22 @@ class MarketingAgent(BaseAgent):
     def deterministic(
         self, campaign: dict[str, Any], context: dict[str, Any]
     ) -> dict[str, Any]:
-        channels = context.get("requested_channels") or campaign.get("channels", [])
+        requested_channels = context.get("requested_channels") or campaign.get("channels", [])
+        affiliate = context.get("affiliate_status", {})
+        provider = str(affiliate.get("provider") or "").lower()
+        forbidden_amazon_channels = {"email", "sms", "mms", "offline", "community"}
+        skipped_channels = (
+            [str(channel) for channel in requested_channels if str(channel) in forbidden_amazon_channels]
+            if provider == "amazon"
+            else []
+        )
+        channels = [str(channel) for channel in requested_channels if str(channel) not in skipped_channels]
         tracking_urls = context.get("tracking_urls", {})
         product_name = str(campaign["product_name"])
         facts = self._facts(campaign)
         fact_list = "\n".join(f"- {fact}" for fact in facts[:5]) or (
             "- Check the current product page and terms before deciding."
         )
-        affiliate = context.get("affiliate_status", {})
         direct_link_ready = bool(affiliate.get("ready"))
 
         def cta(channel: str) -> str:
@@ -47,12 +55,12 @@ class MarketingAgent(BaseAgent):
 
         deliverables: list[dict[str, str]] = []
         for channel in channels:
-            call_to_action = cta(str(channel))
+            call_to_action = cta(channel)
             if channel == "blog":
-                title = f"What to check before choosing the {product_name}"
+                title = f"What to check before choosing {product_name}"
                 content = f"""# {title}
 
-A reusable water bottle is a small daily-use purchase, but the practical details still matter. Start with where you expect to use it, whether the size works for your routine, and whether the design suits how you drink and clean it. This is independent product-research information, not health or performance advice.
+A product listing can make a device look straightforward, but the practical details decide whether it fits a real setup. Start with your current equipment, connection options, intended use, and the details you need to verify before making a purchase. This is independent product-research information, not a performance guarantee.
 
 ## Verified product details
 
@@ -60,39 +68,22 @@ A reusable water bottle is a small daily-use purchase, but the practical details
 
 ## Before deciding
 
-1. Confirm the current product variant, price, availability, delivery eligibility, and return terms on Amazon.
-2. Consider capacity, cleaning routine, bag space, and whether the bottle fits the cupholder you use.
-3. Compare alternatives when a different lid type, size, or lower price is more important to you.
-4. Make a purchase only if the current listing fits your own needs and budget.
+1. Confirm the current selected variant, price, availability, delivery eligibility, and return terms on Amazon.
+2. Check compatibility with the equipment, connections, network, services, and space you already use.
+3. Compare alternatives if a different specification, form factor, or price point is more appropriate for your needs.
+4. Make a purchase only if the current listing fits your personal requirements and budget.
 
 {call_to_action}"""
                 kind = "blog_article"
                 data = {"primary_intent": "informed_product_research", "cta": "direct_special_link"}
-            elif channel == "email":
-                title = f"Email draft: practical checks for {product_name}"
-                content = f"""Subject: A few practical checks before choosing a reusable water bottle
-
-Hello {{first_name}},
-
-If you are comparing reusable water bottles, it can help to focus on everyday fit rather than impulse. Here are the product details we have verified:
-
-{fact_list}
-
-Please confirm current price, delivery, and return information directly on Amazon before deciding.
-
-{call_to_action}
-
-This draft is only for recipients who opted in to receive relevant information. Include an unsubscribe route in every sent message."""
-                kind = "email_sequence"
-                data = {"sequence_step": 1, "audience": "opt-in only"}
             elif channel == "social":
-                title = f"Social draft: a practical look at {product_name}"
-                content = f"""Looking for a reusable insulated water bottle? Start with the details that change daily use: capacity, lid design, cleaning, carrying, and fit in the places you use it.
+                title = f"Social draft: practical checks for {product_name}"
+                content = f"""Considering a device in this category? Start with the details that affect day-to-day use: compatibility, connection, setup requirements, form factor, and the options that matter for your equipment.
 
-For the {product_name}, we verified:
+For {product_name}, we verified:
 {fact_list}
 
-Always check the current Amazon listing for the exact variant, price, availability, and delivery options before buying.
+Check the current Amazon listing for the exact selected variant, price, availability, delivery options, and return terms before deciding.
 
 {call_to_action}"""
                 kind = "social_post"
@@ -101,7 +92,7 @@ Always check the current Amazon listing for the exact variant, price, availabili
                 title = f"Product research: {product_name}"
                 content = f"""# {title}
 
-This page helps you check whether the product details match your daily routine. It does not promise a health, fitness, or performance outcome.
+This page helps you check whether the documented product details fit the equipment and routine you already have. It does not promise an entertainment, connectivity, speed, health, fitness, or performance outcome.
 
 ## Verified product details
 
@@ -109,26 +100,14 @@ This page helps you check whether the product details match your daily routine. 
 
 ## Questions to consider
 
-- Would the capacity and form factor work for commuting, campus, work, or exercise?
-- Will the lid and cleaning requirements fit your regular routine?
-- Does the cupholder note matter for the vehicles or equipment you use?
-- Have you checked the live Amazon listing for the selected variant, price, availability, delivery eligibility, and return terms?
+- Is the product compatible with the device, connection, and environment you will use?
+- Do you understand any network, account, subscription, content-service, accessory, or power requirements?
+- Does the form factor work for your available space and setup?
+- Have you checked the live Amazon listing for the selected variant, current price, availability, delivery eligibility, and return terms?
 
 {call_to_action}"""
                 kind = "landing_page_copy"
                 data = {"cta": "direct_special_link", "claims_level": "conservative"}
-            elif channel == "community":
-                title = f"Community response template: {product_name}"
-                content = (
-                    "Answer the member's specific product-use question first. Mention the "
-                    f"{product_name} only when it is directly relevant, the community rules permit it, "
-                    "and the affiliate relationship is clearly disclosed beside a direct Amazon "
-                    "Special Link. Never post identical replies across groups, and never send an "
-                    "unsolicited direct message.\n\n"
-                    f"{call_to_action}"
-                )
-                kind = "community_response_template"
-                data = {"requires_rule_check": True, "requires_question_context": True}
             else:
                 continue
             deliverables.append(
@@ -141,16 +120,26 @@ This page helps you check whether the product details match your daily routine. 
                 }
             )
         return {
-            "summary": f"Generated {len(deliverables)} approval-gated product-research drafts for {product_name}.",
+            "summary": (
+                f"Generated {len(deliverables)} approval-gated product-research drafts for {product_name}."
+                + (
+                    " Skipped email and community direct-link drafts because Amazon Special Links require "
+                    "separate channel-permission review and cannot be used in email/SMS/offline promotion."
+                    if skipped_channels
+                    else ""
+                )
+            ),
             "confidence": 0.7,
             "assumptions": [
                 "The owner will paste an exact Amazon Associates Special Link before approving a purchase CTA.",
                 "Every external publication remains subject to separate owner approval and channel-rule review.",
+                "Email, SMS/MMS, offline materials, and unverified community channels are excluded from Amazon Special Link promotion.",
             ],
             "sources_needed": [
                 "Current Amazon product listing for price, availability, delivery, and returns",
+                "Current manufacturer specifications and compatibility guidance",
                 "Amazon Associates operating agreement and participation requirements",
-                "Applicable community or social-platform advertising rules",
+                "Applicable social-platform or website advertising rules",
             ],
             "deliverables": deliverables,
         }
