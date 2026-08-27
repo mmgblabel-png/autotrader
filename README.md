@@ -356,6 +356,12 @@ curl -H "X-Control-Token: $CONTROL_TOKEN" \
 
 The report is private, informational, and approval-gated. It does not publish a draft, send outreach, purchase traffic, alter affiliate configuration, or guarantee a sale. Review a proposed action and explicitly authorise any public or paid activity separately.
 
+### Ten-agent sales-readiness council
+
+When an hourly report is created, ten deterministic advisors share a sanitized aggregate context in dependency order: **measurement integrity, funnel stage, attribution integrity, offer facts, audience definition, content readiness, landing-page readiness, consent and claims, acquisition handoff, and experiment guardrail**. Their findings are retained in the private review record and feed one final recommendation. They receive no secrets, affiliate URLs, visitor identifiers, health data, draft text, or external account access. They do not call a model, generate new content, approve artifacts, publish, send, or spend.
+
+The final guardrail can allow only a **proposal** for one reversible, owner-reviewed experiment after at least 100 observed views and 20 observed clicks. It never applies that proposal. Technical verification events are excluded from customer-evidence counts.
+
 ## Railway deployment
 
 Railway detects and builds a root `Dockerfile` automatically.[4] It injects `PORT`, which the start script passes to Uvicorn, and it activates the deployment after `/api/health` returns HTTP 200.[5] Ordinary deployment storage is ephemeral, so the included project configuration creates a volume mounted at `/data`.[3] [6]

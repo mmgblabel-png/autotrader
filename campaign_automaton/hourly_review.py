@@ -10,6 +10,7 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from typing import Any
 
+from campaign_automaton.sales_council import SalesReadinessCouncil
 from campaign_automaton.store import SQLiteStore
 
 VERIFICATION_SOURCES = frozenset(
@@ -25,6 +26,7 @@ class HourlySalesReviewer:
 
     def __init__(self, store: SQLiteStore) -> None:
         self.store = store
+        self.council = SalesReadinessCouncil()
 
     def review_campaign(self, campaign: dict[str, Any], now: datetime | None = None) -> tuple[dict[str, Any], bool]:
         """Store one idempotent review for the campaign's current UTC hour."""
@@ -46,7 +48,20 @@ class HourlySalesReviewer:
             for key in FUNNEL_KEYS
         }
         readiness = self._readiness(campaign, totals, observed, verified_conversions)
-        recommendation = _recommendation(readiness, observed, verified_conversions)
+        council = self.council.evaluate(
+            {
+                "data_quality": readiness["data_quality"],
+                "observed": observed,
+                "verified_paypro_conversions": verified_conversions,
+                "content": readiness["content"],
+                "approved_artifact_types": readiness["approved_artifact_types"],
+                "product_fact_count": len(campaign["product_facts"]),
+                "has_audience": bool(campaign["audience"].strip()),
+                "goal_count": len(campaign["goals"]),
+            }
+        )
+        readiness["council"] = council
+        recommendation = council["final_recommendation"]
         metrics = {
             "all_tracked": _metric_summary(totals),
             "observed": _metric_summary(observed),
@@ -101,8 +116,17 @@ class HourlySalesReviewer:
             data_quality = "verification_only"
         else:
             data_quality = "no_events"
+        approved_artifact_types = sorted(
+            {
+                artifact["artifact_type"]
+                for artifact in artifacts
+                if artifact["status"] == "approved"
+                and artifact.get("policy", {}).get("allowed", False)
+            }
+        )
         return {
             "data_quality": data_quality,
+            "approved_artifact_types": approved_artifact_types,
             "observed_evidence": {
                 "minimum_views": MINIMUM_OBSERVED_VIEWS,
                 "minimum_clicks": MINIMUM_OBSERVED_CLICKS,
