@@ -77,6 +77,8 @@ class Settings:
     heartbeat_interval_seconds: float
     auto_run_due_campaigns: bool
     hourly_sales_review_enabled: bool
+    daily_tiktok_review_enabled: bool
+    daily_tiktok_review_campaigns: tuple[str, ...]
     schedule_timezone: str
     draft_only: bool
     website_enabled: bool
@@ -159,6 +161,11 @@ def load_settings() -> Settings:
         heartbeat_interval_seconds=_float("HEARTBEAT_INTERVAL_SECONDS", 30.0, 1.0),
         auto_run_due_campaigns=_bool("AUTO_RUN_DUE_CAMPAIGNS", False),
         hourly_sales_review_enabled=_bool("HOURLY_SALES_REVIEW_ENABLED", False),
+        daily_tiktok_review_enabled=_bool("DAILY_TIKTOK_REVIEW_ENABLED", False),
+        daily_tiktok_review_campaigns=_csv(
+            "DAILY_TIKTOK_REVIEW_CAMPAIGNS",
+            "freds-bouwtekeningen,communicatie-canvas",
+        ),
         schedule_timezone=os.getenv("SCHEDULE_TIMEZONE", "Europe/Amsterdam").strip(),
         draft_only=_bool("DRAFT_ONLY", True),
         website_enabled=_bool("WEBSITE_ENABLED", False),

@@ -27,6 +27,8 @@ Set these through the Railway dashboard or CLI before the first production deplo
 | `WEBHOOK_TOKEN` | Yes | Different `openssl rand -hex 32` value |
 | `DRAFT_ONLY` | Yes | `true` |
 | `AUTO_RUN_DUE_CAMPAIGNS` | Yes | `false` for setup |
+| `DAILY_TIKTOK_REVIEW_ENABLED` | Optional | `true` only for one internal, policy-checked review candidate per day; it never uploads or posts to TikTok |
+| `DAILY_TIKTOK_REVIEW_CAMPAIGNS` | Optional | Comma-separated active campaign slugs eligible for internal review, for example `freds-bouwtekeningen,communicatie-canvas` |
 | `OPENAI_API_KEY` | Optional | Omit for deterministic mode |
 | `OPENAI_BASE_URL` | Optional | OpenAI-compatible endpoint |
 
@@ -121,6 +123,10 @@ Send it to `/api/webhooks/events` with `X-Webhook-Token`. Use a stable `event_id
 Complete all staging checks before changing `AUTO_RUN_DUE_CAMPAIGNS` to `true`. Confirm model request budgets, review capacity, affiliate links, campaign schedule, disclosure, and policy behavior first. Activate the campaign through the CLI locally or the protected PATCH endpoint.
 
 Keep publication outside the runtime. Scheduled work creates drafts and proposals; it does not post, email, message, or purchase anything.
+
+### Daily TikTok review queue
+
+When `DAILY_TIKTOK_REVIEW_ENABLED=true`, the heartbeat creates at most **one** internal TikTok review candidate per local calendar day across `DAILY_TIKTOK_REVIEW_CAMPAIGNS`. The queue records an ordinary draft artifact, its deterministic content-policy result, the proposed first-party UTM route, and an append-only audit event. It cannot call TikTok, upload media, publish a post, approve an artifact, send a message, or change a campaign. Before any potential post, the owner must separately review the final media and editable caption, confirm the channel is allowed by the merchant, choose commercial disclosure and visibility, and give explicit approval for that exact post.
 
 ## 8. Persistence verification
 

@@ -68,6 +68,7 @@ class HeartbeatScheduler:
             "recovered_runs": 0,
             "executed_runs": [],
             "hourly_sales_review_ids": [],
+            "daily_tiktok_review_run_id": None,
         }
         try:
             details["recovered_runs"] = self.store.recover_stale_runs()
@@ -106,6 +107,12 @@ class HeartbeatScheduler:
                     )
                     if created:
                         details["hourly_sales_review_ids"].append(review["id"])
+            if self.settings.daily_tiktok_review_enabled:
+                review_run, created = await asyncio.to_thread(
+                    self.orchestrator.queue_daily_tiktok_review
+                )
+                if created and review_run is not None:
+                    details["daily_tiktok_review_run_id"] = review_run["id"]
             self.tick_count += 1
             self.last_tick_at = utc_now()
             self.last_error = None
@@ -127,6 +134,10 @@ class HeartbeatScheduler:
             "running": self.running,
             "interval_seconds": self.settings.heartbeat_interval_seconds,
             "hourly_sales_review_enabled": self.settings.hourly_sales_review_enabled,
+            "daily_tiktok_review_enabled": self.settings.daily_tiktok_review_enabled,
+            "daily_tiktok_review_campaigns": list(
+                self.settings.daily_tiktok_review_campaigns
+            ),
             "tick_count": self.tick_count,
             "last_tick_at": self.last_tick_at,
             "last_error": self.last_error,

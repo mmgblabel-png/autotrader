@@ -32,6 +32,8 @@ export default defineRailway(() => {
       DRAFT_ONLY: "true",
       HEARTBEAT_ENABLED: "true",
       AUTO_RUN_DUE_CAMPAIGNS: "false",
+      DAILY_TIKTOK_REVIEW_ENABLED: "true",
+      DAILY_TIKTOK_REVIEW_CAMPAIGNS: "freds-bouwtekeningen,communicatie-canvas",
       PUBLIC_BASE_URL: preserve(),
       PAYPRO_AFFILIATE_ID: preserve(),
       PAYPRO_AFFILIATE_URL_TEMPLATE: preserve(),

@@ -131,6 +131,37 @@ async def test_hourly_scheduler_runs_only_when_explicitly_enabled(settings):
     assert len(reviews) == 1
 
 
+async def test_daily_tiktok_review_queue_creates_one_draft_only_candidate(settings):
+    runtime = build_runtime(
+        replace(
+            settings,
+            daily_tiktok_review_enabled=True,
+            daily_tiktok_review_campaigns=("wegmetdiekilos-bronze",),
+        )
+    )
+    campaign = _activate(runtime)
+
+    first_tick = await runtime.scheduler.tick()
+    second_tick = await runtime.scheduler.tick()
+
+    assert first_tick["daily_tiktok_review_run_id"] is not None
+    assert second_tick["daily_tiktok_review_run_id"] is None
+    candidates = [
+        artifact
+        for artifact in runtime.store.list_artifacts(campaign["id"])
+        if artifact["artifact_type"] == "tiktok_review_candidate"
+    ]
+    assert len(candidates) == 1
+    candidate = candidates[0]
+    assert candidate["status"] == "draft"
+    assert candidate["policy"]["allowed"] is True
+    assert candidate["metadata"]["external_action"] is False
+    assert candidate["metadata"]["upload_attempted"] is False
+    assert candidate["metadata"]["post_attempted"] is False
+    assert candidate["metadata"]["owner_confirmation_required"] is True
+    assert "Niet uploaden of posten" in candidate["content"]
+
+
 def test_hourly_review_endpoints_are_owner_only(client: TestClient):
     unauthenticated = client.get("/api/campaigns/wegmetdiekilos-bronze/hourly-reviews")
     assert unauthenticated.status_code == 401
