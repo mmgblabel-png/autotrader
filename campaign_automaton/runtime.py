@@ -45,7 +45,7 @@ def _seed_default_campaign(settings: Settings, store: SQLiteStore) -> dict:
         raw = yaml.safe_load(handle) or {}
     campaign_data = raw.get("campaign", raw)
     request = CampaignCreate.model_validate(campaign_data)
-    product_url = str(request.product_url or settings.paypro_product_url)
+    product_url = str(request.product_url or settings.default_product_url)
     return store.seed_campaign(request, product_url)
 
 

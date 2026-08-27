@@ -1,262 +1,197 @@
-# WegMetDieKilos PayPro Campaign Automaton
+# Amazon Associate Campaign Automaton
 
-**WegMetDieKilos PayPro Campaign Automaton** is an approval-gated AI campaign runtime adapted from the architectural ideas in [Conway Research’s Automaton](https://github.com/Conway-Research/automaton). It preserves the useful continuous-loop, heartbeat, persistent-memory, policy, skills, audit, observability, and optimization patterns while replacing wallet, autonomous payment, infrastructure replication, and unrestricted self-modification with safe affiliate campaign workflows.[1]
+**Amazon Associate Campaign Automaton** is an approval-gated campaign workflow for researching products, preparing fact-based affiliate drafts, recording pseudonymous first-party events, and evaluating controlled tests. It is adapted from the structural ideas in [Conway Research’s Automaton][1], but deliberately removes autonomous purchasing, unapproved publishing, link cloaking, and uncontrolled self-modification.
 
-> The application creates drafts, research plans, SEO plans, analytics reports, and optimization proposals. Its optional self-hosted website renders only owner-approved, policy-cleared artifacts after an explicit website opt-in. It does **not** send unsolicited messages, scrape personal profiles, purchase leads, publish through third-party accounts autonomously, make medical claims, or guarantee weight-loss outcomes.
+> The application creates drafts, research plans, SEO plans, analytics reports, and reversible optimization proposals. It does **not** make purchases, publish to third-party accounts, scrape profiles, contact people without consent, guarantee conversion, or create Amazon affiliate links automatically.
 
-## What is implemented
+The current default campaign is an evidence-informed **draft test** for the Owala FreeSip 24 oz water bottle. It is **not** a claim that this product will convert fastest. The linked US Associates account reported zero clicks, ordered items, shipped items, commissions, and bounties for the last 30 days reviewed on 27 August 2026. A product-level conversion claim would therefore be unsupported until controlled test data exists.
 
-The runtime coordinates four specialized agents in a durable **Research → SEO → Marketing → Analytics** workflow. Every run, artifact version, policy finding, click, conversion, memory, model call, approval, and scheduler event is stored in SQLite. A tracked redirect records clicks before sending the visitor to the configured PayPro destination.
+## Product selection and test rationale
 
-| Capability | Implementation |
+The default test candidate was selected from the Amazon.com Home & Kitchen best-seller page, then checked on its own product detail page. At review time it had a mid-range listed price, substantial public social proof, a clearly understood use case, and product facts that can be described without health, medical, or performance promises. Its Associates SiteStripe category was displayed as **Kitchen & Dining** with a **4.5%** commission rate. Those dynamic values, along with ratings, reviews, ranking, stock, price, delivery, and commission rate, are deliberately excluded from generated public copy because they can change and may require an approved Amazon data source for reuse.[2] [3]
+
+| Factor | Why it supports an initial test | Guardrail |
+|---|---|---|
+| Everyday purchase intent | A reusable bottle has a familiar, practical use case for commuting, campus, work, gym, and daily routines. | Content must not claim hydration, health, fitness, or productivity outcomes. |
+| Moderate price point | A lower-commitment purchase can be suitable for a first CTA test. | Never hard-code the price, deal, discount, or stock claim in public copy. |
+| Product-specific facts | The product page describes capacity, materials, lid, carry loop, cleaning opening, and cupholder caveat. | Use only verified facts and include the cupholder limitation. |
+| Current account evidence | The account had no historical conversion data. | Treat the first campaign as a measurement exercise, not an earnings prediction. |
+| Market fit | The selected item was unavailable for the current Netherlands delivery location, while the account tag was for the US store. | Initial content is restricted to US-based traffic that can shop Amazon.com. |
+
+The initial direct alternatives worth testing *after* the Owala baseline are an urgent household-problem product (such as ant or flying-insect control) and a familiar replenishment product (such as body lotion). Each needs a separate audience, product verification, exact Associates link, and one-variable experiment. Do not place unrelated products together merely to increase clicks.
+
+## Amazon-specific compliance design
+
+Amazon requires Associates to use the special tagged link formats it provides and to clearly and prominently identify themselves as an Associate.[4] Its Participation Requirements also prohibit cloaking, hiding, spoofing, or otherwise obscuring the URL of a site containing Special Links, including by using a redirecting page.[5]
+
+Accordingly, this branch implements the following constraints.
+
+| Requirement | Implementation |
 |---|---|
-| Continuous agent workflow | Ordered four-agent campaign runs with structured outputs |
-| Durable heartbeat | Lease-protected, non-overlapping background scheduler |
-| Five-tier-inspired memory | Working context, episodic events, semantic facts, procedures, and channel/audience context |
-| Policy engine | Anti-spam, consent, privacy, responsible claims, affiliate disclosure, rate and approval gates |
-| Skills | Installable `paypro-campaign-automaton` skill in `skill/` |
-| Model routing | OpenAI-compatible client with `gpt-5-mini`, `gpt-5-nano` fallback, and request budgets |
-| Offline operation | Deterministic no-cost content fallback when no model API key is configured |
-| Observability | Health, scheduler status, structured logs, audit records, run summaries, and analytics |
-| Self-improvement | Reversible optimization proposals that require human approval |
-| Replication equivalent | Safe campaign cloning rather than autonomous infrastructure creation |
-| Railway deployment | Root Dockerfile, current `.railway/railway.ts`, persistent volume, and health check |
+| Direct Special Link | `AMAZON_ASSOCIATE_URL` must contain the exact tagged Amazon URL or `amzn.to` URL copied from SiteStripe or Associates Central. The application never fabricates tags. |
+| No link rewriting | The workflow does not append UTM parameters, wrap, shorten, cloak, or redirect an Amazon Special Link. |
+| No internal redirect | The legacy `/r/<campaign>` endpoint returns `410 Gone` while `AFFILIATE_PROVIDER=amazon`. |
+| Prominent disclosure | Generated Amazon CTA copy places `Disclosure: As an Amazon Associate I earn from qualifying purchases. (paid link)` immediately beside the link. |
+| Draft-first operation | A missing Special Link blocks marketing artifacts from approval. `DRAFT_ONLY=true` blocks outbound publication even after a link is configured. |
+| Conservative facts | Policy checks block copied customer review/rating claims, outcome promises, email/DM spam, sensitive-data abuse, and redirect/cloaking risk. |
+| Human control | Every artifact begins as a draft; a person must verify facts, disclosure, link, channel rules, and approval before any external publishing. |
 
-The supplied PayPro product URL currently redirects to a WegMetDieKilos quiz page that describes an app for losing weight in a healthy way and a personalized starting point based on age.[2] The repository treats those visible statements as verified facts and leaves pricing, exact Bronze Plan contents, numerical outcomes, and medical efficacy unverified.
+Amazon states that a standard qualifying session generally ends after 24 hours, when an order is placed, or when another Associate’s Special Link is clicked; cart additions can have a longer qualification window subject to the program rules.[6] This is an attribution rule, not a reason to use pressure tactics, automatic redirects, or incentives. Amazon’s rules also bar ordering on behalf of another person, artificially generating clicks, and using Amazon marks in prohibited paid-search placements.[5]
 
 ## Architecture
 
 ```text
-FastAPI control plane and public tracking redirect
-                 │
-                 ▼
-        CampaignOrchestrator
-       ┌─────────┼─────────┐
-       ▼         ▼         ▼
- ResearchAgent  SEOAgent  MarketingAgent
-       └─────────┬─────────┘
-                 ▼
-          AnalyticsAgent
-                 │
-                 ▼
- PolicyEngine → AffiliateLinkBuilder → Versioned Artifacts
-                 │
-                 ▼
+FastAPI control plane and optional read-only public site
+                         │
+                         ▼
+               CampaignOrchestrator
+        ┌────────────────┼────────────────┐
+        ▼                ▼                ▼
+ ResearchAgent       SEOAgent       MarketingAgent
+        └────────────────┼────────────────┘
+                         ▼
+                   AnalyticsAgent
+                         │
+                         ▼
+         PolicyEngine → Direct Amazon Special Link
+                         │
+                         ▼
  SQLiteStore ← HeartbeatScheduler → Audit / Metrics / Memory
-                 │
-                 ▼
+                         │
+                         ▼
  OpenAI-compatible LLM or deterministic fallback
 ```
 
-The default deployment runs the web API and heartbeat in one process. This is deliberate: Railway volumes attach to one service and cannot be used with replicas, so one process avoids concurrent SQLite writers and preserves a simple operational model.[3]
+The four-agent sequence is **Research → SEO → Marketing → Analytics**. Every run, artifact version, policy finding, event, memory entry, model call, approval, and scheduler heartbeat is retained in SQLite. The public site is optional and renders only artifacts that are both policy-cleared and owner-approved.
 
-## Agent roles
-
-Each agent receives only campaign facts, prior-agent outputs, bounded campaign memory, and pseudonymous analytics. External webhook text is treated as untrusted data, never as system instructions.
-
-| Agent | Goal | Inputs | Outputs |
-|---|---|---|---|
-| `ResearchAgent` | Find useful audience, keyword, community, and competitor research directions | Product facts, market, audience, prior memory | Segments, intent themes, keyword seeds, public-source research plan, source gaps |
-| `SEOAgent` | Turn research into helpful search content | Research brief, goals, channels | Topic clusters, search intent, editorial calendar, metadata and internal-link guidance |
-| `MarketingAgent` | Create responsible channel-specific Dutch drafts | Research, SEO, verified facts, tracked link, disclosure | Blog, opt-in email, social, landing-page, and community-response drafts |
-| `AnalyticsAgent` | Explain measured results and propose safe tests | Views, clicks, signups, conversions, channel metadata | Rates, uncertainty statement, one-variable experiment proposal, stop/continue guardrails |
-
-The agent sequence is encoded in `campaign_automaton/orchestrator.py`. Real model outputs must match a strict JSON schema. If the model endpoint fails, the run continues with visible deterministic fallback content rather than silently fabricating a successful model call.
+| Agent | Role | Typical output |
+|---|---|---|
+| `ResearchAgent` | Defines audience segments, intent themes, public-source research needs, and assumptions. | Research brief and source gaps. |
+| `SEOAgent` | Converts research into helpful topic clusters and a search-intent plan. | Editorial and metadata guidance. |
+| `MarketingAgent` | Prepares factual, channel-specific product-research drafts. | Blog, opt-in email, social, landing-page, and community-response drafts. |
+| `AnalyticsAgent` | Explains measured signals and proposes one reversible test at a time. | Uncertainty statement, experiment proposal, and stop/continue criteria. |
 
 ## Repository structure
 
 ```text
 .
-├── .railway/
-│   ├── railway.ts               # Current Railway project-level IaC
-│   └── README.md                # Plan/apply and secret setup
 ├── campaign_automaton/
-│   ├── agents/                  # Research, SEO, Marketing, Analytics
-│   ├── api.py                   # FastAPI endpoints and tracked redirect
-│   ├── cli.py                   # Owner CLI
-│   ├── config.py                # Environment configuration
-│   ├── links.py                 # PayPro destination and UTM builder
-│   ├── llm.py                   # Model routing, schema, fallback, budgets
-│   ├── models.py                # Validated request and state contracts
-│   ├── orchestrator.py          # Agent collaboration workflow
-│   ├── policy.py                # Ethical and legal guardrails
-│   ├── runtime.py               # Dependency bootstrap and campaign seed
-│   ├── scheduler.py             # Durable heartbeat
-│   └── store.py                 # SQLite schema and persistence
-├── config/campaign.yaml         # WegMetDieKilos campaign profile
-├── docs/
-│   ├── ARCHITECTURE.md          # Source-to-derivative feature mapping
-│   ├── IMPLEMENTATION_PLAN.md   # Step-by-step adaptation plan
-│   └── RAILWAY.md               # Deployment guide
-├── scripts/start.sh             # Container/Railway start script
-├── skill/paypro-campaign-automaton/
-│   ├── SKILL.md                 # Installable reusable skill
-│   ├── references/api_reference.md
-│   └── templates/campaign.yaml
-├── tests/                       # Core and API tests
-├── .env.example                 # Safe configuration template
-├── Dockerfile
-├── docker-compose.yml
-├── app.py                       # ASGI shim
-├── main.py                      # Local CLI shim
-└── pyproject.toml
+│   ├── agents/                  # Research, SEO, marketing, and analytics agents
+│   ├── api.py                   # FastAPI control surface and guarded legacy endpoints
+│   ├── config.py                # Provider-aware environment configuration
+│   ├── links.py                 # Direct Special Link enforcement
+│   ├── policy.py                # Claims, disclosure, anti-spam, and Amazon policy gates
+│   ├── publisher.py             # Read-only, owner-approved public rendering
+│   ├── runtime.py               # Bootstrap and campaign seeding
+│   ├── scheduler.py             # Lease-protected heartbeat
+│   └── store.py                 # SQLite persistence, metrics, audit, and memory
+├── config/campaign.yaml         # Active Owala draft-campaign configuration
+├── research_notes.md            # Account baseline, product review, and source notes
+├── tests/                       # Core and API regression tests
+├── .env.example                 # Safe default configuration
+└── pyproject.toml               # Package metadata and development dependencies
 ```
 
 ## Quickstart
 
-Python 3.11 or newer is required. The commands below create an isolated environment, install the application, initialize the database, and run the full workflow without spending model credits.
+Python 3.11 or later is required. The following local workflow validates the application without generating external content or publishing anything.
 
 ```bash
-git clone https://github.com/mmgblabel-png/autotrader.git automaton-paypro-kilos
-cd automaton-paypro-kilos
+git clone https://github.com/mmgblabel-png/autotrader.git amazon-associate-campaign-automaton
+cd amazon-associate-campaign-automaton
+git switch autoamazonsale
 
 python3 -m venv .venv
 . .venv/bin/activate
 pip install -e ".[dev]"
 
 cp .env.example .env
-# Edit .env before continuing.
+# Edit only the values described below.
 set -a; . ./.env; set +a
 
-# Use deterministic mode for the first validation run.
-export LLM_PROVIDER=deterministic
+# Validate deterministic, draft-only operation.
 python -m campaign_automaton init
 python -m campaign_automaton run \
-  --campaign wegmetdiekilos-bronze \
+  --campaign owala-freesip-24oz \
   --workflow full_campaign \
   --force
 python -m campaign_automaton artifacts \
-  --campaign wegmetdiekilos-bronze
+  --campaign owala-freesip-24oz
 ```
 
-Start the API and heartbeat:
+Start the API and heartbeat locally:
 
 ```bash
 python -m campaign_automaton serve --port 8000
-```
-
-Open `http://localhost:8000/docs` for the interactive API documentation. Check health without a token:
-
-```bash
 curl http://localhost:8000/api/health
 ```
 
-## PayPro configuration
+## Configuration
 
-Copy `.env.example` to `.env`. Never commit `.env`, database files, secrets, or exports.
+Copy `.env.example` to `.env`. Do not commit `.env`, database files, reports, exports, secrets, or copied Associates links.
 
 ```dotenv
-PAYPRO_PRODUCT_URL=https://www.paypro.nl/producten/WegMetDieKilos_Bronze_Plan/114766/183297
-PAYPRO_AFFILIATE_ID=VUL_HIER_JOUW_EIGEN_ID_IN
-PAYPRO_AFFILIATE_URL_TEMPLATE={product_url}
-PUBLIC_BASE_URL=http://localhost:8000
-CONTROL_TOKEN=CHANGE_ME
-WEBHOOK_TOKEN=CHANGE_ME_TOO
+AFFILIATE_PROVIDER=amazon
+AMAZON_PRODUCT_URL=https://www.amazon.com/dp/B0BZYCJK89
+AMAZON_ASSOCIATE_URL=
+AFFILIATE_DISCLOSURE="Disclosure: As an Amazon Associate I earn from qualifying purchases. (paid link)"
+DRAFT_ONLY=true
+WEBSITE_ENABLED=false
+AUTO_RUN_DUE_CAMPAIGNS=false
 ```
 
-`PAYPRO_PRODUCT_URL` may already be the exact affiliate destination supplied by your account. PayPro URL formats can be account- and campaign-specific, so the application never guesses an affiliate query parameter. Paste the exact format shown in your PayPro account into `PAYPRO_AFFILIATE_URL_TEMPLATE`; it may contain `{product_url}` and/or `{affiliate_id}`.
+The canonical `AMAZON_PRODUCT_URL` is a factual reference only. Before a product CTA can be approved, copy the **exact** URL from Amazon Associates SiteStripe or Associates Central and place it in `AMAZON_ASSOCIATE_URL`. Do not manually add an Associate tag; do not append UTM values; do not pass the link through a redirect; and do not use a generic product URL in its place.
 
-| Example template | Behavior |
+| Variable | Initial value | Meaning |
+|---|---:|---|
+| `AMAZON_ASSOCIATE_URL` | Empty | Deliberately blocks approvals until an owner pastes a valid Special Link. |
+| `DRAFT_ONLY` | `true` | Blocks all external publishing actions. |
+| `WEBSITE_ENABLED` | `false` | Keeps public pages inaccessible. |
+| `AUTO_RUN_DUE_CAMPAIGNS` | `false` | Avoids unattended model runs during setup. |
+| `LLM_PROVIDER` | `deterministic` | Runs no-cost predictable test drafts. |
+| `CONTROL_TOKEN` | Unique secret | Protects owner control endpoints. |
+| `WEBHOOK_TOKEN` | Different unique secret | Protects manually integrated event ingestion. |
+
+Generate separate tokens with `openssl rand -hex 32`. The legacy PayPro configuration fields remain only for backward compatibility and are ignored when `AFFILIATE_PROVIDER=amazon`.
+
+## Required owner review before publishing
+
+The workflow is intentionally unable to publish directly. Before any outside use of an artifact, the owner must verify the table below.
+
+| Review item | Required check |
 |---|---|
-| `{product_url}` | Preserve the exact supplied URL and add only UTM attribution |
-| `https://affiliate.example/ref/{affiliate_id}` | Substitute the configured affiliate ID |
-| `https://affiliate.example/?id={affiliate_id}&target={product_url}` | Substitute both values |
+| Associate link | It is the exact link copied from the Associates interface, remains unmodified, and leads to the relevant Amazon product page. |
+| Disclosure | The mandated Associate statement and a clear link-level disclosure are visible in the same medium, close to the CTA. |
+| Facts | Product facts match the current listing; variable price, rank, rating, stock, discount, delivery, and review language are absent unless used through an approved Amazon source. |
+| Market | The audience can use the target Amazon storefront and reasonably purchase the product. |
+| Channel rules | The destination channel permits affiliate promotion and the content is adapted to its rules. |
+| Consent | Email is opt-in with an unsubscribe path; community content responds to a relevant question and follows community rules. |
+| Claims | No health, medical, fitness, productivity, scarcity, guarantee, or invented testimonial claim is present. |
 
-The internal campaign link has this shape:
-
-```text
-https://<your-domain>/r/wegmetdiekilos-bronze?src=blog&content=<artifact-id>
-```
-
-A request to that URL records a pseudonymous click and returns HTTP 302 to the resolved PayPro destination with `utm_source`, `utm_medium`, `utm_campaign`, and `utm_content`. Validate the final destination before publishing any link.
-
-## Secure local configuration
-
-Generate separate random secrets. CORS is not authentication; the owner token remains required on control endpoints.
+Artifacts can be inspected and approved through the CLI after this review.
 
 ```bash
-openssl rand -hex 32   # CONTROL_TOKEN
-openssl rand -hex 32   # WEBHOOK_TOKEN
-```
-
-| Variable | Recommended first-run value | Purpose |
-|---|---|---|
-| `LLM_PROVIDER` | `deterministic` | No-cost validation mode |
-| `DRAFT_ONLY` | `true` | Blocks outbound actions |
-| `AUTO_RUN_DUE_CAMPAIGNS` | `false` | Prevents unattended model runs during setup |
-| `HEARTBEAT_ENABLED` | `true` | Enables recovery and scheduler status |
-| `DATA_DIR` | `./data` | Local persistent state |
-| `PUBLIC_BASE_URL` | `http://localhost:8000` | Internal tracking links |
-
-After validating deterministic mode, set `OPENAI_API_KEY` and `LLM_PROVIDER=auto` to enable model-generated structured outputs. The default live model is `gpt-5-mini`, with `gpt-5-nano` as a configured fallback. Per-run, hourly, and daily request caps prevent runaway usage.
-
-## Start a campaign
-
-The default campaign is seeded from `config/campaign.yaml`. It starts in `draft` state. A manual run works in any state; scheduled execution considers only `active` campaigns.
-
-```bash
-python -m campaign_automaton set-status \
-  --campaign wegmetdiekilos-bronze \
-  --status active
-
-python -m campaign_automaton run \
-  --campaign wegmetdiekilos-bronze \
-  --workflow full_campaign \
-  --force
-```
-
-Run a narrower workflow or selected channels:
-
-```bash
-python -m campaign_automaton run \
-  --campaign wegmetdiekilos-bronze \
-  --workflow content \
-  --channels blog email social \
-  --force
-
-python -m campaign_automaton run \
-  --campaign wegmetdiekilos-bronze \
-  --workflow analytics \
-  --force
-```
-
-| Workflow | Agents |
-|---|---|
-| `full_campaign` | Research → SEO → Marketing → Analytics |
-| `research` | Research only |
-| `seo` | Research → SEO |
-| `content` | Research → SEO → Marketing |
-| `analytics` | Analytics only |
-
-Non-forced runs are idempotent by campaign, workflow, channel set, and UTC date. Use `--force` only when a genuinely new version is intended.
-
-## Review and approve content
-
-Every generated artifact starts as `draft`. A blocked artifact remains visible for diagnosis but cannot be approved.
-
-```bash
-python -m campaign_automaton artifacts \
-  --campaign wegmetdiekilos-bronze
-
+python -m campaign_automaton artifacts --campaign owala-freesip-24oz
 python -m campaign_automaton review <artifact-id> \
   --decision approved \
   --reviewer owner \
-  --notes "Claims, source gaps, disclosure, destination, and channel rules checked"
-
-# Execute exactly one lease-protected scheduler tick.
-python -m campaign_automaton heartbeat-once
-
-# Inspect content and outbound-action policy gates.
-python -m campaign_automaton policy-check \
-  --channel social \
-  --content "Gegarandeerd 10 kilo in 2 weken zonder moeite!" \
-  --no-add-disclosure
-python -m campaign_automaton action-check \
-  --action publish \
-  --human-confirmed
+  --notes "Exact Special Link, disclosure, source facts, and channel rules verified"
 ```
 
-Before approval, verify product facts, destination URL, affiliate attribution, disclosure placement, spelling, channel rules, consent requirements, and whether medical context needs professional-advice language.
+Approving an artifact changes its stored review state. It does not post content, send email, create a purchase, or activate the public website.
+
+## Measuring the first conversion test
+
+Because the current account has no historical conversion data, use a small, controlled test rather than choosing a product based on rank alone. Test one product/audience/content angle at a time, establish the audience and channel before publishing, and evaluate Amazon reporting only after a predeclared observation window.
+
+| Metric | System of record | Interpretation |
+|---|---|---|
+| Content views / click intent | First-party aggregated events | Measures whether the content and CTA are being seen and considered. It does not prove Amazon referral or purchase. |
+| Clicks, ordered items, shipped revenue, conversion, earnings | Amazon Associates reports | Use as the authoritative source for Amazon performance. |
+| Earnings per click | Calculated from reporting after sufficient volume | Useful only once a comparable number of clicks exists. |
+| Return / cancellation signal | Amazon reporting where available | Avoid declaring a winner based solely on early orders. |
+
+The current API retains manual, pseudonymous event ingestion for owner-approved integrations. It does **not** fabricate Amazon conversion webhooks, and `/api/webhooks/paypro` is disabled with `410 Gone` in Amazon mode. Do not upload or store customer account credentials, names, email addresses, IP addresses, or other direct identifiers.
 
 ## API examples
 
@@ -266,250 +201,49 @@ Owner endpoints require `X-Control-Token`.
 export BASE=http://localhost:8000
 export CONTROL_TOKEN='your-secret'
 
-curl -H "X-Control-Token: $CONTROL_TOKEN" \
-  "$BASE/api/campaigns"
+curl -H "X-Control-Token: $CONTROL_TOKEN" "$BASE/api/config/status"
+curl -H "X-Control-Token: $CONTROL_TOKEN" "$BASE/api/campaigns"
 
-curl -X POST \
-  "$BASE/api/campaigns/wegmetdiekilos-bronze/runs" \
+curl -X POST "$BASE/api/campaigns/owala-freesip-24oz/runs" \
   -H "Content-Type: application/json" \
   -H "X-Control-Token: $CONTROL_TOKEN" \
-  -H "Idempotency-Key: weekly-content-2026-35" \
-  -d '{"workflow":"content","channels":["blog","email","social"],"force":false}'
+  -H "Idempotency-Key: owala-content-2026-35" \
+  -d '{"workflow":"content","channels":["blog","social"],"force":false}'
 
 curl -H "X-Control-Token: $CONTROL_TOKEN" \
-  "$BASE/api/campaigns/wegmetdiekilos-bronze/artifacts"
+  "$BASE/api/campaigns/owala-freesip-24oz/artifacts"
 ```
 
-The webhook uses a separate token and idempotent external event ID:
-
-```bash
-curl -X POST "$BASE/api/webhooks/events" \
-  -H "Content-Type: application/json" \
-  -H "X-Webhook-Token: $WEBHOOK_TOKEN" \
-  -d '{
-    "provider":"custom",
-    "event":{
-      "campaign_slug":"wegmetdiekilos-bronze",
-      "event_type":"conversion",
-      "source":"blog",
-      "medium":"affiliate",
-      "content_id":"artifact-id",
-      "event_id":"provider-unique-id",
-      "value":0,
-      "metadata":{}
-    }
-  }'
-```
-
-Do not include names, email addresses, health data, full IP addresses, or other direct identifiers in event metadata.
-
-## Analytics and optimization
-
-The analytics endpoint returns total views, clicks, signups, conversions, attributed value, click-through rate, conversion rate, and source breakdown.
-
-```bash
-curl -H "X-Control-Token: $CONTROL_TOKEN" \
-  "$BASE/api/campaigns/wegmetdiekilos-bronze/analytics"
-```
-
-`AnalyticsAgent` records uncertainty and proposes one reversible test. It never changes production content automatically. Use sufficient data, change one principal variable per test, choose a measurement window in advance, and preserve the existing version as a control.
-
-Review optimization proposals explicitly:
-
-```bash
-curl -H "X-Control-Token: $CONTROL_TOKEN" \
-  "$BASE/api/campaigns/wegmetdiekilos-bronze/optimizations"
-
-curl -X POST "$BASE/api/optimizations/<proposal-id>/decision" \
-  -H "Content-Type: application/json" \
-  -H "X-Control-Token: $CONTROL_TOKEN" \
-  -d '{"decision":"accepted","reviewer":"owner","notes":"Run as a controlled experiment"}'
-```
-
-Accepting a proposal records the decision; it does not publish or change content automatically.
+The public site remains disabled until `WEBSITE_ENABLED=true`. When enabled, it renders only approved, policy-cleared artifacts at `/site/owala-freesip-24oz`; its Amazon CTA is a direct Special Link with a disclosure, never a first-party redirect.
 
 ## Scheduler behavior
 
-The heartbeat uses a database lease to avoid overlapping work. Each tick recovers stale runs, executes queued work, optionally runs due active campaigns, calculates the next cron occurrence, and records history. Keep `AUTO_RUN_DUE_CAMPAIGNS=false` until the full manual quality gate is complete.
+The heartbeat uses a database lease to prevent overlapping work. It recovers stale runs, executes queued work, optionally generates due drafts for active campaigns, calculates the next cron occurrence, and records its history. Keep `AUTO_RUN_DUE_CAMPAIGNS=false` through the first manual content and compliance review.
 
 | Setting | Default | Meaning |
 |---|---:|---|
-| `HEARTBEAT_ENABLED` | `true` | Start background heartbeat with the API |
-| `HEARTBEAT_INTERVAL_SECONDS` | `30` | Minimum tick delay |
-| `AUTO_RUN_DUE_CAMPAIGNS` | `false` | Do not spend model requests automatically during setup |
-| Campaign `schedule_cron` | `0 9 * * 1` | Weekly Monday schedule when auto-run is enabled |
+| `HEARTBEAT_ENABLED` | `true` | Starts a background heartbeat with the API. |
+| `HEARTBEAT_INTERVAL_SECONDS` | `30` | Minimum tick delay. |
+| `AUTO_RUN_DUE_CAMPAIGNS` | `false` | Prevents automatic future content-generation runs. |
+| Campaign `schedule_cron` | `0 9 * * 1` | Monday 09:00 review/draft schedule, should the owner enable it later. |
 
-Run only one SQLite-backed service instance. If the system later migrates to PostgreSQL with a proper queue, the API and workers may be separated safely.
+Run only one SQLite-backed service instance. For durable deployment, use persistent storage and a single writer, or migrate the storage/queue design before scaling horizontally.
 
-## Railway deployment
+## Testing
 
-Railway detects and builds a root `Dockerfile` automatically.[4] It injects `PORT`, which the start script passes to Uvicorn, and it activates the deployment after `/api/health` returns HTTP 200.[5] Ordinary deployment storage is ephemeral, so the included project configuration creates a volume mounted at `/data`.[3] [6]
-
-Railway’s older `railway.json` and `railway.toml` configuration format is deprecated and has a hard cutoff on 2026-12-01. This repository uses the replacement `.railway/railway.ts` project-level format.[7]
+The branch includes direct-link, disclosure, policy, API, scheduler, event-deduplication, and public-rendering tests.
 
 ```bash
-railway login
-railway link
-railway config plan
-railway config apply
+python -m pytest -q
+ruff check .
 ```
-
-Configure these secrets in Railway before deployment:
-
-| Variable | Required | Notes |
-|---|---:|---|
-| `PUBLIC_BASE_URL` | Yes | Final Railway HTTPS domain; update after the domain is assigned |
-| `CONTROL_TOKEN` | Yes | Long random owner token |
-| `WEBHOOK_TOKEN` | Yes | Different long random callback token |
-| `PAYPRO_AFFILIATE_ID` | Account-dependent | Your own PayPro ID |
-| `PAYPRO_AFFILIATE_URL_TEMPLATE` | Account-dependent | Exact account-provided format |
-| `OPENAI_API_KEY` | Optional | Omit for deterministic mode |
-| `OPENAI_BASE_URL` | Optional | OpenAI-compatible endpoint |
-
-The Railway service uses one replica and one 512 MB volume. Railway documents that a volume can attach to only one service, cannot be used with replicas, and causes a small amount of redeployment downtime to protect data integrity.[3]
-
-After deployment:
-
-```bash
-curl https://<your-domain>/api/health
-curl -H "X-Control-Token: $CONTROL_TOKEN" \
-  https://<your-domain>/api/config/status
-```
-
-Confirm that `affiliate.ready` is true, `database_ok` is true, `draft_only` is true, and the tracking redirect resolves to the correct PayPro destination before sharing any link.
-
-## Docker deployment
-
-Run the same topology locally:
-
-```bash
-cp .env.example .env
-# Edit .env first.
-docker compose up --build -d
-docker compose ps
-curl http://localhost:8000/api/health
-```
-
-The named Docker volume persists `/data`. Use `docker compose down` to stop the service without deleting its volume. Do not use `docker compose down -v` unless permanent data deletion is intentional.
-
-## Reusable Manus skill
-
-The installable skill lives at:
-
-```text
-skill/paypro-campaign-automaton/SKILL.md
-```
-
-It defines the required inputs, agent contracts, workflow, API, campaign cloning rules, model budgets, approval gates, ethical constraints, and Railway deployment procedure. The same package also contains a generic campaign template and detailed API reference.
-
-## Create or clone a campaign
-
-Create campaigns through the API or copy `skill/paypro-campaign-automaton/templates/campaign.yaml`, give it a new slug, and validate every product fact. Do not copy tracking events, approvals, secrets, or personal data from another campaign.
-
-```bash
-curl -X POST "$BASE/api/campaigns" \
-  -H "Content-Type: application/json" \
-  -H "X-Control-Token: $CONTROL_TOKEN" \
-  -d '{
-    "name":"New Product Campaign",
-    "slug":"new-product-campaign",
-    "product_name":"New Product",
-    "product_url":"https://example.com/exact-affiliate-url",
-    "audience":"A precise opt-in audience description of at least ten characters.",
-    "market":"Nederland",
-    "language":"nl-NL",
-    "channels":["blog","email","social"],
-    "goals":["Create value-first opt-in demand"],
-    "product_facts":["Only include verified facts"],
-    "prohibited_claims":["No guarantees"],
-    "schedule_cron":"0 9 * * 1",
-    "metadata":{}
-  }'
-```
-
-For a closely related offer, clone only safe configuration and reset product facts by default:
-
-```bash
-curl -X POST "$BASE/api/campaigns/wegmetdiekilos-bronze/clone" \
-  -H "Content-Type: application/json" \
-  -H "X-Control-Token: $CONTROL_TOKEN" \
-  -d '{
-    "name":"New Plan Campaign",
-    "slug":"new-plan-campaign",
-    "product_name":"New Plan",
-    "product_url":"https://example.com/exact-affiliate-url",
-    "reset_product_facts":true
-  }'
-```
-
-The clone starts in `draft` and receives no runs, events, approvals, or secrets from the source campaign.
-
-## Ethical and legal guardrails
-
-The policy engine blocks guaranteed, rapid, effortless, medical, and unsupported numerical weight-loss claims. It also blocks bought lists, profile scraping, unsolicited email or DMs, sensitive-data collection, fake testimonials, and manipulative spam patterns. Sales content receives an affiliate disclosure automatically.
-
-| Allowed | Not allowed |
-|---|---|
-| Helpful public content | Duplicate spam across communities |
-| Opt-in email drafts with unsubscribe reminder | Unsolicited email or direct messages |
-| Public-source topic research without profile collection | Scraping people or buying contact lists |
-| Realistic “may help” language | Guaranteed results or exact kilo/time promises |
-| Transparent affiliate disclosure | Hidden commercial relationship |
-| Human-reviewed community replies where rules allow | Rule evasion or covert promotion |
-| Pseudonymous click and conversion events | Health profiles or direct identifiers in analytics |
-
-This software is a workflow and drafting tool, not medical, legal, or privacy advice. The operator remains responsible for the final claims, consent basis, platform compliance, disclosures, data processing, and product terms.
-
-## Testing and quality checks
-
-```bash
-pytest
-ruff check campaign_automaton tests
-python /home/ubuntu/skills/skill-creator/scripts/quick_validate.py \
-  /home/ubuntu/skills/paypro-campaign-automaton
-```
-
-The 18-test suite covers default campaign seeding, full four-agent runs, deterministic fallback, disclosure insertion, unsupported-claim blocking, action blocking, affiliate template substitution, run idempotency, atomic heartbeat execution, event deduplication, direct-identifier rejection, analytics aggregation, campaign cloning, optimization decisions, API authentication, artifact approval, webhook ingestion, and tracked redirects.
-
-## Troubleshooting
-
-| Symptom | Likely cause | Resolution |
-|---|---|---|
-| `503 Control API is disabled` | `CONTROL_TOKEN` is missing | Set a long server-side token and restart |
-| `401 Invalid token` | Wrong header or token | Send `X-Control-Token` or `X-Webhook-Token` exactly |
-| Tracking link uses localhost | `PUBLIC_BASE_URL` not updated | Set the final Railway HTTPS domain and redeploy |
-| Affiliate ID is not present | Template uses only `{product_url}` | Paste the exact account-provided affiliate template |
-| Run says deterministic | No model key or deterministic provider | Configure `OPENAI_API_KEY` and `LLM_PROVIDER=auto` |
-| Artifact cannot be approved | Blocking policy finding | Correct the claim or acquisition method and generate a new version |
-| Database resets after deploy | No Railway volume or wrong `DATA_DIR` | Mount `/data` and set `DATABASE_PATH=/data/campaign_automaton.db` |
-| Scheduler does not run campaigns | Auto-run is intentionally disabled | Complete quality checks, activate campaign, then enable it |
-| Duplicate webhook counts | Provider omitted stable `event_id` | Send one unique external event ID per event |
-
-## License and attribution
-
-The original Conway Automaton repository is MIT-licensed, permitting use, modification, and distribution with preservation of the copyright and license notice.[8] This derivative contains its own campaign-specific implementation and includes the MIT license and source attribution.
 
 ## References
 
 [1]: https://github.com/Conway-Research/automaton "Conway Research — Automaton"
-[2]: https://www.paypro.nl/producten/WegMetDieKilos_Bronze_Plan/114766/183297 "PayPro product URL supplied for WegMetDieKilos Bronze Plan"
-[3]: https://docs.railway.com/volumes/reference "Railway Docs — Volumes"
-[4]: https://docs.railway.com/builds/dockerfiles "Railway Docs — Dockerfiles"
-[5]: https://docs.railway.com/deployments/healthchecks "Railway Docs — Healthchecks"
-[6]: https://docs.railway.com/deployments/reference "Railway Docs — Deployments reference"
-[7]: https://docs.railway.com/infrastructure-as-code "Railway Docs — Infrastructure as Code"
-[8]: https://github.com/Conway-Research/automaton/blob/main/LICENSE "Conway Automaton MIT License"
-
-
-## Self-hosted campaign website
-
-The application can host its own campaign website at `/site/<campaign-slug>` without requiring WordPress or a social-media account. It renders **only the latest owner-approved artifacts that have passed policy review**. Draft, rejected, blocked, and unreviewed artifacts remain inaccessible. Calls to action use the first-party `/r/<campaign-slug>` tracker before the visitor is redirected to the verified PayPro destination.
-
-The website is private by default. Set `WEBSITE_ENABLED=true` only after reviewing the landing-page and blog artifacts and deciding that they may be visible publicly. The protected status endpoint provides the enabled state and publishable artifact types:
-
-```bash
-curl -H "X-Control-Token: $CONTROL_TOKEN" \
-  "$BASE/api/publisher/status"
-```
-
-Set `WEBSITE_ENABLED=false` to hide the public routes immediately; campaign records and approved artifacts are retained in SQLite for later review. Public visibility is distinct from scheduled draft generation and must be approved explicitly by the owner.
+[2]: https://www.amazon.com/Best-Sellers-Home-Kitchen/zgbs/home-garden "Amazon Best Sellers — Home & Kitchen"
+[3]: https://www.amazon.com/Owala-FreeSip-Insulated-Stainless-BPA-Free/dp/B0BZYCJK89 "Amazon — Owala FreeSip Stainless Steel Water Bottle 24 oz"
+[4]: https://affiliate-program.amazon.com/help/operating/agreement "Amazon Associates Program Operating Agreement"
+[5]: https://affiliate-program.amazon.com/help/operating/participation/ "Amazon Associates Program Participation Requirements"
+[6]: https://affiliate-program.amazon.com/help/operating/policies "Amazon Associates Program Policies"
+[7]: https://affiliate-program.amazon.com/help/node/topic/GHQNZAU6669EZS98 "Amazon Associates — Disclosure guidance"

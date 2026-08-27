@@ -82,9 +82,9 @@ class CampaignOrchestrator:
             "memories": self.store.recall(campaign["id"], limit=12),
             "requested_channels": run["requested_channels"],
             "metrics": self.store.campaign_metrics(campaign["id"]),
-            "affiliate_status": self.links.affiliate_status(),
+            "affiliate_status": self.links.affiliate_status(campaign),
             "tracking_urls": {
-                channel: self.links.tracking_url(campaign["slug"], channel)
+                channel: self.links.content_link(campaign, channel)
                 for channel in run["requested_channels"]
             },
         }
@@ -164,7 +164,7 @@ class CampaignOrchestrator:
                     1 for artifact in artifacts if not artifact["policy"].get("allowed", False)
                 ),
                 "llm_mode": self.llm.mode,
-                "affiliate": self.links.affiliate_status(),
+                "affiliate": self.links.affiliate_status(campaign),
             }
             final_status = RunStatus.AWAITING_APPROVAL if artifacts else RunStatus.COMPLETED
             final = self.store.update_run(run_id, final_status, summary=summary)

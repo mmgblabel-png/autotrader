@@ -14,15 +14,15 @@ from campaign_automaton.runtime import build_runtime
 
 
 def test_default_campaign_is_seeded(runtime):
-    campaign = runtime.store.get_campaign("wegmetdiekilos-bronze")
-    assert campaign["product_name"] == "WegMetDieKilos – Bronze Plan"
+    campaign = runtime.store.get_campaign("owala-freesip-24oz")
+    assert campaign["product_name"] == "Owala FreeSip Stainless Steel Water Bottle, 24 oz"
     assert "blog" in campaign["channels"]
     assert campaign["status"] == "draft"
 
 
 def test_full_workflow_creates_agent_artifacts(runtime):
     result = runtime.orchestrator.run_now(
-        "wegmetdiekilos-bronze", RunRequest(workflow="full_campaign", force=True)
+        "owala-freesip-24oz", RunRequest(workflow="full_campaign", force=True)
     )
     assert result["status"] == "awaiting_approval"
     assert result["summary"]["agents"] == [
@@ -31,19 +31,19 @@ def test_full_workflow_creates_agent_artifacts(runtime):
         "MarketingAgent",
         "AnalyticsAgent",
     ]
-    campaign = runtime.store.get_campaign("wegmetdiekilos-bronze")
+    campaign = runtime.store.get_campaign("owala-freesip-24oz")
     artifacts = runtime.store.list_artifacts(campaign["id"])
-    assert len(artifacts) >= 8
+    assert len(artifacts) >= 7
     marketing = [item for item in artifacts if item["agent"] == "MarketingAgent"]
     assert marketing
-    assert all("commissie ontvangen" in item["content"] for item in marketing)
+    assert all("As an Amazon Associate" in item["content"] for item in marketing)
     assert all(item["metadata"]["deterministic"] is True for item in artifacts)
 
 
 def test_daily_idempotency_reuses_completed_run(runtime):
     request = RunRequest(workflow="analytics", force=False)
-    first = runtime.orchestrator.run_now("wegmetdiekilos-bronze", request)
-    second = runtime.orchestrator.run_now("wegmetdiekilos-bronze", request)
+    first = runtime.orchestrator.run_now("owala-freesip-24oz", request)
+    second = runtime.orchestrator.run_now("owala-freesip-24oz", request)
     assert first["id"] == second["id"]
 
 
@@ -55,7 +55,7 @@ def test_policy_blocks_guaranteed_claim(runtime):
     )
     assert evaluated.result.allowed is False
     assert any(
-        item.code == "unsupported_weight_loss_claim" for item in evaluated.result.findings
+        item.code == "unsupported_outcome_claim" for item in evaluated.result.findings
     )
 
 
@@ -64,21 +64,17 @@ def test_action_policy_blocks_unsolicited_outreach(runtime):
     assert result.allowed is False
 
 
-def test_affiliate_template_substitution(settings, runtime):
-    object.__setattr__(
-        settings,
-        "paypro_affiliate_url_template",
-        "https://affiliate.example/{affiliate_id}?target={product_url}",
-    )
-    campaign = runtime.store.get_campaign("wegmetdiekilos-bronze")
+def test_amazon_special_link_is_direct_and_unchanged(runtime):
+    campaign = runtime.store.get_campaign("owala-freesip-24oz")
     target = runtime.links.destination(campaign, "blog", "artifact-1")
-    assert "affiliate-123" in target
-    assert "utm_campaign=wegmetdiekilos-bronze" in target
+    assert target == "https://www.amazon.com/dp/B0BZYCJK89?tag=spmg00-20"
+    assert "utm_" not in target
+    assert "/r/" not in target
 
 
 def test_tracking_is_idempotent_and_metrics_are_aggregated(runtime):
     event = TrackingEventCreate(
-        campaign_slug="wegmetdiekilos-bronze",
+        campaign_slug="owala-freesip-24oz",
         event_type="conversion",
         source="email",
         medium="affiliate",
@@ -90,7 +86,7 @@ def test_tracking_is_idempotent_and_metrics_are_aggregated(runtime):
     assert created_first is True
     assert created_second is False
     assert first["id"] == second["id"]
-    campaign = runtime.store.get_campaign("wegmetdiekilos-bronze")
+    campaign = runtime.store.get_campaign("owala-freesip-24oz")
     metrics = runtime.store.campaign_metrics(campaign["id"])
     assert metrics["conversions"] == 1
     assert metrics["value"] == 12.5
@@ -99,7 +95,7 @@ def test_tracking_is_idempotent_and_metrics_are_aggregated(runtime):
 def test_campaign_clone_resets_product_facts_and_not_history(runtime):
     from campaign_automaton.models import CampaignCloneRequest
 
-    source = runtime.store.get_campaign("wegmetdiekilos-bronze")
+    source = runtime.store.get_campaign("owala-freesip-24oz")
     clone = runtime.store.clone_campaign(
         source["slug"],
         CampaignCloneRequest(
@@ -119,9 +115,9 @@ def test_campaign_clone_resets_product_facts_and_not_history(runtime):
 
 def test_optimization_proposal_requires_owner_decision(runtime):
     run = runtime.orchestrator.run_now(
-        "wegmetdiekilos-bronze", RunRequest(workflow="analytics", force=True)
+        "owala-freesip-24oz", RunRequest(workflow="analytics", force=True)
     )
-    campaign = runtime.store.get_campaign("wegmetdiekilos-bronze")
+    campaign = runtime.store.get_campaign("owala-freesip-24oz")
     proposals = runtime.store.list_optimization_proposals(campaign["id"])
     assert proposals and proposals[0]["status"] == "proposed"
     decided = runtime.store.decide_optimization(
@@ -137,18 +133,18 @@ def test_tracking_metadata_rejects_direct_identifiers():
 
     with pytest.raises(ValidationError):
         TrackingEventCreate(
-            campaign_slug="wegmetdiekilos-bronze",
+            campaign_slug="owala-freesip-24oz",
             event_type="click",
             metadata={"email": "person@example.com"},
         )
     with pytest.raises(ValidationError):
         TrackingEventCreate(
-            campaign_slug="wegmetdiekilos-bronze",
+            campaign_slug="owala-freesip-24oz",
             event_type="click",
             metadata={"note": "contact person@example.com"},
         )
     allowed = TrackingEventCreate(
-        campaign_slug="wegmetdiekilos-bronze",
+        campaign_slug="owala-freesip-24oz",
         event_type="click",
         metadata={"experiment": "cta-a", "cohort": "anonymous-1"},
     )
@@ -157,7 +153,7 @@ def test_tracking_metadata_rejects_direct_identifiers():
 
 async def test_heartbeat_executes_queued_run_once(runtime):
     run, created = runtime.orchestrator.queue_run(
-        "wegmetdiekilos-bronze",
+        "owala-freesip-24oz",
         RunRequest(workflow="analytics", force=True),
     )
     assert created is True
@@ -173,11 +169,11 @@ async def test_heartbeat_executes_queued_run_once(runtime):
 async def test_due_campaign_schedule_uses_europe_amsterdam(settings):
     live_runtime = build_runtime(replace(settings, auto_run_due_campaigns=True))
     live_runtime.store.update_campaign(
-        "wegmetdiekilos-bronze", CampaignUpdate(status=CampaignStatus.ACTIVE)
+        "owala-freesip-24oz", CampaignUpdate(status=CampaignStatus.ACTIVE)
     )
     result = await live_runtime.scheduler.tick()
     assert result["status"] == "ok"
-    campaign = live_runtime.store.get_campaign("wegmetdiekilos-bronze")
+    campaign = live_runtime.store.get_campaign("owala-freesip-24oz")
     next_run = datetime.fromisoformat(campaign["next_run_at"])
     local_next_run = next_run.astimezone(ZoneInfo("Europe/Amsterdam"))
     assert local_next_run.hour == 9
@@ -202,9 +198,9 @@ def test_policy_allows_explicit_negation_but_blocks_positive_claim(runtime):
 async def test_scheduled_occurrence_has_its_own_idempotency_key(settings):
     live_runtime = build_runtime(replace(settings, auto_run_due_campaigns=True))
     manual = live_runtime.orchestrator.run_now(
-        "wegmetdiekilos-bronze", RunRequest(workflow="full_campaign", force=False)
+        "owala-freesip-24oz", RunRequest(workflow="full_campaign", force=False)
     )
-    campaign = live_runtime.store.get_campaign("wegmetdiekilos-bronze")
+    campaign = live_runtime.store.get_campaign("owala-freesip-24oz")
     live_runtime.store.update_campaign(
         campaign["slug"], CampaignUpdate(status=CampaignStatus.ACTIVE)
     )
@@ -222,7 +218,7 @@ async def test_scheduled_occurrence_has_its_own_idempotency_key(settings):
 
 
 def test_analytics_requires_minimum_sample_before_conversion_experiment(runtime):
-    campaign = runtime.store.get_campaign("wegmetdiekilos-bronze")
+    campaign = runtime.store.get_campaign("owala-freesip-24oz")
     result = runtime.orchestrator.analytics.deterministic(
         campaign,
         {"metrics": {"views": 25, "clicks": 6, "conversions": 0}},
@@ -234,11 +230,11 @@ def test_analytics_requires_minimum_sample_before_conversion_experiment(runtime)
 
 
 def test_marketing_drafts_are_product_specific(runtime):
-    campaign = runtime.store.get_campaign("wegmetdiekilos-bronze")
+    campaign = runtime.store.get_campaign("owala-freesip-24oz")
     campaign["product_name"] = "Practice Happy with Yoga"
     campaign["product_facts"] = [
-        "Online yogaplatform met lessen en cursussen.",
-        "Maandabonnement kost €12,50 per maand.",
+        "A reusable water bottle with a locking push-button lid.",
+        "The product has a wide opening for cleaning and adding ice.",
     ]
     result = runtime.orchestrator.marketing.deterministic(
         campaign,
@@ -252,5 +248,5 @@ def test_marketing_drafts_are_product_specific(runtime):
     )
     content = "\n".join(item["content"] for item in result["deliverables"])
     assert "Practice Happy with Yoga" in content
-    assert "Online yogaplatform met lessen en cursussen." in content
+    assert "A reusable water bottle with a locking push-button lid." in content
     assert "WegMetDieKilos" not in content

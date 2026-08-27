@@ -26,7 +26,7 @@ def _print(value: Any) -> None:
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="campaign-automaton",
-        description="Approval-gated PayPro campaign agent runtime",
+        description="Approval-gated Amazon Associate campaign agent runtime",
     )
     sub = parser.add_subparsers(dest="command", required=True)
 
@@ -38,11 +38,11 @@ def build_parser() -> argparse.ArgumentParser:
     sub.add_parser("campaigns", help="List campaigns")
 
     status = sub.add_parser("set-status", help="Set campaign lifecycle status")
-    status.add_argument("--campaign", default="wegmetdiekilos-bronze")
+    status.add_argument("--campaign", default="owala-freesip-24oz")
     status.add_argument("--status", choices=[item.value for item in CampaignStatus], required=True)
 
     run = sub.add_parser("run", help="Run an agent workflow now")
-    run.add_argument("--campaign", default="wegmetdiekilos-bronze")
+    run.add_argument("--campaign", default="owala-freesip-24oz")
     run.add_argument(
         "--workflow",
         default="full_campaign",
@@ -52,11 +52,11 @@ def build_parser() -> argparse.ArgumentParser:
     run.add_argument("--force", action="store_true")
 
     artifacts = sub.add_parser("artifacts", help="List generated artifacts")
-    artifacts.add_argument("--campaign", default="wegmetdiekilos-bronze")
+    artifacts.add_argument("--campaign", default="owala-freesip-24oz")
     artifacts.add_argument("--status", choices=[item.value for item in ArtifactStatus])
 
     analytics = sub.add_parser("analytics", help="Show campaign metrics")
-    analytics.add_argument("--campaign", default="wegmetdiekilos-bronze")
+    analytics.add_argument("--campaign", default="owala-freesip-24oz")
 
     sub.add_parser("heartbeat-once", help="Run one scheduler heartbeat tick")
 
@@ -78,6 +78,10 @@ def build_parser() -> argparse.ArgumentParser:
             "buy_leads",
             "unsolicited_email",
             "unsolicited_dm",
+            "cloak_link",
+            "redirect_affiliate_link",
+            "auto_redirect_to_amazon",
+            "purchase_on_behalf",
         ],
         required=True,
     )

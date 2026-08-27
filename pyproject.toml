@@ -3,9 +3,9 @@ requires = ["setuptools>=75", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "paypro-campaign-automaton"
-version = "1.0.0"
-description = "Approval-gated AI campaign runtime for ethical PayPro affiliate marketing"
+name = "amazon-associate-campaign-automaton"
+version = "1.1.0"
+description = "Approval-gated campaign runtime for compliant Amazon Associates product research"
 readme = "README.md"
 requires-python = ">=3.11"
 license = "MIT"

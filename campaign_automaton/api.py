@@ -38,7 +38,7 @@ from campaign_automaton.publisher import (
 from campaign_automaton.runtime import Runtime, build_runtime
 from campaign_automaton.store import StoreError
 
-VERSION = "1.0.0"
+VERSION = "1.1.0"
 
 
 def get_runtime(request: Request) -> Runtime:
@@ -119,7 +119,7 @@ async def lifespan(app: FastAPI):
 
 def create_app() -> FastAPI:
     app = FastAPI(
-        title="WegMetDieKilos Campaign Automaton API",
+        title="Amazon Associate Campaign Automaton API",
         version=VERSION,
         description=(
             "Approval-gated campaign generation, affiliate tracking, analytics, and optimization."
@@ -158,7 +158,7 @@ def create_app() -> FastAPI:
     @app.get("/", tags=["health"])
     def root() -> dict[str, Any]:
         return {
-            "service": "WegMetDieKilos Campaign Automaton",
+            "service": "Amazon Associate Campaign Automaton",
             "version": VERSION,
             "docs": "/docs",
             "health": "/api/health",
@@ -219,7 +219,7 @@ def create_app() -> FastAPI:
     @app.get("/api/publisher/status", tags=["publisher"])
     def publisher_status(
         request: Request,
-        campaign_slug: str = "wegmetdiekilos-bronze",
+        campaign_slug: str = "owala-freesip-24oz",
         _: None = Depends(require_control),
     ) -> dict[str, Any]:
         return PublicPublisher(get_runtime(request).settings, get_runtime(request).store).status(
@@ -270,6 +270,8 @@ def create_app() -> FastAPI:
             "email": "Email newsletter",
             "newsletter": "Email newsletter",
             "website": "Website referral",
+            "amazon": "Amazon referral",
+            "amazon_report": "Amazon report import",
             "paypro": "PayPro referral",
         }
         public_medium_labels = {
@@ -496,7 +498,7 @@ def create_app() -> FastAPI:
         _: None = Depends(require_control),
     ) -> dict[str, Any]:
         runtime = get_runtime(request)
-        product_url = str(payload.product_url or runtime.settings.paypro_product_url)
+        product_url = str(payload.product_url or runtime.settings.default_product_url)
         return runtime.store.create_campaign(payload, product_url)
 
     @app.post("/api/campaigns/{slug}/clone", status_code=201, tags=["campaigns"])
@@ -507,7 +509,7 @@ def create_app() -> FastAPI:
         _: None = Depends(require_control),
     ) -> dict[str, Any]:
         runtime = get_runtime(request)
-        product_url = str(payload.product_url or runtime.settings.paypro_product_url)
+        product_url = str(payload.product_url or runtime.settings.default_product_url)
         return runtime.store.clone_campaign(slug, payload, product_url)
 
     @app.get("/api/campaigns/{slug}", tags=["campaigns"])
@@ -676,6 +678,11 @@ def create_app() -> FastAPI:
     ) -> dict[str, Any]:
         """Accept only current, signed `payment.paid` events and deduplicate with PayPro's event ID."""
         runtime = get_runtime(request)
+        if runtime.settings.affiliate_provider != "paypro":
+            raise HTTPException(
+                status_code=status.HTTP_410_GONE,
+                detail="PayPro callbacks are disabled for an Amazon campaign.",
+            )
         raw_body = await request.body()
         if not runtime.settings.paypro_webhook_secret:
             raise HTTPException(
@@ -727,6 +734,11 @@ def create_app() -> FastAPI:
         content: str = Query(default="", max_length=100),
     ) -> RedirectResponse:
         runtime = get_runtime(request)
+        if runtime.settings.direct_affiliate_links_only:
+            raise HTTPException(
+                status_code=status.HTTP_410_GONE,
+                detail="Amazon Associate links must be direct; this campaign does not use redirect tracking.",
+            )
         campaign = runtime.store.get_campaign(campaign_slug)
         event = TrackingEventCreate(
             campaign_slug=campaign_slug,

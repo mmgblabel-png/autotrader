@@ -1,5 +1,3 @@
-"""Responsible, product-specific campaign marketing drafts."""
-
 from __future__ import annotations
 
 import json
@@ -11,8 +9,8 @@ from campaign_automaton.agents.base import BaseAgent
 class MarketingAgent(BaseAgent):
     name = "MarketingAgent"
     objective = (
-        "Create helpful, non-spammy Dutch content drafts that describe the current campaign's "
-        "verified product facts, invite an informed next step, and never promise outcomes."
+        "Create helpful, non-spammy product-research drafts grounded only in verified campaign "
+        "facts, with direct affiliate links, conspicuous disclosure, and no outcome promises."
     )
 
     @staticmethod
@@ -28,98 +26,106 @@ class MarketingAgent(BaseAgent):
         product_name = str(campaign["product_name"])
         facts = self._facts(campaign)
         fact_list = "\n".join(f"- {fact}" for fact in facts[:5]) or (
-            "- Controleer de informatie, voorwaarden en privacyverklaring van de aanbieder."
+            "- Check the current product page and terms before deciding."
         )
-        safe_context = (
-            "Deze informatie is bedoeld om rustig te vergelijken en is geen medisch, financieel "
-            "of persoonlijk advies."
-        )
+        affiliate = context.get("affiliate_status", {})
+        direct_link_ready = bool(affiliate.get("ready"))
+
+        def cta(channel: str) -> str:
+            link = str(tracking_urls.get(channel) or "").strip()
+            if direct_link_ready and link:
+                return (
+                    "Disclosure: As an Amazon Associate I earn from qualifying purchases. "
+                    "(paid link)\n\n"
+                    f"[View the current Amazon product details]({link})"
+                )
+            return (
+                "DRAFT-ONLY: An exact Amazon Associates Special Link has not been configured. "
+                "Do not publish this draft or add a purchase call-to-action until the owner has "
+                "pasted the unmodified SiteStripe or Associates Central link."
+            )
+
         deliverables: list[dict[str, str]] = []
         for channel in channels:
-            link = tracking_urls.get(channel, campaign["product_url"])
+            call_to_action = cta(str(channel))
             if channel == "blog":
-                title = f"{product_name}: eerst vergelijken, dan pas kiezen"
+                title = f"What to check before choosing the {product_name}"
                 content = f"""# {title}
 
-Wie zich oriënteert op {product_name} hoeft niet meteen te beslissen. Begin met wat je zoekt, hoeveel tijd je realistisch wilt vrijmaken en welke informatie je nodig hebt om een bewuste keuze te maken. {safe_context}
+A reusable water bottle is a small daily-use purchase, but the practical details still matter. Start with where you expect to use it, whether the size works for your routine, and whether the design suits how you drink and clean it. This is independent product-research information, not health or performance advice.
 
-## Wat we uit de aanbiederinformatie kunnen bevestigen
+## Verified product details
 
 {fact_list}
 
-## Een rustige manier om te beoordelen
+## Before deciding
 
-1. Lees de productbeschrijving en voorwaarden volledig.
-2. Vergelijk het aanbod met je eigen doel, budget en beschikbare tijd.
-3. Controleer privacy-, annulerings- en restitutievoorwaarden voordat je beslist.
-4. Vraag gekwalificeerd advies als je medische vragen of bijzondere omstandigheden hebt.
+1. Confirm the current product variant, price, availability, delivery eligibility, and return terms on Amazon.
+2. Consider capacity, cleaning routine, bag space, and whether the bottle fits the cupholder you use.
+3. Compare alternatives when a different lid type, size, or lower price is more important to you.
+4. Make a purchase only if the current listing fits your own needs and budget.
 
-[Lees de productinformatie en voorwaarden]({link})
-
-{safe_context}"""
+{call_to_action}"""
                 kind = "blog_article"
-                data = {"primary_intent": "informed_product_research", "cta": "product_information"}
+                data = {"primary_intent": "informed_product_research", "cta": "direct_special_link"}
             elif channel == "email":
-                title = f"E-maildraft: rustig kennismaken met {product_name}"
-                content = f"""Onderwerp: Past {product_name} bij wat jij zoekt?
+                title = f"Email draft: practical checks for {product_name}"
+                content = f"""Subject: A few practical checks before choosing a reusable water bottle
 
-Hallo {{voornaam}},
+Hello {{first_name}},
 
-Een goed aanbod hoeft niet voor iedereen de juiste keuze te zijn. Neem daarom eerst de tijd om de inhoud, voorwaarden en praktische verwachtingen van {product_name} te bekijken.
+If you are comparing reusable water bottles, it can help to focus on everyday fit rather than impulse. Here are the product details we have verified:
 
-Wat je kunt controleren:
 {fact_list}
 
-Lees de informatie kritisch en besluit alleen als dit aansluit bij jouw situatie.
+Please confirm current price, delivery, and return information directly on Amazon before deciding.
 
-Bekijk de productinformatie: {link}
+{call_to_action}
 
-{safe_context}
-
-Je ontvangt dit bericht alleen als je je hebt aangemeld voor relevante informatie. Afmelden kan via de uitschrijflink onderaan iedere e-mail."""
+This draft is only for recipients who opted in to receive relevant information. Include an unsubscribe route in every sent message."""
                 kind = "email_sequence"
                 data = {"sequence_step": 1, "audience": "opt-in only"}
             elif channel == "social":
-                title = f"Social draft: rustig vergelijken met {product_name}"
-                content = f"""Niet elk aanbod past bij iedereen. Als je {product_name} verkent, lees dan eerst de inhoud, voorwaarden en praktische verwachtingen.
+                title = f"Social draft: a practical look at {product_name}"
+                content = f"""Looking for a reusable insulated water bottle? Start with the details that change daily use: capacity, lid design, cleaning, carrying, and fit in the places you use it.
 
-Een paar feiten uit de aanbiederinformatie:
+For the {product_name}, we verified:
 {fact_list}
 
-Bekijk rustig of dit bij je past: {link}
+Always check the current Amazon listing for the exact variant, price, availability, and delivery options before buying.
 
-{safe_context}"""
+{call_to_action}"""
                 kind = "social_post"
                 data = {"format": "organic", "platform_adaptation_required": True}
             elif channel == "landing_page":
-                title = f"Landingspagina: {product_name} rustig verkennen"
-                content = f"""# {product_name} rustig verkennen
+                title = f"Product research: {product_name}"
+                content = f"""# {title}
 
-Geen wondermiddel en geen garantie op een bepaald resultaat. Wel een overzichtelijk vertrekpunt om de productinformatie, voorwaarden en praktische verwachtingen rustig te bekijken.
+This page helps you check whether the product details match your daily routine. It does not promise a health, fitness, or performance outcome.
 
-## Wat we uit de aanbiederinformatie kunnen bevestigen
+## Verified product details
 
 {fact_list}
 
-## Controleer dit voordat je kiest
+## Questions to consider
 
-- Past de inhoud bij wat je zoekt en bij de tijd die je beschikbaar hebt?
-- Lees de voorwaarden, privacy-informatie en restitutiebeleid.
-- Baseer je keuze niet op testimonials, haast of beloofde uitkomsten.
-- Vraag professioneel advies bij medische vragen of bijzondere omstandigheden.
+- Would the capacity and form factor work for commuting, campus, work, or exercise?
+- Will the lid and cleaning requirements fit your regular routine?
+- Does the cupholder note matter for the vehicles or equipment you use?
+- Have you checked the live Amazon listing for the selected variant, price, availability, delivery eligibility, and return terms?
 
-[Lees de productinformatie]({link})
-
-{safe_context}"""
+{call_to_action}"""
                 kind = "landing_page_copy"
-                data = {"cta": "product_information", "claims_level": "conservative"}
+                data = {"cta": "direct_special_link", "claims_level": "conservative"}
             elif channel == "community":
-                title = f"Communitytemplate: relevante context voor {product_name}"
+                title = f"Community response template: {product_name}"
                 content = (
-                    "Begin met een inhoudelijk antwoord op de concrete vraag van het lid. "
-                    f"Noem {product_name} alleen als het direct relevant is, de communityregels dit "
-                    "toestaan en de affiliaterelatie duidelijk wordt vermeld. Plaats nooit dezelfde "
-                    "reactie in meerdere groepen en stuur geen ongevraagde DM."
+                    "Answer the member's specific product-use question first. Mention the "
+                    f"{product_name} only when it is directly relevant, the community rules permit it, "
+                    "and the affiliate relationship is clearly disclosed beside a direct Amazon "
+                    "Special Link. Never post identical replies across groups, and never send an "
+                    "unsolicited direct message.\n\n"
+                    f"{call_to_action}"
                 )
                 kind = "community_response_template"
                 data = {"requires_rule_check": True, "requires_question_context": True}
@@ -135,15 +141,16 @@ Geen wondermiddel en geen garantie op een bepaald resultaat. Wel een overzichtel
                 }
             )
         return {
-            "summary": f"{len(deliverables)} product-specifieke concepten gegenereerd voor {product_name}.",
+            "summary": f"Generated {len(deliverables)} approval-gated product-research drafts for {product_name}.",
             "confidence": 0.7,
             "assumptions": [
-                "De opgegeven productfeiten en trackinglink zijn door de eigenaar gecontroleerd.",
-                "Alle externe publicatie blijft onderworpen aan afzonderlijke eigenaarstoestemming.",
+                "The owner will paste an exact Amazon Associates Special Link before approving a purchase CTA.",
+                "Every external publication remains subject to separate owner approval and channel-rule review.",
             ],
             "sources_needed": [
-                "Actuele productvoorwaarden en restitutiebeleid van de aanbieder",
-                "Merkrichtlijnen en goedgekeurde visuele assets",
+                "Current Amazon product listing for price, availability, delivery, and returns",
+                "Amazon Associates operating agreement and participation requirements",
+                "Applicable community or social-platform advertising rules",
             ],
             "deliverables": deliverables,
         }

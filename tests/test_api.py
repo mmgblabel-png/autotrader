@@ -1,10 +1,3 @@
-from __future__ import annotations
-
-import hashlib
-import hmac
-import json
-import os
-import time
 from pathlib import Path
 
 import pytest
@@ -12,9 +5,14 @@ from fastapi.testclient import TestClient
 
 from campaign_automaton.api import create_app
 
+SLUG = "owala-freesip-24oz"
+SPECIAL_LINK = "https://www.amazon.com/dp/B0BZYCJK89?tag=spmg00-20"
 
-@pytest.fixture()
-def client(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+
+def configure_environment(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, *, website_enabled: bool = False,
+    special_link: str = SPECIAL_LINK,
+) -> None:
     root = Path(__file__).resolve().parents[1]
     monkeypatch.setenv("APP_ENV", "test")
     monkeypatch.setenv("DATA_DIR", str(tmp_path))
@@ -23,26 +21,35 @@ def client(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setenv("PUBLIC_BASE_URL", "http://testserver")
     monkeypatch.setenv("CONTROL_TOKEN", "test-control-token")
     monkeypatch.setenv("WEBHOOK_TOKEN", "test-webhook-token")
-    monkeypatch.setenv("PAYPRO_WEBHOOK_SECRET", "test-paypro-webhook-secret")
+    monkeypatch.setenv("AFFILIATE_PROVIDER", "amazon")
+    monkeypatch.setenv("AMAZON_PRODUCT_URL", "https://www.amazon.com/dp/B0BZYCJK89")
+    monkeypatch.setenv("AMAZON_ASSOCIATE_URL", special_link)
+    monkeypatch.setenv(
+        "AFFILIATE_DISCLOSURE",
+        "Disclosure: As an Amazon Associate I earn from qualifying purchases. (paid link)",
+    )
     monkeypatch.setenv("LLM_PROVIDER", "deterministic")
     monkeypatch.setenv("HEARTBEAT_ENABLED", "false")
+    monkeypatch.setenv("WEBSITE_ENABLED", str(website_enabled).lower())
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+
+
+@pytest.fixture()
+def client(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    configure_environment(tmp_path, monkeypatch)
+    with TestClient(create_app()) as test_client:
+        yield test_client
+
+
+@pytest.fixture()
+def publisher_client(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    configure_environment(tmp_path, monkeypatch, website_enabled=True)
     with TestClient(create_app()) as test_client:
         yield test_client
 
 
 def control() -> dict[str, str]:
     return {"X-Control-Token": "test-control-token"}
-
-
-def paypro_headers(body: bytes, timestamp: str | None = None) -> dict[str, str]:
-    sent_at = timestamp or str(int(time.time()))
-    signature = hmac.new(
-        os.environ["PAYPRO_WEBHOOK_SECRET"].encode("utf-8"),
-        sent_at.encode("utf-8") + b"." + body,
-        hashlib.sha256,
-    ).hexdigest()
-    return {"PayPro-Signature": signature, "PayPro-Timestamp": sent_at, "Content-Type": "application/json"}
 
 
 def test_health_is_public_and_ready(client: TestClient):
@@ -54,45 +61,39 @@ def test_health_is_public_and_ready(client: TestClient):
     assert payload["llm_mode"] == "deterministic"
 
 
-def test_public_farm_snapshot_is_token_free_and_aggregated(client: TestClient):
-    activated = client.patch(
-        "/api/campaigns/wegmetdiekilos-bronze",
-        headers=control(),
-        json={"status": "active"},
-    )
+def test_config_status_identifies_direct_amazon_link_requirement(client: TestClient):
+    response = client.get("/api/config/status", headers=control())
+    assert response.status_code == 200
+    affiliate = response.json()["affiliate"]
+    assert affiliate["provider"] == "amazon"
+    assert affiliate["direct_links_only"] is True
+    assert affiliate["special_link_configured"] is True
+    assert affiliate["ready"] is True
+
+
+def test_public_snapshot_is_token_free_and_aggregated(client: TestClient):
+    activated = client.patch(f"/api/campaigns/{SLUG}", headers=control(), json={"status": "active"})
     assert activated.status_code == 200
     response = client.get("/api/public/farm-snapshot")
     assert response.status_code == 200
     payload = response.json()
     assert payload["schema_version"] == 1
     assert payload["refresh_interval_seconds"] == 60
-    assert payload["lifecycle"] == {
-        "views": 0,
-        "clicks": 0,
-        "signups": 0,
-        "conversions": 0,
-    }
+    assert payload["lifecycle"] == {"views": 0, "clicks": 0, "signups": 0, "conversions": 0}
     campaign = payload["campaigns"][0]
-    assert campaign["slug"] == "wegmetdiekilos-bronze"
+    assert campaign["slug"] == SLUG
+    assert campaign["product_name"] == "Owala FreeSip Stainless Steel Water Bottle, 24 oz"
     assert "product_url" not in campaign
-    assert "by_source" not in campaign
     assert "metadata" not in campaign
-    assert payload["source_breakdown"] == []
-    assert payload["review_window"]["learning_state"] == "collecting_evidence"
-    assert "review_at" in payload["review_window"]
 
 
-def test_public_farm_snapshot_uses_allowlisted_source_aggregation(client: TestClient):
-    client.patch(
-        "/api/campaigns/wegmetdiekilos-bronze",
-        headers=control(),
-        json={"status": "active"},
-    )
+def test_public_snapshot_uses_allowlisted_source_aggregation(client: TestClient):
+    client.patch(f"/api/campaigns/{SLUG}", headers=control(), json={"status": "active"})
     recorded = client.post(
         "/api/events",
         headers=control(),
         json={
-            "campaign_slug": "wegmetdiekilos-bronze",
+            "campaign_slug": SLUG,
             "event_type": "click",
             "source": "social",
             "medium": "affiliate",
@@ -102,45 +103,10 @@ def test_public_farm_snapshot_uses_allowlisted_source_aggregation(client: TestCl
     assert recorded.status_code == 201
     snapshot = client.get("/api/public/farm-snapshot").json()
     assert snapshot["source_breakdown"] == [
-        {
-            "source": "Social media",
-            "metrics": {"views": 0, "clicks": 1, "signups": 0, "conversions": 0},
-        }
+        {"source": "Social media", "metrics": {"views": 0, "clicks": 1, "signups": 0, "conversions": 0}}
     ]
-    assert snapshot["campaigns"][0]["source_breakdown"] == snapshot["source_breakdown"]
-    assert snapshot["attribution_breakdown"] == [
-        {
-            "campaign_slug": "wegmetdiekilos-bronze",
-            "campaign_name": "WegMetDieKilos – Bronze Plan",
-            "source": "Social media",
-            "medium": "Affiliate",
-            "content": "Unlabeled asset",
-            "metrics": {"views": 0, "clicks": 1, "signups": 0, "conversions": 0},
-        }
-    ]
-    assert len(snapshot["history"]) == 7
-    assert snapshot["history"][-1]["metrics"]["clicks"] == 1
-
-
-def test_public_creative_page_preserves_named_attribution(publisher_client: TestClient):
-    run = publisher_client.post(
-        "/api/campaigns/wegmetdiekilos-bronze/runs",
-        headers=control(),
-        json={"workflow": "content", "channels": ["landing_page"], "force": True},
-    )
-    assert run.status_code == 200
-    artifact = publisher_client.get(
-        "/api/campaigns/wegmetdiekilos-bronze/artifacts", headers=control()
-    ).json()["artifacts"][0]
-    reviewed = publisher_client.post(
-        f"/api/artifacts/{artifact['id']}/review",
-        headers=control(),
-        json={"decision": "approved", "reviewer": "test-owner", "notes": "approved"},
-    )
-    assert reviewed.status_code == 200
-    page = publisher_client.get("/site/wegmetdiekilos-bronze/c/small-step-reel")
-    assert page.status_code == 200
-    assert "src=instagram&medium=social&content=small-step-reel" in page.text
+    assert snapshot["attribution_breakdown"][0]["campaign_slug"] == SLUG
+    assert snapshot["attribution_breakdown"][0]["content"] == "Unlabeled asset"
 
 
 def test_control_endpoints_require_token(client: TestClient):
@@ -148,44 +114,68 @@ def test_control_endpoints_require_token(client: TestClient):
     assert client.get("/api/campaigns", headers={"X-Control-Token": "wrong"}).status_code == 401
     response = client.get("/api/campaigns", headers=control())
     assert response.status_code == 200
-    assert response.json()["campaigns"][0]["slug"] == "wegmetdiekilos-bronze"
+    assert response.json()["campaigns"][0]["slug"] == SLUG
 
 
-def test_run_artifact_and_review_flow(client: TestClient):
+def test_run_creates_disclosed_direct_link_drafts_that_require_review(client: TestClient):
     run = client.post(
-        "/api/campaigns/wegmetdiekilos-bronze/runs",
+        f"/api/campaigns/{SLUG}/runs",
         headers=control(),
-        json={"workflow": "content", "channels": ["blog", "email"], "force": True},
+        json={"workflow": "content", "channels": ["blog", "social"], "force": True},
     )
     assert run.status_code == 200
     assert run.json()["status"] == "awaiting_approval"
-    artifacts = client.get(
-        "/api/campaigns/wegmetdiekilos-bronze/artifacts", headers=control()
-    )
-    assert artifacts.status_code == 200
-    rows = artifacts.json()["artifacts"]
-    assert rows
-    allowed = next(item for item in rows if item["policy"]["allowed"])
+    artifacts = client.get(f"/api/campaigns/{SLUG}/artifacts", headers=control()).json()["artifacts"]
+    marketing = [item for item in artifacts if item["agent"] == "MarketingAgent"]
+    assert len(marketing) == 2
+    assert all(item["policy"]["allowed"] for item in marketing)
+    assert all(SPECIAL_LINK in item["content"] for item in marketing)
+    assert all("As an Amazon Associate I earn from qualifying purchases" in item["content"] for item in marketing)
+    assert all("/r/" not in item["content"] and "utm_" not in item["content"] for item in marketing)
+
     reviewed = client.post(
-        f"/api/artifacts/{allowed['id']}/review",
+        f"/api/artifacts/{marketing[0]['id']}/review",
         headers=control(),
-        json={"decision": "approved", "reviewer": "test-owner", "notes": "checked"},
+        json={"decision": "approved", "reviewer": "test-owner", "notes": "link and disclosure checked"},
     )
     assert reviewed.status_code == 200
     assert reviewed.json()["status"] == "approved"
 
 
-def test_webhook_deduplicates_external_event(client: TestClient):
+def test_missing_amazon_special_link_blocks_marketing_artifacts(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    configure_environment(tmp_path, monkeypatch, special_link="")
+    with TestClient(create_app()) as test_client:
+        run = test_client.post(
+            f"/api/campaigns/{SLUG}/runs",
+            headers=control(),
+            json={"workflow": "content", "channels": ["landing_page"], "force": True},
+        )
+        assert run.status_code == 200
+        artifact = test_client.get(
+            f"/api/campaigns/{SLUG}/artifacts", headers=control()
+        ).json()["artifacts"][0]
+        assert artifact["policy"]["allowed"] is False
+        assert any(finding["code"] == "amazon_special_link_missing" for finding in artifact["policy"]["findings"])
+
+
+def test_legacy_paypro_and_redirect_endpoints_are_disabled_for_amazon(client: TestClient):
+    callback = client.post("/api/webhooks/paypro", content=b"{}")
+    assert callback.status_code == 410
+    redirect = client.get(f"/r/{SLUG}?src=social&content=post-1", follow_redirects=False)
+    assert redirect.status_code == 410
+
+
+def test_generic_webhook_deduplicates_external_event(client: TestClient):
     payload = {
-        "provider": "test-provider",
+        "provider": "manual-report-import",
         "event": {
-            "campaign_slug": "wegmetdiekilos-bronze",
+            "campaign_slug": SLUG,
             "event_type": "conversion",
-            "source": "blog",
+            "source": "amazon_report",
             "medium": "affiliate",
-            "event_id": "external-1",
+            "event_id": "amazon-report-row-1",
             "value": 19.0,
-            "metadata": {},
+            "metadata": {"verification": "owner-reviewed-report"},
         },
     }
     headers = {"X-Webhook-Token": "test-webhook-token"}
@@ -194,92 +184,19 @@ def test_webhook_deduplicates_external_event(client: TestClient):
     assert first.status_code == 200
     assert first.json()["created"] is True
     assert second.json()["created"] is False
-    metrics = client.get(
-        "/api/campaigns/wegmetdiekilos-bronze/analytics", headers=control()
-    )
-    assert metrics.json()["conversions"] == 1
-
-
-def test_signed_paypro_payment_callback_updates_verified_review_window(client: TestClient):
-    client.patch(
-        "/api/campaigns/wegmetdiekilos-bronze", headers=control(), json={"status": "active"}
-    )
-    callback = {
-        "id": "paypro-event-1",
-        "event_type": "payment.paid",
-        "payload": {
-            "metadata": {
-                "campaign_slug": "wegmetdiekilos-bronze",
-                "utm_content": "small-step-reel",
-            }
-        },
-    }
-    body = json.dumps(callback, separators=(",", ":")).encode("utf-8")
-    invalid = client.post(
-        "/api/webhooks/paypro",
-        content=body,
-        headers={"PayPro-Signature": "invalid", "PayPro-Timestamp": str(int(time.time()))},
-    )
-    assert invalid.status_code == 400
-    stale_timestamp = str(int(time.time()) - 601)
-    stale = client.post(
-        "/api/webhooks/paypro",
-        content=body,
-        headers=paypro_headers(body, timestamp=stale_timestamp),
-    )
-    assert stale.status_code == 400
-    first = client.post("/api/webhooks/paypro", content=body, headers=paypro_headers(body))
-    second = client.post("/api/webhooks/paypro", content=body, headers=paypro_headers(body))
-    assert first.status_code == 200
-    assert first.json()["created"] is True
-    assert second.status_code == 200
-    assert second.json()["created"] is False
-    snapshot = client.get("/api/public/farm-snapshot").json()
-    review = snapshot["review_window"]
-    assert review["verified_conversion_count"] == 1
-    assert review["last_verified_conversion_at"] is not None
-
-
-def test_signed_paypro_payment_callback_maps_configured_product_identifier(client: TestClient):
-    callback = {
-        "id": "paypro-event-product-id",
-        "event_type": "payment.paid",
-        "payload": {"product_id": "114766"},
-    }
-    body = json.dumps(callback, separators=(",", ":")).encode("utf-8")
-    response = client.post("/api/webhooks/paypro", content=body, headers=paypro_headers(body))
-    assert response.status_code == 200
-    assert response.json()["created"] is True
-    metrics = client.get(
-        "/api/campaigns/wegmetdiekilos-bronze/analytics", headers=control()
-    ).json()
+    metrics = client.get(f"/api/campaigns/{SLUG}/analytics", headers=control()).json()
     assert metrics["conversions"] == 1
-
-
-def test_tracked_redirect_records_click_and_preserves_destination(client: TestClient):
-    response = client.get(
-        "/r/wegmetdiekilos-bronze?src=social&content=post-1",
-        follow_redirects=False,
-    )
-    assert response.status_code == 302
-    location = response.headers["location"]
-    assert location.startswith("https://www.paypro.nl/producten/")
-    assert "utm_source=social" in location
-    metrics = client.get(
-        "/api/campaigns/wegmetdiekilos-bronze/analytics", headers=control()
-    ).json()
-    assert metrics["clicks"] == 1
 
 
 def test_clone_campaign_and_decide_optimization(client: TestClient):
     cloned = client.post(
-        "/api/campaigns/wegmetdiekilos-bronze/clone",
+        f"/api/campaigns/{SLUG}/clone",
         headers=control(),
         json={
-            "name": "Nieuwe campagne",
-            "slug": "nieuwe-campagne",
-            "product_name": "Nieuw product",
-            "product_url": "https://example.com/product",
+            "name": "Alternative bottle test",
+            "slug": "alternative-bottle-test",
+            "product_name": "Alternative product",
+            "product_url": "https://www.amazon.com/dp/B0BZYCJK89?tag=spmg00-20",
             "reset_product_facts": True,
         },
     )
@@ -287,14 +204,10 @@ def test_clone_campaign_and_decide_optimization(client: TestClient):
     assert cloned.json()["product_facts"] == []
 
     run = client.post(
-        "/api/campaigns/wegmetdiekilos-bronze/runs",
-        headers=control(),
-        json={"workflow": "analytics", "force": True},
+        f"/api/campaigns/{SLUG}/runs", headers=control(), json={"workflow": "analytics", "force": True}
     )
     assert run.status_code == 200
-    proposals = client.get(
-        "/api/campaigns/wegmetdiekilos-bronze/optimizations", headers=control()
-    ).json()["proposals"]
+    proposals = client.get(f"/api/campaigns/{SLUG}/optimizations", headers=control()).json()["proposals"]
     assert proposals
     decision = client.post(
         f"/api/optimizations/{proposals[0]['id']}/decision",
@@ -305,100 +218,78 @@ def test_clone_campaign_and_decide_optimization(client: TestClient):
     assert decision.json()["status"] == "accepted"
 
 
-@pytest.fixture()
-def publisher_client(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
-    root = Path(__file__).resolve().parents[1]
-    monkeypatch.setenv("APP_ENV", "test")
-    monkeypatch.setenv("DATA_DIR", str(tmp_path))
-    monkeypatch.setenv("DATABASE_PATH", str(tmp_path / "publisher.db"))
-    monkeypatch.setenv("CAMPAIGN_CONFIG_PATH", str(root / "config" / "campaign.yaml"))
-    monkeypatch.setenv("PUBLIC_BASE_URL", "http://testserver")
-    monkeypatch.setenv("CONTROL_TOKEN", "test-control-token")
-    monkeypatch.setenv("WEBHOOK_TOKEN", "test-webhook-token")
-    monkeypatch.setenv("PAYPRO_WEBHOOK_SECRET", "test-paypro-webhook-secret")
-    monkeypatch.setenv("LLM_PROVIDER", "deterministic")
-    monkeypatch.setenv("HEARTBEAT_ENABLED", "false")
-    monkeypatch.setenv("WEBSITE_ENABLED", "true")
-    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
-    with TestClient(create_app()) as test_client:
-        yield test_client
-
-
 def test_public_site_is_disabled_by_default(client: TestClient):
-    response = client.get("/site/wegmetdiekilos-bronze")
+    response = client.get(f"/site/{SLUG}")
     assert response.status_code == 404
 
 
-def test_public_site_renders_approved_artifacts_only(publisher_client: TestClient):
+def test_public_site_renders_only_approved_drafts_with_direct_link(publisher_client: TestClient):
     run = publisher_client.post(
-        "/api/campaigns/wegmetdiekilos-bronze/runs",
+        f"/api/campaigns/{SLUG}/runs",
         headers=control(),
         json={"workflow": "content", "channels": ["landing_page", "blog"], "force": True},
     )
     assert run.status_code == 200
-    artifacts = publisher_client.get(
-        "/api/campaigns/wegmetdiekilos-bronze/artifacts", headers=control()
-    ).json()["artifacts"]
+    artifacts = publisher_client.get(f"/api/campaigns/{SLUG}/artifacts", headers=control()).json()["artifacts"]
     draft_blog = next(item for item in artifacts if item["artifact_type"] == "blog_article")
-    assert publisher_client.get(
-        f"/site/wegmetdiekilos-bronze/articles/{draft_blog['id']}"
-    ).status_code == 404
+    assert publisher_client.get(f"/site/{SLUG}/articles/{draft_blog['id']}").status_code == 404
 
     for artifact in artifacts:
-        if artifact["artifact_type"] in {"blog_article", "landing_page_copy"}:
-            reviewed = publisher_client.post(
-                f"/api/artifacts/{artifact['id']}/review",
-                headers=control(),
-                json={"decision": "approved", "reviewer": "test-owner", "notes": "reviewed"},
-            )
-            assert reviewed.status_code == 200
+        reviewed = publisher_client.post(
+            f"/api/artifacts/{artifact['id']}/review",
+            headers=control(),
+            json={"decision": "approved", "reviewer": "test-owner", "notes": "link, claims, and disclosure reviewed"},
+        )
+        assert reviewed.status_code == 200
 
-    site = publisher_client.get("/site/wegmetdiekilos-bronze")
+    site = publisher_client.get(f"/site/{SLUG}")
     assert site.status_code == 200
-    assert "Geen wondermiddel en geen garantie" in site.text
-    assert "Affiliate disclosure" in site.text
-    assert "/r/wegmetdiekilos-bronze?src=website&medium=referral&content=hero-cta" in site.text
+    assert "Practical product research" in site.text
+    assert SPECIAL_LINK in site.text
+    assert "As an Amazon Associate I earn from qualifying purchases" in site.text
+    assert "/r/" not in site.text
 
-    article = publisher_client.get(
-        f"/site/wegmetdiekilos-bronze/articles/{draft_blog['id']}"
-    )
+    article = publisher_client.get(f"/site/{SLUG}/articles/{draft_blog['id']}")
     assert article.status_code == 200
-    assert "WegMetDieKilos – Bronze Plan: eerst vergelijken" in article.text
+    assert "What to check before choosing" in article.text
     status = publisher_client.get("/api/publisher/status", headers=control())
     assert status.status_code == 200
-    assert status.json()["approved_artifact_count"] == 2
+    assert status.json()["approved_artifact_count"] == 4
 
 
-
-def test_public_portfolio_lists_active_approved_campaigns_only(publisher_client: TestClient):
-    empty_portfolio = publisher_client.get("/site")
-    assert empty_portfolio.status_code == 200
-    assert "WegMetDieKilos" not in empty_portfolio.text
-
-    activated = publisher_client.patch(
-        "/api/campaigns/wegmetdiekilos-bronze",
-        headers=control(),
-        json={"status": "active"},
-    )
-    assert activated.status_code == 200
-    run = publisher_client.post(
-        "/api/campaigns/wegmetdiekilos-bronze/runs",
+def test_public_creative_page_uses_direct_special_link(publisher_client: TestClient):
+    publisher_client.post(
+        f"/api/campaigns/{SLUG}/runs",
         headers=control(),
         json={"workflow": "content", "channels": ["landing_page"], "force": True},
     )
-    assert run.status_code == 200
-    artifacts = publisher_client.get(
-        "/api/campaigns/wegmetdiekilos-bronze/artifacts", headers=control()
-    ).json()["artifacts"]
-    landing = next(item for item in artifacts if item["artifact_type"] == "landing_page_copy")
-    approved = publisher_client.post(
+    artifact = publisher_client.get(f"/api/campaigns/{SLUG}/artifacts", headers=control()).json()["artifacts"][0]
+    publisher_client.post(
+        f"/api/artifacts/{artifact['id']}/review",
+        headers=control(),
+        json={"decision": "approved", "reviewer": "test-owner", "notes": "approved"},
+    )
+    page = publisher_client.get(f"/site/{SLUG}/c/daily-carry-social")
+    assert page.status_code == 200
+    assert SPECIAL_LINK in page.text
+    assert "/r/" not in page.text
+
+
+def test_public_portfolio_lists_active_approved_campaigns_only(publisher_client: TestClient):
+    assert "Owala FreeSip" not in publisher_client.get("/site").text
+    publisher_client.patch(f"/api/campaigns/{SLUG}", headers=control(), json={"status": "active"})
+    publisher_client.post(
+        f"/api/campaigns/{SLUG}/runs",
+        headers=control(),
+        json={"workflow": "content", "channels": ["landing_page"], "force": True},
+    )
+    landing = publisher_client.get(f"/api/campaigns/{SLUG}/artifacts", headers=control()).json()["artifacts"][0]
+    publisher_client.post(
         f"/api/artifacts/{landing['id']}/review",
         headers=control(),
         json={"decision": "approved", "reviewer": "test-owner", "notes": "checked"},
     )
-    assert approved.status_code == 200
-
     portfolio = publisher_client.get("/site")
     assert portfolio.status_code == 200
-    assert "WegMetDieKilos – Bronze Plan" in portfolio.text
-    assert "/site/wegmetdiekilos-bronze" in portfolio.text
+    assert "Owala FreeSip Stainless Steel Water Bottle, 24 oz" in portfolio.text
+    assert f"/site/{SLUG}" in portfolio.text

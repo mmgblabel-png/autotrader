@@ -1,31 +1,45 @@
 campaign:
-  name: "WegMetDieKilos – Bronze Plan"
-  slug: "wegmetdiekilos-bronze"
-  product_name: "WegMetDieKilos – Bronze Plan"
+  name: "Owala FreeSip 24 oz — Amazon Associate Test"
+  slug: "owala-freesip-24oz"
+  product_name: "Owala FreeSip Stainless Steel Water Bottle, 24 oz"
+  product_url: "https://www.amazon.com/dp/B0BZYCJK89"
   audience: >-
-    Nederlandstalige volwassenen die op een gezonde, realistische manier willen afvallen
-    en eerst willen onderzoeken of een persoonlijk digitaal plan bij hun levensfase en
-    dagelijkse routine past.
-  market: "Nederland"
-  language: "nl-NL"
-  channels: [blog, email, social, landing_page, community]
+    Adults located in the United States who are actively researching a reusable insulated
+    water bottle for commuting, campus, work, gym, or daily hydration. This initial test
+    excludes Netherlands-based traffic because the selected item was unavailable for the
+    current Netherlands delivery location at review time.
+  market: "United States"
+  language: "en-US"
+  channels: [blog, social, landing_page, community]
   goals:
-    - "Kwalitatieve, vrijwillige bezoekers naar de productquiz leiden"
-    - "Opt-in leads opbouwen met waardevolle leefstijlcontent"
-    - "Klikken en toegestane conversies pseudoniem meten"
+    - "Send voluntary, informed US visitors to one direct Amazon Associates Special Link."
+    - "Test one audience-to-product match at a time before selecting a winning promotion."
+    - "Measure first-party content views and voluntary CTA-click intent without automatic redirects."
+    - "Use Amazon Associates reporting as the source of record for ordered items, shipped revenue, and earnings."
   product_facts:
-    - "De huidige bestemming positioneert het aanbod als een app om op een gezonde manier af te vallen."
-    - "De huidige bestemming biedt een persoonlijke start volgens leeftijd."
-    - "De huidige bestemming nodigt bezoekers uit voor een drie-minutenquiz."
-    - "De huidige bestemming toont leeftijdsgroepen 18–25, 26–35, 36–45 en 46+."
+    - "The selected product is a 24-ounce insulated stainless-steel water bottle."
+    - "Amazon describes a FreeSip spout that can be used for upright straw sipping or swigging from the spout opening."
+    - "Amazon describes a push-to-open lid, a carry loop that doubles as a lock, and a wide opening for cleaning and adding ice."
+    - "Amazon states that its double-wall insulation keeps cold drinks cold for up to 24 hours."
+    - "The product page notes that the bottle is wider than standard cupholders and may fit only oversized or specialty cupholders."
+    - "Product price, availability, delivery eligibility, ratings, reviews, rank, and commission rate are variable and must not be copied into public content without an approved Amazon data source."
   prohibited_claims:
-    - "Geen gegarandeerd gewichtsverlies of gegarandeerde resultaten."
-    - "Geen concrete kilo's of termijnen zonder verifieerbaar bewijs en juridische goedkeuring."
-    - "Geen medische diagnose, behandeling of genezingsclaims."
-    - "Geen verzonnen testimonials, schaarste, prijzen of productfuncties."
-    - "Geen ongevraagde e-mail, DM, profielscraping of gekochte contactlijsten."
+    - "Do not promise hydration, health, fitness, productivity, or performance outcomes."
+    - "Do not make medical, safety, therapeutic, or disease-prevention claims."
+    - "Do not state a price, discount, stock level, delivery date, sales rank, review count, star rating, or commission rate in public content without an approved live Amazon data source."
+    - "Do not copy or quote customer reviews or display Amazon ratings without authorization through an approved Amazon data source."
+    - "Do not cloak, shorten, append parameters to, or send visitors through an automated redirect before an Amazon Associates Special Link."
+    - "Do not use paid search containing Amazon trademarks or link paid-search traffic directly or indirectly to Amazon."
+    - "Do not send unsolicited email or DM, scrape profiles, purchase leads, invent testimonials, or manufacture scarcity."
   schedule_cron: "0 9 * * 1"
   metadata:
-    owner: "PayPro affiliate operator"
+    owner: "Amazon Associate operator"
     mode: "draft_only"
-    source_checked_at: "2026-08-26"
+    direct_links_only: true
+    selected_asin: "B0BZYCJK89"
+    source_checked_at: "2026-08-27"
+    source_urls:
+      - "https://www.amazon.com/Owala-FreeSip-Insulated-Stainless-BPA-Free/dp/B0BZYCJK89"
+      - "https://www.amazon.com/Best-Sellers-Home-Kitchen/zgbs/home-garden"
+      - "https://affiliate-program.amazon.com/help/operating/participation/"
+    link_activation_requirement: "Owner must paste an exact SiteStripe or Associates Central Special Link into AMAZON_ASSOCIATE_URL before approving any product CTA."
