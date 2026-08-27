@@ -28,6 +28,7 @@ def settings(tmp_path: Path) -> Settings:
         ),
         control_token="test-control-token",
         webhook_token="test-webhook-token",
+        paypro_webhook_secret="test-paypro-webhook-secret",
         cors_origins=("http://testserver",),
         llm_provider="deterministic",
         llm_model="gpt-5-mini",

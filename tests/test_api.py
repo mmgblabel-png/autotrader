@@ -1,5 +1,10 @@
 from __future__ import annotations
 
+import hashlib
+import hmac
+import json
+import os
+import time
 from pathlib import Path
 
 import pytest
@@ -18,6 +23,7 @@ def client(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setenv("PUBLIC_BASE_URL", "http://testserver")
     monkeypatch.setenv("CONTROL_TOKEN", "test-control-token")
     monkeypatch.setenv("WEBHOOK_TOKEN", "test-webhook-token")
+    monkeypatch.setenv("PAYPRO_WEBHOOK_SECRET", "test-paypro-webhook-secret")
     monkeypatch.setenv("LLM_PROVIDER", "deterministic")
     monkeypatch.setenv("HEARTBEAT_ENABLED", "false")
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
@@ -27,6 +33,16 @@ def client(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
 
 def control() -> dict[str, str]:
     return {"X-Control-Token": "test-control-token"}
+
+
+def paypro_headers(body: bytes, timestamp: str | None = None) -> dict[str, str]:
+    sent_at = timestamp or str(int(time.time()))
+    signature = hmac.new(
+        os.environ["PAYPRO_WEBHOOK_SECRET"].encode("utf-8"),
+        sent_at.encode("utf-8") + b"." + body,
+        hashlib.sha256,
+    ).hexdigest()
+    return {"PayPro-Signature": signature, "PayPro-Timestamp": sent_at, "Content-Type": "application/json"}
 
 
 def test_health_is_public_and_ready(client: TestClient):
@@ -184,6 +200,39 @@ def test_webhook_deduplicates_external_event(client: TestClient):
     assert metrics.json()["conversions"] == 1
 
 
+def test_signed_paypro_payment_callback_updates_verified_review_window(client: TestClient):
+    client.patch(
+        "/api/campaigns/wegmetdiekilos-bronze", headers=control(), json={"status": "active"}
+    )
+    callback = {
+        "id": "paypro-event-1",
+        "event_type": "payment.paid",
+        "payload": {
+            "metadata": {
+                "campaign_slug": "wegmetdiekilos-bronze",
+                "utm_content": "small-step-reel",
+            }
+        },
+    }
+    body = json.dumps(callback, separators=(",", ":")).encode("utf-8")
+    invalid = client.post(
+        "/api/webhooks/paypro",
+        content=body,
+        headers={"PayPro-Signature": "invalid", "PayPro-Timestamp": str(int(time.time()))},
+    )
+    assert invalid.status_code == 400
+    first = client.post("/api/webhooks/paypro", content=body, headers=paypro_headers(body))
+    second = client.post("/api/webhooks/paypro", content=body, headers=paypro_headers(body))
+    assert first.status_code == 200
+    assert first.json()["created"] is True
+    assert second.status_code == 200
+    assert second.json()["created"] is False
+    snapshot = client.get("/api/public/farm-snapshot").json()
+    review = snapshot["review_window"]
+    assert review["verified_conversion_count"] == 1
+    assert review["last_verified_conversion_at"] is not None
+
+
 def test_tracked_redirect_records_click_and_preserves_destination(client: TestClient):
     response = client.get(
         "/r/wegmetdiekilos-bronze?src=social&content=post-1",
@@ -243,6 +292,7 @@ def publisher_client(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setenv("PUBLIC_BASE_URL", "http://testserver")
     monkeypatch.setenv("CONTROL_TOKEN", "test-control-token")
     monkeypatch.setenv("WEBHOOK_TOKEN", "test-webhook-token")
+    monkeypatch.setenv("PAYPRO_WEBHOOK_SECRET", "test-paypro-webhook-secret")
     monkeypatch.setenv("LLM_PROVIDER", "deterministic")
     monkeypatch.setenv("HEARTBEAT_ENABLED", "false")
     monkeypatch.setenv("WEBSITE_ENABLED", "true")

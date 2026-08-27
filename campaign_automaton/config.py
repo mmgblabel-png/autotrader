@@ -63,6 +63,7 @@ class Settings:
     affiliate_disclosure: str
     control_token: str
     webhook_token: str
+    paypro_webhook_secret: str
     cors_origins: tuple[str, ...]
     llm_provider: str
     llm_model: str
@@ -143,6 +144,7 @@ def load_settings() -> Settings:
         ),
         control_token=os.getenv("CONTROL_TOKEN", ""),
         webhook_token=os.getenv("WEBHOOK_TOKEN", ""),
+        paypro_webhook_secret=os.getenv("PAYPRO_WEBHOOK_SECRET", "").strip(),
         cors_origins=_csv("CORS_ORIGINS", "http://localhost:3000,http://localhost:8000"),
         llm_provider=os.getenv("LLM_PROVIDER", "auto").strip().lower(),
         llm_model=os.getenv("LLM_MODEL", "gpt-5-mini").strip(),

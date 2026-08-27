@@ -692,6 +692,21 @@ class SQLiteStore:
             for day, metrics in sorted(buckets.items())
         ]
 
+    def verified_conversion_summary(self, campaign_ids: list[str]) -> dict[str, Any]:
+        """Return public-safe PayPro callback freshness for active campaign evidence windows."""
+        if not campaign_ids:
+            return {"count": 0, "latest_at": None}
+        with self.connection() as db:
+            row = db.execute(
+                """SELECT COUNT(*) AS count, MAX(occurred_at) AS latest_at
+                FROM tracking_events
+                WHERE campaign_id IN (SELECT value FROM json_each(?))
+                  AND event_type = 'conversion'
+                  AND source = 'paypro'""",
+                (json.dumps(campaign_ids),),
+            ).fetchone()
+        return {"count": int(row["count"] or 0), "latest_at": row["latest_at"]}
+
     def remember(
         self,
         campaign_id: str | None,

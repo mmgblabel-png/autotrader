@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+import hashlib
 import hmac
+import json
+import time
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -63,6 +66,26 @@ def require_webhook(
     x_webhook_token: Annotated[str | None, Header()] = None,
 ) -> None:
     _constant_time_token(x_webhook_token, get_runtime(request).settings.webhook_token, "Webhook")
+
+
+def _paypro_signature_is_valid(
+    raw_body: bytes,
+    timestamp: str | None,
+    signature: str | None,
+    secret: str,
+) -> bool:
+    """Verify PayPro's HMAC-SHA256 over `<timestamp>.<unaltered JSON body>` within ten minutes."""
+    if not secret or not timestamp or not signature:
+        return False
+    try:
+        sent_at = float(timestamp)
+    except ValueError:
+        return False
+    if abs(time.time() - sent_at) > 600:
+        return False
+    payload = timestamp.encode("utf-8") + b"." + raw_body
+    expected = hmac.new(secret.encode("utf-8"), payload, hashlib.sha256).hexdigest()
+    return hmac.compare_digest(signature, expected)
 
 
 @asynccontextmanager
@@ -250,6 +273,7 @@ def create_app() -> FastAPI:
             return public_source_labels.get(normalized, "Other tracked source")
 
         campaigns: list[dict[str, Any]] = []
+        active_campaign_ids: list[str] = []
         totals = empty_metrics()
         source_totals: dict[str, dict[str, int]] = {}
         attribution_totals: dict[tuple[str, str, str, str, str], dict[str, int]] = {}
@@ -258,6 +282,7 @@ def create_app() -> FastAPI:
         for campaign in runtime.store.list_campaigns():
             if campaign["status"] != "active":
                 continue
+            active_campaign_ids.append(campaign["id"])
             metrics = runtime.store.campaign_metrics(campaign["id"])
             sources = {row["source"] for row in metrics["by_source"]}
             if not sources:
@@ -356,8 +381,15 @@ def create_app() -> FastAPI:
             if campaigns and all(row["data_quality"] == "verification_only" for row in campaigns)
             else "mixed_or_observed"
         )
-        review_at = min(next_run_times) if next_run_times else now + timedelta(hours=24)
-        review_started_at = review_at - timedelta(hours=24)
+        next_scheduled_review = min(next_run_times) if next_run_times else now + timedelta(hours=24)
+        verified_conversions = runtime.store.verified_conversion_summary(active_campaign_ids)
+        verified_at = verified_conversions["latest_at"]
+        if verified_at:
+            review_started_at = datetime.fromisoformat(verified_at).astimezone(UTC)
+            review_at = review_started_at + timedelta(hours=24)
+        else:
+            review_at = next_scheduled_review
+            review_started_at = review_at - timedelta(hours=24)
         campaign_count = max(1, len(campaigns))
         required_views = 100 * campaign_count
         required_clicks = 20 * campaign_count
@@ -405,6 +437,8 @@ def create_app() -> FastAPI:
                 "review_at": review_at.isoformat(),
                 "minimum_views_per_campaign": 100,
                 "minimum_clicks_per_campaign": 20,
+                "verified_conversion_count": verified_conversions["count"],
+                "last_verified_conversion_at": verified_at,
                 "learning_state": learning_state,
                 "evidence_progress_percent": evidence_progress,
                 "strategy_change_allowed": learning_state == "reviewable",
@@ -615,6 +649,56 @@ def create_app() -> FastAPI:
             event["id"], {"created": created, "occurred_at": payload.occurred_at},
         )
         return {"accepted": True, "created": created, "event_id": event["id"]}
+
+    @app.post("/api/webhooks/paypro", tags=["webhooks"])
+    async def paypro_webhook(
+        request: Request,
+        paypro_signature: Annotated[str | None, Header()] = None,
+        paypro_timestamp: Annotated[str | None, Header()] = None,
+    ) -> dict[str, Any]:
+        """Accept only current, signed `payment.paid` events and deduplicate with PayPro's event ID."""
+        runtime = get_runtime(request)
+        raw_body = await request.body()
+        if not runtime.settings.paypro_webhook_secret:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="PayPro callback is disabled until PAYPRO_WEBHOOK_SECRET is configured.",
+            )
+        if not _paypro_signature_is_valid(
+            raw_body, paypro_timestamp, paypro_signature, runtime.settings.paypro_webhook_secret
+        ):
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid PayPro webhook signature.")
+        try:
+            event = json.loads(raw_body)
+        except json.JSONDecodeError as exc:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid JSON payload.") from exc
+        if event.get("event_type") != "payment.paid":
+            return {"accepted": True, "created": False, "ignored": "unsupported_event"}
+        payload = event.get("payload") if isinstance(event.get("payload"), dict) else {}
+        metadata = payload.get("metadata") if isinstance(payload.get("metadata"), dict) else {}
+        campaign_slug = str(metadata.get("campaign_slug") or payload.get("campaign_slug") or "")
+        external_event_id = str(event.get("id") or "")
+        if not campaign_slug or not external_event_id:
+            return {"accepted": True, "created": False, "ignored": "missing_attribution"}
+        tracking_event = TrackingEventCreate(
+            campaign_slug=campaign_slug,
+            event_type="conversion",
+            source="paypro",
+            medium="affiliate",
+            content_id=safe_content_id(str(metadata.get("utm_content") or "paypro-paid")),
+            event_id=external_event_id,
+            metadata={"verification": "paypro_hmac", "event_type": "payment.paid"},
+        )
+        stored, created = runtime.store.record_tracking_event(tracking_event)
+        runtime.store.audit(
+            stored["campaign_id"],
+            "paypro",
+            "webhook.payment_paid",
+            "tracking_event",
+            stored["id"],
+            {"created": created, "verified": True},
+        )
+        return {"accepted": True, "created": created, "event_id": stored["id"]}
 
     @app.get("/r/{campaign_slug}", include_in_schema=False)
     def tracked_redirect(
