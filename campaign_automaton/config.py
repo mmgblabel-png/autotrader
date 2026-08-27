@@ -76,6 +76,7 @@ class Settings:
     heartbeat_enabled: bool
     heartbeat_interval_seconds: float
     auto_run_due_campaigns: bool
+    hourly_sales_review_enabled: bool
     schedule_timezone: str
     draft_only: bool
     website_enabled: bool
@@ -157,6 +158,7 @@ def load_settings() -> Settings:
         heartbeat_enabled=_bool("HEARTBEAT_ENABLED", True),
         heartbeat_interval_seconds=_float("HEARTBEAT_INTERVAL_SECONDS", 30.0, 1.0),
         auto_run_due_campaigns=_bool("AUTO_RUN_DUE_CAMPAIGNS", False),
+        hourly_sales_review_enabled=_bool("HOURLY_SALES_REVIEW_ENABLED", False),
         schedule_timezone=os.getenv("SCHEDULE_TIMEZONE", "Europe/Amsterdam").strip(),
         draft_only=_bool("DRAFT_ONLY", True),
         website_enabled=_bool("WEBSITE_ENABLED", False),

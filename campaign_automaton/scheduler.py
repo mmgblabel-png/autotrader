@@ -13,6 +13,7 @@ from zoneinfo import ZoneInfo
 from croniter import croniter
 
 from campaign_automaton.config import Settings
+from campaign_automaton.hourly_review import HourlySalesReviewer
 from campaign_automaton.models import RunRequest, utc_now
 from campaign_automaton.orchestrator import CampaignOrchestrator
 from campaign_automaton.store import SQLiteStore
@@ -30,6 +31,7 @@ class HeartbeatScheduler:
         self.settings = settings
         self.store = store
         self.orchestrator = orchestrator
+        self.hourly_reviewer = HourlySalesReviewer(store)
         self.holder = f"{socket.gethostname()}:{uuid.uuid4()}"
         self._task: asyncio.Task | None = None
         self.running = False
@@ -62,7 +64,11 @@ class HeartbeatScheduler:
         started = utc_now()
         if not self.store.acquire_lease("global-heartbeat", self.holder, ttl_seconds=90):
             return {"status": "skipped", "reason": "lease_held"}
-        details: dict[str, Any] = {"recovered_runs": 0, "executed_runs": []}
+        details: dict[str, Any] = {
+            "recovered_runs": 0,
+            "executed_runs": [],
+            "hourly_sales_review_ids": [],
+        }
         try:
             details["recovered_runs"] = self.store.recover_stale_runs()
             for run in self.store.queued_runs(limit=5):
@@ -91,6 +97,15 @@ class HeartbeatScheduler:
                     self.store.set_next_run(
                         campaign["id"], next_run.astimezone(UTC).isoformat()
                     )
+            if self.settings.hourly_sales_review_enabled:
+                for campaign in self.store.list_campaigns():
+                    if campaign["status"] != "active":
+                        continue
+                    review, created = await asyncio.to_thread(
+                        self.hourly_reviewer.review_campaign, campaign
+                    )
+                    if created:
+                        details["hourly_sales_review_ids"].append(review["id"])
             self.tick_count += 1
             self.last_tick_at = utc_now()
             self.last_error = None
@@ -111,6 +126,7 @@ class HeartbeatScheduler:
             "enabled": self.settings.heartbeat_enabled,
             "running": self.running,
             "interval_seconds": self.settings.heartbeat_interval_seconds,
+            "hourly_sales_review_enabled": self.settings.hourly_sales_review_enabled,
             "tick_count": self.tick_count,
             "last_tick_at": self.last_tick_at,
             "last_error": self.last_error,

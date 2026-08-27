@@ -460,6 +460,7 @@ def create_app() -> FastAPI:
             "llm_mode": runtime.llm.mode,
             "llm_model": runtime.settings.llm_model,
             "auto_run_due_campaigns": runtime.settings.auto_run_due_campaigns,
+            "hourly_sales_review_enabled": runtime.settings.hourly_sales_review_enabled,
             "website_enabled": runtime.settings.website_enabled,
             "data_dir": str(runtime.settings.data_dir),
         }
@@ -589,6 +590,35 @@ def create_app() -> FastAPI:
         runtime = get_runtime(request)
         campaign = runtime.store.get_campaign(slug)
         return runtime.store.campaign_metrics(campaign["id"])
+
+    @app.get("/api/campaigns/{slug}/hourly-reviews", tags=["analytics"])
+    def hourly_sales_reviews(
+        slug: str,
+        request: Request,
+        limit: int = Query(default=72, ge=1, le=720),
+        _: None = Depends(require_control),
+    ) -> dict[str, Any]:
+        """Return durable internal reviews; this never triggers a campaign action."""
+        runtime = get_runtime(request)
+        campaign = runtime.store.get_campaign(slug)
+        return {"reviews": runtime.store.list_hourly_sales_reviews(campaign["id"], limit)}
+
+    @app.get("/api/campaigns/{slug}/hourly-reviews/latest", tags=["analytics"])
+    def latest_hourly_sales_review(
+        slug: str,
+        request: Request,
+        _: None = Depends(require_control),
+    ) -> dict[str, Any]:
+        """Return the latest internal review or an explicit empty-state response."""
+        runtime = get_runtime(request)
+        campaign = runtime.store.get_campaign(slug)
+        review = runtime.store.latest_hourly_sales_review(campaign["id"])
+        if review is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="No hourly sales review has been created for this campaign.",
+            )
+        return review
 
     @app.get("/api/campaigns/{slug}/optimizations", tags=["analytics"])
     def optimization_proposals(
