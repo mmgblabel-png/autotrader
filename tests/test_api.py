@@ -233,6 +233,22 @@ def test_signed_paypro_payment_callback_updates_verified_review_window(client: T
     assert review["last_verified_conversion_at"] is not None
 
 
+def test_signed_paypro_payment_callback_maps_configured_product_identifier(client: TestClient):
+    callback = {
+        "id": "paypro-event-product-id",
+        "event_type": "payment.paid",
+        "payload": {"product_id": "114766"},
+    }
+    body = json.dumps(callback, separators=(",", ":")).encode("utf-8")
+    response = client.post("/api/webhooks/paypro", content=body, headers=paypro_headers(body))
+    assert response.status_code == 200
+    assert response.json()["created"] is True
+    metrics = client.get(
+        "/api/campaigns/wegmetdiekilos-bronze/analytics", headers=control()
+    ).json()
+    assert metrics["conversions"] == 1
+
+
 def test_tracked_redirect_records_click_and_preserves_destination(client: TestClient):
     response = client.get(
         "/r/wegmetdiekilos-bronze?src=social&content=post-1",

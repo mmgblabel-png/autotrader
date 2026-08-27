@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import hmac
 import json
+import re
 import time
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime, timedelta
@@ -86,6 +87,23 @@ def _paypro_signature_is_valid(
     payload = timestamp.encode("utf-8") + b"." + raw_body
     expected = hmac.new(secret.encode("utf-8"), payload, hashlib.sha256).hexdigest()
     return hmac.compare_digest(signature, expected)
+
+
+def _campaign_slug_from_paypro_payload(runtime: Runtime, payload: dict[str, Any]) -> str:
+    """Map only a PayPro product identifier to a configured campaign; never retain raw payload data."""
+    metadata = payload.get("metadata") if isinstance(payload.get("metadata"), dict) else {}
+    direct_slug = str(metadata.get("campaign_slug") or payload.get("campaign_slug") or "")
+    if direct_slug:
+        return direct_slug
+    product = payload.get("product") if isinstance(payload.get("product"), dict) else {}
+    product_id = str(payload.get("product_id") or product.get("id") or "")
+    if not product_id:
+        return ""
+    for campaign in runtime.store.list_campaigns():
+        path_ids = re.findall(r"/(?P<id>\d+)(?=/|$)", str(campaign.get("product_url", "")))
+        if product_id in path_ids:
+            return str(campaign["slug"])
+    return ""
 
 
 @asynccontextmanager
@@ -676,7 +694,7 @@ def create_app() -> FastAPI:
             return {"accepted": True, "created": False, "ignored": "unsupported_event"}
         payload = event.get("payload") if isinstance(event.get("payload"), dict) else {}
         metadata = payload.get("metadata") if isinstance(payload.get("metadata"), dict) else {}
-        campaign_slug = str(metadata.get("campaign_slug") or payload.get("campaign_slug") or "")
+        campaign_slug = _campaign_slug_from_paypro_payload(runtime, payload)
         external_event_id = str(event.get("id") or "")
         if not campaign_slug or not external_event_id:
             return {"accepted": True, "created": False, "ignored": "missing_attribution"}
