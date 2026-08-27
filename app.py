@@ -1,5 +1,5 @@
 """Railway-compatible ASGI entry point."""
 
-from autotrader.api.server import app
+from campaign_automaton.api import app
 
 __all__ = ["app"]

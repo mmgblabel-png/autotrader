@@ -1,0 +1,23 @@
+campaign:
+  name: "PRODUCT_NAME"
+  slug: "product-campaign-slug"
+  product_name: "PRODUCT_NAME"
+  audience: "Describe market, language, needs, exclusions, and consent context."
+  market: "Nederland"
+  language: "nl-NL"
+  channels:
+    - blog
+    - email
+    - social
+  goals:
+    - "Create value-first opt-in demand"
+    - "Measure pseudonymous clicks and allowed conversions"
+  product_facts:
+    - "Add only facts verified from operator-supplied sources."
+  prohibited_claims:
+    - "No guaranteed or medical claims."
+    - "No unsupported numbers, prices, testimonials, or scarcity."
+    - "No unsolicited outreach or personal-data scraping."
+  schedule_cron: "0 9 * * 1"
+  metadata:
+    mode: "draft_only"
