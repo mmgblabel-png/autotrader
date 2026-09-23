@@ -18,6 +18,9 @@ AUTOTRADER_TICK_INTERVAL=1.0
 PAPER_STARTING_BALANCE_USD=1000
 USD_EUR_RATE=0.92
 BTC_USD_PRICE=0
+LIVE_RATES_ENABLED=true
+BTC_USD_PRICE_URL=https://api.binance.com/api/v3/ticker/price?symbol=BTCUSDT
+USD_EUR_RATE_URL=https://api.frankfurter.app/latest?from=USD&to=EUR
 PAPER_EXPORT_DIR=exports
 CORS_ORIGINS=https://YOUR-DASHBOARD-DOMAIN
 AUTOTRADER_CONTROL_TOKEN=<long-random-secret>
@@ -25,7 +28,7 @@ MAINNET_EXECUTION_ENABLED=false
 MAINNET_EMERGENCY_STOP=true
 ```
 
-`BTC_USD_PRICE=0` means BTC conversion is shown as unavailable until a trusted BTC price source is wired. Do not put secrets in GitHub or the frontend.
+With `LIVE_RATES_ENABLED=true`, the report uses public Binance BTCUSDT and Frankfurter/ECB USD→EUR data with a four-second timeout and 30-second process cache. If a request fails, the configured numeric fallback values are used. Do not put secrets in GitHub or the frontend.
 
 ## Health and API
 

@@ -9,6 +9,8 @@ from __future__ import annotations
 import csv
 import json
 import os
+import time
+from urllib.request import Request, urlopen
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -20,6 +22,28 @@ def _float_env(name: str, default: float) -> float:
         return default
 
 
+_RATE_CACHE: dict[str, tuple[float, float]] = {}
+
+
+def _live_float(url: str, key: str) -> float | None:
+    """Read a public JSON quote with a short timeout and 30-second cache."""
+    cached = _RATE_CACHE.get(key)
+    if cached and time.time() - cached[0] < 30:
+        return cached[1]
+    try:
+        request = Request(url, headers={"User-Agent": "autotrader-paper/1.0"})
+        with urlopen(request, timeout=4) as response:
+            payload = json.loads(response.read().decode("utf-8"))
+        if key == "btc_usd":
+            value = float(payload["price"])
+        else:
+            value = float(payload["rates"]["EUR"])
+        _RATE_CACHE[key] = (time.time(), value)
+        return value
+    except (OSError, KeyError, TypeError, ValueError, json.JSONDecodeError):
+        return None
+
+
 def build_paper_report(summary: dict, *, peak_equity_usd: float | None = None) -> dict:
     pnl_usd = float(summary.get("total_pnl", 0.0))
     starting = _float_env("PAPER_STARTING_BALANCE_USD", 1000.0)
@@ -29,6 +53,13 @@ def build_paper_report(summary: dict, *, peak_equity_usd: float | None = None) -
     pnl_pct = pnl_usd / starting * 100.0 if starting else 0.0
     usd_eur = _float_env("USD_EUR_RATE", 0.92)
     btc_usd = _float_env("BTC_USD_PRICE", 0.0)
+    if os.getenv("LIVE_RATES_ENABLED", "false").lower() == "true":
+        live_btc = _live_float(os.getenv("BTC_USD_PRICE_URL", "https://api.binance.com/api/v3/ticker/price?symbol=BTCUSDT"), "btc_usd")
+        live_eur = _live_float(os.getenv("USD_EUR_RATE_URL", "https://api.frankfurter.app/latest?from=USD&to=EUR"), "usd_eur")
+        if live_btc and live_btc > 0:
+            btc_usd = live_btc
+        if live_eur and live_eur > 0:
+            usd_eur = live_eur
     report = {
         "generated_at": datetime.now(timezone.utc).isoformat(),
         "mode": "paper",
