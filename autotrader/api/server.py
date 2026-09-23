@@ -38,17 +38,20 @@ import os
 import time
 from typing import Final
 
-from fastapi import Body, Depends, FastAPI, Header, HTTPException, Query, WebSocket, WebSocketDisconnect
+from fastapi import Body, Depends, FastAPI, Header, HTTPException, Query, Request, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 from slowapi import Limiter, _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
 from slowapi.middleware import SlowAPIMiddleware
 from slowapi.util import get_remote_address
 
 from autotrader.agent import AutoTrader
+from autotrader.api.auth import extract_bearer, valid_credential
 from autotrader.api.deps import get_agent, init_agent
 from autotrader.blockchain.mainnet_policy import MainnetExecutionPolicy
 from autotrader.core.logger import get_logger
+from autotrader.core.notifications import notify_paper_report
 from autotrader.core.paper_reporting import build_paper_report, export_paper_report
 
 log = get_logger("api.server")
@@ -165,6 +168,25 @@ app = FastAPI(
     lifespan=_lifespan,
 )
 
+
+def _protected_path(path: str) -> bool:
+    """Protect dashboard data while keeping Railway's healthcheck public."""
+    return path.startswith("/api/") and path != "/api/health" or path.startswith("/strategies/")
+
+
+def _request_credential(request: Request) -> str | None:
+    return request.headers.get("x-api-key") or extract_bearer(request.headers.get("authorization"))
+
+
+@app.middleware("http")
+async def public_auth_middleware(request: Request, call_next):
+    """Require API-key or JWT credentials on public dashboard routes."""
+    if _protected_path(request.url.path) and not valid_credential(_request_credential(request)):
+        if not os.getenv("PUBLIC_API_KEY", "").strip() and not os.getenv("PUBLIC_JWT_SECRET", "").strip():
+            return JSONResponse({"detail": "Dashboard authentication is not configured."}, status_code=503)
+        return JSONResponse({"detail": "Missing or invalid dashboard credential."}, status_code=401)
+    return await call_next(request)
+
 # ── Rate limiting ─────────────────────────────────────────────────────────────
 limiter = Limiter(key_func=get_remote_address, default_limits=["200/minute"])
 app.state.limiter = limiter
@@ -233,12 +255,19 @@ def paper_export():
     """Export paper PnL JSON/CSV; no live orders or credentials are involved."""
     report = _paper_report(get_agent())
     json_path, csv_path = export_paper_report(report)
-    return {"mode": "paper", "json": json_path, "csv": csv_path}
+    notifications = notify_paper_report(report)
+    return {"mode": "paper", "json": json_path, "csv": csv_path, "notifications": notifications}
 
 
 @app.websocket("/ws/paper")
 async def paper_websocket(websocket: WebSocket):
     """Push the paper report every two seconds for a private dashboard client."""
+    credential = websocket.headers.get("x-api-key") or extract_bearer(
+        websocket.headers.get("authorization")
+    ) or websocket.query_params.get("api_key") or websocket.query_params.get("access_token")
+    if not valid_credential(credential):
+        await websocket.close(code=1008, reason="Missing or invalid dashboard credential")
+        return
     await websocket.accept()
     try:
         while True:

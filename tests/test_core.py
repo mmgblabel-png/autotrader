@@ -300,6 +300,7 @@ def test_agent_properties(tmp_path):
 @pytest.fixture()
 def api_client(tmp_path, monkeypatch):
     monkeypatch.setenv("AUTOTRADER_CONTROL_TOKEN", "test-control-token")
+    monkeypatch.setenv("PUBLIC_API_KEY", "test-dashboard-key")
     import autotrader.api.deps as deps
     from autotrader.agent import AutoTrader
     from autotrader.api.server import app
@@ -325,7 +326,10 @@ def api_client(tmp_path, monkeypatch):
     with TestClient(
         app,
         raise_server_exceptions=True,
-        headers={"X-AutoTrader-Token": "test-control-token"},
+        headers={
+            "X-AutoTrader-Token": "test-control-token",
+            "X-API-Key": "test-dashboard-key",
+        },
     ) as client:
         yield client
 
