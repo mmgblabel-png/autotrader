@@ -38,7 +38,7 @@ import os
 import time
 from typing import Final
 
-from fastapi import Body, Depends, FastAPI, Header, HTTPException, Query
+from fastapi import Body, Depends, FastAPI, Header, HTTPException, Query, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from slowapi import Limiter, _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
@@ -49,6 +49,7 @@ from autotrader.agent import AutoTrader
 from autotrader.api.deps import get_agent, init_agent
 from autotrader.blockchain.mainnet_policy import MainnetExecutionPolicy
 from autotrader.core.logger import get_logger
+from autotrader.core.paper_reporting import build_paper_report, export_paper_report
 
 log = get_logger("api.server")
 
@@ -85,6 +86,15 @@ def _tick_interval() -> float:
         )
         return _MIN_TICK_INTERVAL
     return value
+
+
+def _paper_report(agent: AutoTrader) -> dict:
+    """Return the dashboard-ready paper report and track process-local equity peak."""
+    summary = agent.profit_engine.as_summary()
+    current = float(os.getenv("PAPER_STARTING_BALANCE_USD", "1000")) + float(summary.get("total_pnl", 0.0))
+    peak = max(float(getattr(app.state, "peak_equity_usd", current)), current)
+    app.state.peak_equity_usd = peak
+    return build_paper_report(summary, peak_equity_usd=peak)
 
 
 def _require_control_token(
@@ -128,6 +138,7 @@ async def _lifespan(app: FastAPI):
     app.state.tick_count = 0
     app.state.last_tick_at = None
     app.state.last_tick_error = None
+    app.state.peak_equity_usd = float(os.getenv("PAPER_STARTING_BALANCE_USD", "1000"))
     app.state.tick_task = asyncio.create_task(
         _tick_loop(app, agent), name="autotrader-paper-tick-loop"
     )
@@ -204,10 +215,37 @@ def pnl_summary():
 
     return {
         **summary,
+        "paper_report": _paper_report(agent),
         "pnl_by_strategy": summary["pnl_per_strategy"],
         "pnl_per_strategy": rows,
         "mode": "paper",
     }
+
+
+@app.get("/api/paper/report", tags=["pnl"])
+def paper_report():
+    """Return paper PnL in USD/EUR/BTC, PnL percentage and drawdown."""
+    return _paper_report(get_agent())
+
+
+@app.post("/api/paper/export", tags=["pnl"])
+def paper_export():
+    """Export paper PnL JSON/CSV; no live orders or credentials are involved."""
+    report = _paper_report(get_agent())
+    json_path, csv_path = export_paper_report(report)
+    return {"mode": "paper", "json": json_path, "csv": csv_path}
+
+
+@app.websocket("/ws/paper")
+async def paper_websocket(websocket: WebSocket):
+    """Push the paper report every two seconds for a private dashboard client."""
+    await websocket.accept()
+    try:
+        while True:
+            await websocket.send_json(_paper_report(get_agent()))
+            await asyncio.sleep(2)
+    except (WebSocketDisconnect, asyncio.CancelledError):
+        return
 
 
 @app.get("/api/trades/recent", tags=["pnl"])
