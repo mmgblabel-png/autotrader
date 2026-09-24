@@ -54,6 +54,8 @@ from autotrader.core.logger import get_logger
 from autotrader.core.notifications import notify_paper_report
 from autotrader.core.paper_reporting import build_paper_report, export_paper_report
 from autotrader.core.execution_gateway import ExecutionGateway
+from autotrader.core.bitvavo_security import validate_bitvavo_security
+from autotrader.connectors.bitvavo import BitvavoAdapter
 from autotrader.api.dashboard_html import dashboard_html
 from autotrader.ml.shadow import walk_forward
 
@@ -452,6 +454,19 @@ def health():
             "last_tick_error": getattr(app.state, "last_tick_error", None),
         },
     }
+
+
+@app.get("/api/security/bitvavo", tags=["security"])
+def bitvavo_security_status() -> dict[str, object]:
+    """Run the fail-closed Bitvavo security gate inside the Railway container.
+
+    This endpoint is behind the normal dashboard authentication middleware and
+    returns only the redacted gate report; API credentials are never returned
+    or logged. It exists because Railway's interactive console may suppress
+    child-process stdout.
+    """
+    report = validate_bitvavo_security(BitvavoAdapter())
+    return report
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
