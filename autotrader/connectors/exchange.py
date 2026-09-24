@@ -17,6 +17,9 @@ import os
 from abc import ABC, abstractmethod
 from typing import Dict, List, Optional
 
+from autotrader.connectors.binance_spot import BinanceSpotAdapter
+from autotrader.connectors.polymarket import PolymarketAdapter
+
 
 class ConnectorBase(ABC):
     """Minimal interface every exchange connector must implement."""
@@ -166,6 +169,8 @@ CONNECTOR_REGISTRY: Dict[str, type] = {
     "binance": BinanceConnector,
     "kraken": KrakenConnector,
     "coinbase": CoinbaseConnector,
+    "binance_spot_safe": BinanceSpotAdapter,
+    "polymarket_safe": PolymarketAdapter,
 }
 
 

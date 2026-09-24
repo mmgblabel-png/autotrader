@@ -184,3 +184,34 @@ This release is therefore ready for authenticated paper/shadow operation and ML 
 ## Security incident note
 
 The Telegram bot token was pasted into the chat during setup. Rotate that token through BotFather and replace the Railway secret before treating Telegram notifications as production-safe. A Telegram username is not always a valid destination; verify the bot can send to the intended channel or group and use its numeric chat ID when required.
+
+
+## Optional exchange adapters (disabled by default)
+
+The repository now includes `autotrader/connectors/binance_spot.py` and `autotrader/connectors/polymarket.py`. Both adapters are **dry-run by default** and route all proposed orders through the execution gateway. Binance uses signed HMAC REST requests and defaults to Spot Testnet when `BINANCE_USE_TESTNET=true`. Polymarket uses the current official `polymarket-client` SDK only when live mode is explicitly configured; the archived `py-clob-client` is not used.
+
+Install the optional Polymarket dependency only on a dedicated, controlled worker:
+
+```bash
+pip install -e '.[live]'
+```
+
+Safe local defaults:
+
+```text
+BINANCE_USE_TESTNET=true
+BINANCE_DRY_RUN=true
+POLYMARKET_DRY_RUN=true
+EXECUTION_MODE=shadow
+EMERGENCY_STOP=true
+```
+
+The live adapters refuse to submit unless the independent server-side gates are all present: `EXECUTION_MODE=live`, `LIVE_EXECUTION_APPROVED=true`, `LIVE_EXECUTION_ADAPTER_INSTALLED=true`, `EMERGENCY_STOP=false`, and `LIVE_TRADING_CONFIRMATION=I_UNDERSTAND_LIVE_ORDERS`. These gates are intentionally **not** configured in Railway. The adapter code is implementation-ready but still requires venue-specific testnet integration, order reconciliation, restart recovery, and an operational review before any real order should be enabled.
+
+Generate the dashboard password hash locally:
+
+```bash
+python tools/make_dashboard_hash.py
+```
+
+Set the printed PBKDF2 value as Railway secret `DASHBOARD_PASSWORD_HASH`; do not send or commit the plaintext password. Set `DASHBOARD_USERNAME=admin` and a separate random `PUBLIC_JWT_SECRET` in Railway. The morning monitoring service is configured as a separate short-lived cron job at `0 8 * * *` UTC; it checks `/api/health` first and only then triggers the paper PnL export.
