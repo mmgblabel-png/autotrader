@@ -5,7 +5,12 @@ from decimal import Decimal
 
 import pytest
 
-from autotrader.connectors.bitpanda_fusion import BitpandaFusionAdapter, BitpandaFusionError
+from autotrader.connectors.bitpanda_fusion import (
+    BitpandaFusionAdapter,
+    BitpandaFusionError,
+    _is_cloudflare_access_denied,
+    _redacted_error_body,
+)
 
 
 class FakeResponse:
@@ -119,3 +124,19 @@ def test_list_orders_builds_query(monkeypatch):
     assert "status=open" in captured["request"].full_url
     assert "pair=BTC-EUR" in captured["request"].full_url
     assert "limit=10" in captured["request"].full_url
+
+
+def test_cloudflare_1010_is_detected_for_string_error_code():
+    payload = {
+        "error_code": "1010",
+        "error_name": "browser_signature_banned",
+        "cloudflare_error": True,
+        "api_key": "must-not-leak",
+    }
+    assert _is_cloudflare_access_denied(payload) is True
+    redacted = _redacted_error_body(payload)
+    assert redacted == {
+        "error_code": "1010",
+        "error_name": "browser_signature_banned",
+        "cloudflare_error": True,
+    }

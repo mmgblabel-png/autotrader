@@ -22,6 +22,31 @@ _ORDER_STATUSES = {
     "new", "filled", "filled-and-canceled", "partially-filled",
     "canceled", "done-for-day", "rejected",
 }
+_SAFE_ERROR_FIELDS = {
+    "type", "title", "status", "detail", "instance", "error_code",
+    "error_name", "error_category", "cloudflare_error", "retryable",
+    "owner_action_required", "zone", "ray_id", "timestamp",
+}
+
+
+def _redacted_error_body(payload: Any) -> dict[str, Any] | None:
+    """Keep only bounded, non-secret provider diagnostics."""
+    if not isinstance(payload, dict):
+        return None
+    return {
+        key: value for key, value in payload.items()
+        if key.lower() in _SAFE_ERROR_FIELDS
+    }
+
+
+def _is_cloudflare_access_denied(payload: Any) -> bool:
+    """Recognise Cloudflare 1010 without relying on a numeric JSON type."""
+    if not isinstance(payload, dict):
+        return False
+    error_code = str(payload.get("error_code", "")).strip()
+    error_name = str(payload.get("error_name", "")).strip().lower()
+    cloudflare_flag = str(payload.get("cloudflare_error", "")).strip().lower()
+    return error_code == "1010" or error_name == "browser_signature_banned" or cloudflare_flag == "true"
 
 
 class BitpandaFusionError(RuntimeError):
@@ -107,16 +132,10 @@ class BitpandaFusionAdapter:
                 payload = json.loads(raw_body)
                 if isinstance(payload, dict):
                     response_code = payload.get("code") or payload.get("error_code") or payload.get("error") or payload.get("message")
-                    response_body = {
-                        key: value for key, value in payload.items()
-                        if key.lower() not in {"apikey", "api_key", "secret", "token", "authorization"}
-                    }
+                    response_body = _redacted_error_body(payload)
             except (ValueError, TypeError, json.JSONDecodeError, UnicodeDecodeError):
                 pass
-            is_cloudflare_access_denied = isinstance(payload, dict) and (
-                payload.get("error_code") == 1010 or payload.get("cloudflare_error") is True
-            )
-            if is_cloudflare_access_denied:
+            if _is_cloudflare_access_denied(payload):
                 category = "upstream_access_denied"
             else:
                 category = "invalid_credentials" if exc.code in {401, 403} else "fusion_http_error"
