@@ -13,7 +13,7 @@
       "gate": 2,
       "name": "Connectivity and controlled test",
       "status": "BLOCKED",
-      "evidence": "Public ticker code exists, but Bitvavo has no configured testnet/sandbox path in this repository; no private order test was attempted.",
+      "evidence": "Public ticker code exists and the local private shadow path is tested, but Bitvavo has no configured testnet/sandbox path; no private live order or funded order test was attempted.",
       "required_action": "Add a venue-supported non-production test or keep shadow mode; do not use a real order as a first connectivity test."
     },
     {

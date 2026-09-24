@@ -46,7 +46,7 @@ def audit() -> list[dict[str, Any]]:
     has_public_ticker = "def ticker_price" in adapter and "https://api.bitvavo.com/v2" in adapter
     reports.append(result(
         2, "Connectivity and controlled test", "BLOCKED" if has_public_ticker else "FAIL",
-        "Public ticker code exists, but Bitvavo has no configured testnet/sandbox path in this repository; no private order test was attempted.",
+        "Public ticker code exists and the local private shadow path is tested, but Bitvavo has no configured testnet/sandbox path; no private live order or funded order test was attempted.",
         "Add a venue-supported non-production test or keep shadow mode; do not use a real order as a first connectivity test.",
     ))
 
