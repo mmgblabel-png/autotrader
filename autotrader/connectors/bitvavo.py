@@ -136,6 +136,58 @@ class BitvavoAdapter:
                 self.journal.update(record["client_order_id"], "error", {"category": exc.category}, error=exc.category)
         return results
 
+    def kill_switch_close_all(self, *, markets: list[str] | None = None) -> dict[str, Any]:
+        """Cancel open orders and optionally flatten allowlisted balances.
+
+        This is deliberately dry-run unless all kill-switch liquidation gates
+        are explicitly enabled. It never handles withdrawals.
+        """
+        open_orders = self.open_orders()
+        report: dict[str, Any] = {"kill_switch": True, "orders_canceled": [], "positions_closed": [], "live_orders_sent": False}
+        allowed_markets = {m.upper() for m in (markets or os.getenv("BITVAVO_KILL_SWITCH_MARKETS", "BTC-EUR").split(",")) if m.strip()}
+        for order in open_orders:
+            market = str(order.get("market") or "").upper()
+            order_id = str(order.get("orderId") or "")
+            if not market or not order_id:
+                continue
+            if self.dry_run or os.getenv("EXECUTION_MODE", "paper") != "live":
+                report["orders_canceled"].append({"market": market, "orderId": order_id, "status": "SHADOW"})
+                continue
+            response = self._private_request("DELETE", f"/order/{urllib.parse.quote(market)}/{urllib.parse.quote(order_id)}")
+            report["orders_canceled"].append({"market": market, "orderId": order_id, "status": "canceled", "response": response})
+            report["live_orders_sent"] = True
+
+        gates = (
+            os.getenv("KILL_SWITCH_CLOSE_POSITIONS", "false").lower() == "true"
+            and os.getenv("LIVE_EXECUTION_APPROVED") == "true"
+            and os.getenv("LIVE_EXECUTION_ADAPTER_INSTALLED") == "true"
+            and os.getenv("LIVE_TRADING_CONFIRMATION") == "I_UNDERSTAND_LIVE_ORDERS"
+            and os.getenv("EMERGENCY_STOP", "true").lower() == "true"
+        )
+        if not gates:
+            report["position_close_status"] = "blocked_fail_closed"
+            return report
+
+        balances = self.balance()
+        max_eur = Decimal(os.getenv("KILL_SWITCH_MAX_LIQUIDATION_EUR", "50"))
+        for market in sorted(allowed_markets):
+            base = market.split("-", 1)[0]
+            entry = next((item for item in balances if str(item.get("symbol", "")).upper() == base), None)
+            available = Decimal(str((entry or {}).get("available", "0")))
+            if available <= 0:
+                continue
+            price = self.ticker_price(market)
+            amount = min(available, max_eur / price)
+            if amount <= 0:
+                continue
+            client_id = f"kill-{int(time.time())}-{base.lower()}"
+            body = {"market": market, "side": "sell", "orderType": "market", "amount": str(amount), "clientOrderId": client_id, "responseRequired": True}
+            response = self._private_request("POST", "/order", body)
+            report["positions_closed"].append({"market": market, "amount": str(amount), "response": response})
+            report["live_orders_sent"] = True
+        report["position_close_status"] = "completed"
+        return report
+
     def place_limit_order(self, market: str, side: str, amount: Decimal, price: Decimal, client_order_id: str, operator_id: int = 0) -> dict[str, Any]:
         return self._place(market, side, amount, price, client_order_id, operator_id, "limit")
 
