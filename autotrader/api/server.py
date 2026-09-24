@@ -291,13 +291,15 @@ def paper_export():
 @app.websocket("/ws/paper")
 async def paper_websocket(websocket: WebSocket):
     """Push the paper report every two seconds for a private dashboard client."""
+    offered_protocols = [item.strip() for item in websocket.headers.get("sec-websocket-protocol", "").split(",") if item.strip()]
+    protocol_credential = offered_protocols[1] if len(offered_protocols) >= 2 and offered_protocols[0] == "at-v1" else None
     credential = websocket.headers.get("x-api-key") or extract_bearer(
         websocket.headers.get("authorization")
-    ) or websocket.query_params.get("api_key") or websocket.query_params.get("access_token")
+    ) or protocol_credential or websocket.query_params.get("api_key") or websocket.query_params.get("access_token")
     if not valid_credential(credential):
         await websocket.close(code=1008, reason="Missing or invalid dashboard credential")
         return
-    await websocket.accept()
+    await websocket.accept(subprotocol="at-v1" if protocol_credential else None)
     try:
         while True:
             await websocket.send_json(_paper_report(get_agent()))
@@ -374,6 +376,28 @@ def strategies():
             {"name": key, "running": value["running"]}
             for key, value in strats.items()
         ]
+    }
+
+
+@app.get("/api/markets/overview", tags=["markets"])
+def markets_overview():
+    """Return configured markets and feed state without fabricating prices."""
+    raw = os.getenv("BITPANDA_FUSION_MARKETS", os.getenv("TRADING_MARKETS", "BTC-EUR"))
+    markets = [item.strip().upper() for item in raw.split(",") if item.strip()]
+    return {
+        "venue": "bitpanda_fusion",
+        "mode": "paper",
+        "markets": [
+            {
+                "symbol": market,
+                "configured": True,
+                "price_status": "not_available",
+                "note": "Geen live prijs claimen totdat de Fusion-marktfeed is geverifieerd.",
+            }
+            for market in markets
+        ],
+        "live_prices": False,
+        "orders_enabled": False,
     }
 
 
