@@ -32,6 +32,7 @@ def validate_bitvavo_security(adapter: BitvavoAdapter, *, expected_ip: str | Non
         "ip_whitelist_confirmed": os.getenv("BITVAVO_IP_WHITELIST_CONFIRMED", "false").lower() == "true",
         "current_public_ip": None,
         "expected_public_ips": expected_ips,
+        "bitvavo_error_code": None,
         "errors": [],
     }
     if not checks["credentials_present"]:
@@ -44,6 +45,7 @@ def validate_bitvavo_security(adapter: BitvavoAdapter, *, expected_ip: str | Non
             checks["trade_permission"] = "not_verifiable_without_order_or_key-metadata_endpoint"
         except BitvavoError as exc:
             checks["errors"].append(exc.category)
+            checks["bitvavo_error_code"] = exc.error_code
             if exc.status in {401, 403}:
                 checks["trade_permission"] = "rejected_or_not_authorized"
     if expected_ips:
