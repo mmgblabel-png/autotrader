@@ -2,7 +2,8 @@
 
 Bitvavo is used instead of Binance for users who can access Bitvavo in the
 Netherlands. The adapter defaults to shadow/dry-run and never supports
-withdrawals. API keys are read only from environment variables.
+withdrawals. API keys are read only from environment variables unless a
+caller explicitly supplies short-lived credentials for local validation.
 """
 from __future__ import annotations
 
@@ -26,15 +27,15 @@ class BitvavoError(RuntimeError):
 class BitvavoAdapter:
     BASE_URL = "https://api.bitvavo.com/v2"
 
-    def __init__(self, gateway: ExecutionGateway | None = None, *, timeout: float = 10.0) -> None:
-        self.api_key = os.getenv("BITVAVO_API_KEY", "").strip()
-        self.api_secret = os.getenv("BITVAVO_API_SECRET", "").strip()
+    def __init__(self, gateway: ExecutionGateway | None = None, *, timeout: float = 10.0, api_key: str | None = None, api_secret: str | None = None) -> None:
+        self.api_key = (api_key if api_key is not None else os.getenv("BITVAVO_API_KEY", "")).strip()
+        self.api_secret = (api_secret if api_secret is not None else os.getenv("BITVAVO_API_SECRET", "")).strip()
         self.access_window = int(os.getenv("BITVAVO_ACCESS_WINDOW", "10000"))
         self.dry_run = os.getenv("BITVAVO_DRY_RUN", "true").lower() in {"1", "true", "yes"}
         self.timeout = timeout
         self.gateway = gateway or ExecutionGateway()
 
-    def _private_request(self, method: str, endpoint: str, body: dict[str, Any] | None = None) -> dict[str, Any]:
+    def _private_request(self, method: str, endpoint: str, body: dict[str, Any] | None = None, query: dict[str, str] | None = None) -> Any:
         if not self.api_key or not self.api_secret:
             raise BitvavoError("BITVAVO_API_KEY and BITVAVO_API_SECRET are required")
         method = method.upper()
@@ -49,7 +50,10 @@ class BitvavoAdapter:
             "Bitvavo-Access-Window": str(self.access_window),
             "Content-Type": "application/json",
         }
-        request = urllib.request.Request(self.BASE_URL + endpoint, data=body_text.encode() if body_text else None, method=method, headers=headers)
+        url = self.BASE_URL + endpoint
+        if query:
+            url += "?" + urllib.parse.urlencode(query)
+        request = urllib.request.Request(url, data=body_text.encode() if body_text else None, method=method, headers=headers)
         try:
             with urllib.request.urlopen(request, timeout=self.timeout) as response:
                 return json.loads(response.read().decode())
@@ -67,6 +71,13 @@ class BitvavoAdapter:
 
     def account(self) -> dict[str, Any]:
         return self._private_request("GET", "/account")
+
+    def balance(self, symbol: str | None = None) -> list[dict[str, Any]]:
+        query = {"symbol": symbol.upper()} if symbol else None
+        result = self._private_request("GET", "/balance", query=query)
+        if not isinstance(result, list):
+            raise BitvavoError("Unexpected Bitvavo balance response")
+        return result
 
     def place_limit_order(self, market: str, side: str, amount: Decimal, price: Decimal, client_order_id: str, operator_id: int = 0) -> dict[str, Any]:
         return self._place(market, side, amount, price, client_order_id, operator_id, "limit")
