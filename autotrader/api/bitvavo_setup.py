@@ -7,12 +7,14 @@ Run this app bound to 127.0.0.1 only.
 from __future__ import annotations
 
 import html
+import json
 import urllib.error
+import urllib.parse
 from typing import Any
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import HTMLResponse
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ValidationError
 
 from autotrader.connectors.bitvavo import BitvavoAdapter, BitvavoError
 
@@ -51,9 +53,17 @@ f.addEventListener('submit',async e=>{e.preventDefault();out.textContent='Bezigâ
 
 
 @app.post("/api/validate")
-def validate(credentials: Credentials) -> dict[str, Any]:
+async def validate(request: Request) -> dict[str, Any]:
     # No credential is logged, returned, persisted, or put into a URL.
     try:
+        content_type = request.headers.get("content-type", "")
+        raw = await request.body()
+        if content_type.startswith("application/json"):
+            payload = json.loads(raw.decode("utf-8"))
+        else:
+            parsed = urllib.parse.parse_qs(raw.decode("utf-8"), keep_blank_values=True)
+            payload = {key: values[-1] for key, values in parsed.items()}
+        credentials = Credentials.model_validate(payload)
         adapter = BitvavoAdapter(api_key=credentials.api_key, api_secret=credentials.api_secret)
         balances = adapter.balance(credentials.symbol or None)
         return {
@@ -71,7 +81,7 @@ def validate(credentials: Credentials) -> dict[str, Any]:
             status_code=status,
             detail={"code": code, "message": "Validation failed; credentials were not stored."},
         ) from exc
-    except (ValueError, TypeError) as exc:
+    except (ValidationError, ValueError, TypeError, UnicodeDecodeError, json.JSONDecodeError) as exc:
         raise HTTPException(
             status_code=400,
             detail={"code": "invalid_input", "message": "Validation failed; credentials were not stored."},
