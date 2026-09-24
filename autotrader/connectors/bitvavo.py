@@ -28,11 +28,12 @@ LOGGER = logging.getLogger(__name__)
 class BitvavoError(RuntimeError):
     """Safe adapter error with a non-sensitive category for the UI."""
 
-    def __init__(self, message: str, *, category: str = "bitvavo_error", status: int | None = None, error_code: int | None = None) -> None:
+    def __init__(self, message: str, *, category: str = "bitvavo_error", status: int | None = None, error_code: int | None = None, error_message: str | None = None) -> None:
         super().__init__(message)
         self.category = category
         self.status = status
         self.error_code = error_code
+        self.error_message = error_message
 
 
 class BitvavoAdapter:
@@ -83,10 +84,13 @@ class BitvavoAdapter:
                 return json.loads(response.read().decode())
         except urllib.error.HTTPError as exc:
             error_code = None
+            error_message = None
             try:
                 payload = json.loads(exc.read().decode())
                 raw_code = payload.get("errorCode")
                 error_code = int(raw_code) if raw_code is not None else None
+                raw_message = payload.get("error")
+                error_message = str(raw_message) if raw_message is not None else None
             except (ValueError, TypeError, json.JSONDecodeError, UnicodeDecodeError):
                 pass
             category = "invalid_credentials" if exc.code in {401, 403} else "bitvavo_http_error"
@@ -95,6 +99,7 @@ class BitvavoAdapter:
                 category=category,
                 status=exc.code,
                 error_code=error_code,
+                error_message=error_message,
             ) from exc
         except (urllib.error.URLError, TimeoutError) as exc:
             raise BitvavoError("Bitvavo private request could not reach the service", category="network_error") from exc

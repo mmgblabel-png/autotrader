@@ -33,6 +33,7 @@ def validate_bitvavo_security(adapter: BitvavoAdapter, *, expected_ip: str | Non
         "current_public_ip": None,
         "expected_public_ips": expected_ips,
         "bitvavo_error_code": None,
+        "bitvavo_error_message": None,
         "errors": [],
     }
     if not checks["credentials_present"]:
@@ -46,6 +47,7 @@ def validate_bitvavo_security(adapter: BitvavoAdapter, *, expected_ip: str | Non
         except BitvavoError as exc:
             checks["errors"].append(exc.category)
             checks["bitvavo_error_code"] = exc.error_code
+            checks["bitvavo_error_message"] = exc.error_message
             if exc.status in {401, 403}:
                 checks["trade_permission"] = "rejected_or_not_authorized"
     if expected_ips:
