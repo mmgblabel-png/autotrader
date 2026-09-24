@@ -47,12 +47,14 @@ from slowapi.middleware import SlowAPIMiddleware
 from slowapi.util import get_remote_address
 
 from autotrader.agent import AutoTrader
-from autotrader.api.auth import extract_bearer, valid_credential
+from autotrader.api.auth import extract_bearer, issue_jwt, valid_credential, verify_login
 from autotrader.api.deps import get_agent, init_agent
 from autotrader.blockchain.mainnet_policy import MainnetExecutionPolicy
 from autotrader.core.logger import get_logger
 from autotrader.core.notifications import notify_paper_report
 from autotrader.core.paper_reporting import build_paper_report, export_paper_report
+from autotrader.core.execution_gateway import ExecutionGateway
+from autotrader.ml.shadow import walk_forward
 
 log = get_logger("api.server")
 
@@ -168,10 +170,12 @@ app = FastAPI(
     lifespan=_lifespan,
 )
 
+app.state.execution_gateway = ExecutionGateway()
+
 
 def _protected_path(path: str) -> bool:
     """Protect dashboard data while keeping Railway's healthcheck public."""
-    return path.startswith("/api/") and path != "/api/health" or path.startswith("/strategies/")
+    return (path.startswith("/api/") and path not in {"/api/health", "/api/auth/login"}) or path.startswith("/strategies/")
 
 
 def _request_credential(request: Request) -> str | None:
@@ -192,6 +196,21 @@ limiter = Limiter(key_func=get_remote_address, default_limits=["200/minute"])
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 app.add_middleware(SlowAPIMiddleware)
+
+
+@app.post("/api/auth/login", tags=["auth"])
+@limiter.limit("5/minute")
+async def login(request: Request, credentials: dict = Body(...)):
+    """Issue a short-lived JWT for the configured single dashboard user."""
+    username = str(credentials.get("username", ""))
+    password = str(credentials.get("password", ""))
+    if not verify_login(username, password):
+        raise HTTPException(status_code=401, detail="Invalid login credentials")
+    try:
+        token = issue_jwt(subject=username, ttl_seconds=3600)
+    except RuntimeError as exc:
+        raise HTTPException(status_code=503, detail="JWT login is not configured") from exc
+    return {"access_token": token, "token_type": "bearer", "expires_in": 3600}
 
 # ── CORS ──────────────────────────────────────────────────────────────────────
 # Never use "*" with allow_credentials=True; browsers reject that combination.
@@ -320,6 +339,18 @@ def risk_status():
     status["slippage_alerts"] = []
     status["mode"] = "paper"
     return status
+
+
+@app.get("/api/execution/status", tags=["execution"])
+def execution_status():
+    """Expose non-secret execution mode and limits for the dashboard."""
+    return app.state.execution_gateway.status()
+
+
+@app.post("/api/ml/walk-forward", tags=["ml"])
+def ml_walk_forward(rows: list[dict] = Body(...)):
+    """Evaluate the standard-library shadow model; never places an order."""
+    return walk_forward(rows)
 
 
 # ── Strategy list & control ───────────────────────────────────────────────────
