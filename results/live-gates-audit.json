@@ -1,0 +1,58 @@
+{
+  "mode": "paper",
+  "live_orders_sent": false,
+  "gates": [
+    {
+      "gate": 1,
+      "name": "Credentials and permissions",
+      "status": "BLOCKED",
+      "evidence": "The adapter supports API-key/secret authentication and no withdrawal method, but this audit never reads or verifies Railway secrets or Bitvavo key permissions.",
+      "required_action": "Verify the key has View + Trade digital assets, no withdrawals, and IP restriction; keep values only in Railway secrets."
+    },
+    {
+      "gate": 2,
+      "name": "Connectivity and controlled test",
+      "status": "BLOCKED",
+      "evidence": "Public ticker code exists, but Bitvavo has no configured testnet/sandbox path in this repository; no private order test was attempted.",
+      "required_action": "Add a venue-supported non-production test or keep shadow mode; do not use a real order as a first connectivity test."
+    },
+    {
+      "gate": 3,
+      "name": "Hard trade, daily-loss and slippage limits",
+      "status": "PASS",
+      "evidence": "ExecutionGateway validates per-order EUR notional, daily exposure, daily loss and slippage before any adapter call.",
+      "required_action": ""
+    },
+    {
+      "gate": 4,
+      "name": "Idempotency and duplicate-order protection",
+      "status": "PASS",
+      "evidence": "ExecutionGateway rejects missing or duplicate client_order_id values.",
+      "required_action": ""
+    },
+    {
+      "gate": 5,
+      "name": "Order reconciliation and partial fills",
+      "status": "FAIL",
+      "evidence": "The current adapter exposes account/balance/place/cancel only; no durable open-order, fill, partial-fill or post-order reconciliation loop was found.",
+      "required_action": "Implement durable order journal, order-status polling, fill accounting, partial-fill handling and cancel/replace recovery."
+    },
+    {
+      "gate": 6,
+      "name": "Restart recovery and durable execution state",
+      "status": "FAIL",
+      "evidence": "No durable execution journal or restart checkpoint was found for live orders; the gateway counters are in-memory.",
+      "required_action": "Persist accepted/submitted/filled/canceled state and reconcile it before allowing a restarted worker to trade."
+    },
+    {
+      "gate": 7,
+      "name": "Kill switch, authentication and operator monitoring",
+      "status": "BLOCKED",
+      "evidence": "Emergency-stop, confirmation phrase, dashboard auth and risk kill-switch code exist; live capability is intentionally still reported as not_installed until gates 1, 2, 5 and 6 are complete.",
+      "required_action": "Keep EMERGENCY_STOP=true until all preceding gates pass and perform an independent operational review."
+    }
+  ],
+  "passed": 2,
+  "total": 7,
+  "live_activation_allowed": false
+}
