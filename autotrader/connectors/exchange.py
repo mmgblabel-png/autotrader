@@ -19,6 +19,7 @@ from typing import Dict, List, Optional
 
 from autotrader.connectors.binance_spot import BinanceSpotAdapter
 from autotrader.connectors.bitvavo import BitvavoAdapter
+from autotrader.connectors.bitpanda_fusion import BitpandaFusionAdapter
 from autotrader.connectors.polymarket import PolymarketAdapter
 
 
@@ -172,6 +173,7 @@ CONNECTOR_REGISTRY: Dict[str, type] = {
     "coinbase": CoinbaseConnector,
     "binance_spot_safe": BinanceSpotAdapter,
     "bitvavo_safe": BitvavoAdapter,
+    "bitpanda_fusion": BitpandaFusionAdapter,
     "polymarket_safe": PolymarketAdapter,
 }
 
