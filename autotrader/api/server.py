@@ -56,6 +56,7 @@ from autotrader.core.paper_reporting import build_paper_report, export_paper_rep
 from autotrader.core.execution_gateway import ExecutionGateway
 from autotrader.core.bitvavo_security import validate_bitvavo_security
 from autotrader.connectors.bitvavo import BitvavoAdapter
+from autotrader.connectors.bitpanda_fusion import BitpandaFusionAdapter
 from autotrader.api.dashboard_html import dashboard_html
 from autotrader.ml.shadow import walk_forward
 
@@ -467,6 +468,23 @@ def bitvavo_security_status() -> dict[str, object]:
     """
     report = validate_bitvavo_security(BitvavoAdapter())
     return report
+
+
+@app.get("/api/security/bitpanda-fusion", tags=["security"])
+def bitpanda_fusion_security_status() -> dict[str, object]:
+    """Run a redacted, read-only Fusion balance authentication probe."""
+    try:
+        return BitpandaFusionAdapter().authenticate()
+    except Exception as exc:
+        category = getattr(exc, "category", "fusion_probe_failed")
+        return {
+            "venue": "bitpanda_fusion",
+            "credentials_present": bool(os.getenv("BITPANDA_FUSION_API_KEY", "").strip()),
+            "authenticated": False,
+            "category": category,
+            "status": getattr(exc, "status", None),
+            "response_code": getattr(exc, "response_code", None),
+        }
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
