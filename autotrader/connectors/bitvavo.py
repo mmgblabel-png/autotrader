@@ -12,6 +12,7 @@ import hmac
 import json
 import os
 import time
+import urllib.error
 import urllib.parse
 import urllib.request
 from decimal import Decimal
@@ -21,7 +22,12 @@ from autotrader.core.execution_gateway import ExecutionGateway, ExecutionRequest
 
 
 class BitvavoError(RuntimeError):
-    pass
+    """Safe adapter error with a non-sensitive category for the UI."""
+
+    def __init__(self, message: str, *, category: str = "bitvavo_error", status: int | None = None) -> None:
+        super().__init__(message)
+        self.category = category
+        self.status = status
 
 
 class BitvavoAdapter:
@@ -57,8 +63,21 @@ class BitvavoAdapter:
         try:
             with urllib.request.urlopen(request, timeout=self.timeout) as response:
                 return json.loads(response.read().decode())
+        except urllib.error.HTTPError as exc:
+            category = "invalid_credentials" if exc.code in {401, 403} else "bitvavo_http_error"
+            raise BitvavoError(
+                "Bitvavo private request was rejected",
+                category=category,
+                status=exc.code,
+            ) from exc
+        except (urllib.error.URLError, TimeoutError) as exc:
+            raise BitvavoError("Bitvavo private request could not reach the service", category="network_error") from exc
+        except (json.JSONDecodeError, UnicodeDecodeError) as exc:
+            raise BitvavoError("Bitvavo returned an invalid response", category="invalid_response") from exc
+        except BitvavoError:
+            raise
         except Exception as exc:
-            raise BitvavoError(f"Bitvavo request failed: {exc}") from exc
+            raise BitvavoError("Bitvavo private request failed", category="bitvavo_error") from exc
 
     def ticker_price(self, market: str) -> Decimal:
         query = urllib.parse.urlencode({"market": market.upper()})
