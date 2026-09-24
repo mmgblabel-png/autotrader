@@ -20,6 +20,8 @@ live = ["polymarket-client>=0.1.0"]
 
 [project.scripts]
 autotrader = "autotrader.cli.main:main"
+autotrader-bitvavo-security = "autotrader.core.bitvavo_security:main"
+autotrader-reconcile-bitvavo = "autotrader.reconcile_cli:main"
 
 [tool.setuptools.packages.find]
 where = ["."]

@@ -19,6 +19,7 @@ from decimal import Decimal
 from typing import Any
 
 from autotrader.core.execution_gateway import ExecutionGateway, ExecutionRequest
+from autotrader.core.order_journal import OrderJournal
 
 
 class BitvavoError(RuntimeError):
@@ -33,13 +34,14 @@ class BitvavoError(RuntimeError):
 class BitvavoAdapter:
     BASE_URL = "https://api.bitvavo.com/v2"
 
-    def __init__(self, gateway: ExecutionGateway | None = None, *, timeout: float = 10.0, api_key: str | None = None, api_secret: str | None = None) -> None:
+    def __init__(self, gateway: ExecutionGateway | None = None, *, timeout: float = 10.0, api_key: str | None = None, api_secret: str | None = None, journal: OrderJournal | None = None) -> None:
         self.api_key = (api_key if api_key is not None else os.getenv("BITVAVO_API_KEY", "")).strip()
         self.api_secret = (api_secret if api_secret is not None else os.getenv("BITVAVO_API_SECRET", "")).strip()
         self.access_window = int(os.getenv("BITVAVO_ACCESS_WINDOW", "10000"))
         self.dry_run = os.getenv("BITVAVO_DRY_RUN", "true").lower() in {"1", "true", "yes"}
         self.timeout = timeout
         self.gateway = gateway or ExecutionGateway()
+        self.journal = journal or OrderJournal()
 
     def _private_request(self, method: str, endpoint: str, body: dict[str, Any] | None = None, query: dict[str, str] | None = None) -> Any:
         if not self.api_key or not self.api_secret:
@@ -98,6 +100,42 @@ class BitvavoAdapter:
             raise BitvavoError("Unexpected Bitvavo balance response")
         return result
 
+    def get_order(self, market: str, *, order_id: str | None = None, client_order_id: str | None = None) -> dict[str, Any]:
+        if not order_id and not client_order_id:
+            raise BitvavoError("order_id or client_order_id is required")
+        query = {"orderId": order_id} if order_id else {"clientOrderId": client_order_id}
+        return self._private_request("GET", f"/order/{urllib.parse.quote(market.upper())}", query=query)
+
+    def open_orders(self, market: str | None = None) -> list[dict[str, Any]]:
+        query = {"market": market.upper()} if market else None
+        result = self._private_request("GET", "/ordersOpen", query=query)
+        if not isinstance(result, list):
+            raise BitvavoError("Unexpected Bitvavo open-orders response")
+        return result
+
+    def reconcile_order(self, client_order_id: str, market: str) -> dict[str, Any]:
+        """Fetch exchange state and persist status/fills; safe to repeat after restart."""
+        record = self.journal.get(client_order_id)
+        if not record:
+            raise BitvavoError("order is not present in the local journal")
+        payload = self.get_order(market, order_id=record.get("exchange_order_id"), client_order_id=client_order_id)
+        status = str(payload.get("status") or "unknown").lower()
+        exchange_id = str(payload.get("orderId") or record.get("exchange_order_id") or "") or None
+        self.journal.update(client_order_id, status, payload, exchange_order_id=exchange_id)
+        for fill in payload.get("fills") or []:
+            if isinstance(fill, dict):
+                self.journal.record_fill(client_order_id, fill)
+        return payload
+
+    def reconcile_inflight(self) -> list[dict[str, Any]]:
+        results = []
+        for record in self.journal.inflight():
+            try:
+                results.append(self.reconcile_order(record["client_order_id"], record["market"]))
+            except BitvavoError as exc:
+                self.journal.update(record["client_order_id"], "error", {"category": exc.category}, error=exc.category)
+        return results
+
     def place_limit_order(self, market: str, side: str, amount: Decimal, price: Decimal, client_order_id: str, operator_id: int = 0) -> dict[str, Any]:
         return self._place(market, side, amount, price, client_order_id, operator_id, "limit")
 
@@ -112,18 +150,33 @@ class BitvavoAdapter:
         notional_eur = amount * expected if side == "buy" else amount * observed
         decision = self.gateway.evaluate(ExecutionRequest("bitvavo", market, side.upper(), notional_eur, expected, observed, client_order_id, time.time()))
         proposal = {"venue": "bitvavo", "market": market, "side": side, "orderType": order_type, "amount": str(amount), "price": str(price) if price else None, "clientOrderId": client_order_id}
+        new_intent = self.journal.record_intent(client_order_id=client_order_id, market=market, side=side, order_type=order_type, amount=str(amount), price=str(price) if price else None)
         if not decision.accepted:
+            if new_intent:
+                self.journal.update(client_order_id, "rejected", {"reason": decision.reason}, error=decision.reason)
             raise BitvavoError(decision.reason)
         if self.dry_run or os.getenv("EXECUTION_MODE", "paper") != "live":
+            self.journal.update(client_order_id, "shadow", proposal)
             return {"status": "SHADOW", "would_place": proposal}
         if os.getenv("LIVE_EXECUTION_APPROVED") != "true" or os.getenv("LIVE_EXECUTION_ADAPTER_INSTALLED") != "true" or os.getenv("EMERGENCY_STOP", "true") == "true" or os.getenv("LIVE_TRADING_CONFIRMATION") != "I_UNDERSTAND_LIVE_ORDERS":
+            self.journal.update(client_order_id, "blocked", proposal, error="live_gates_not_satisfied")
             raise BitvavoError("Live gates are not satisfied; no order was sent")
         body: dict[str, Any] = {"market": market, "side": side, "orderType": order_type, "operatorId": operator_id, "clientOrderId": client_order_id, "amount": str(amount), "responseRequired": True}
         if order_type == "limit":
             body.update({"price": str(price), "timeInForce": "GTC"})
-        return self._private_request("POST", "/order", body)
+        try:
+            response = self._private_request("POST", "/order", body)
+            self.journal.update(client_order_id, str(response.get("status") or "submitted").lower(), response, exchange_order_id=str(response.get("orderId") or "") or None)
+            return response
+        except BitvavoError as exc:
+            self.journal.update(client_order_id, "error", {"category": exc.category}, error=exc.category)
+            raise
 
     def cancel_order(self, market: str, order_id: str) -> dict[str, Any]:
         if self.dry_run or os.getenv("EXECUTION_MODE", "paper") != "live":
             return {"status": "SHADOW", "would_cancel": {"market": market, "orderId": order_id}}
-        return self._private_request("DELETE", f"/order/{urllib.parse.quote(market.upper())}/{urllib.parse.quote(order_id)}")
+        response = self._private_request("DELETE", f"/order/{urllib.parse.quote(market.upper())}/{urllib.parse.quote(order_id)}")
+        for record in self.journal.inflight():
+            if record.get("exchange_order_id") == order_id:
+                self.journal.update(record["client_order_id"], "canceled", response, exchange_order_id=order_id)
+        return response

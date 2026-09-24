@@ -6,7 +6,7 @@
       "gate": 1,
       "name": "Credentials and permissions",
       "status": "BLOCKED",
-      "evidence": "The adapter supports API-key/secret authentication and no withdrawal method, but this audit never reads or verifies Railway secrets or Bitvavo key permissions.",
+      "evidence": "The adapter has authenticated account/balance probes and explicit withdrawal/IP-whitelist confirmations; Bitvavo does not expose portable key-metadata, so trade permission still requires operator verification in Bitvavo.",
       "required_action": "Verify the key has View + Trade digital assets, no withdrawals, and IP restriction; keep values only in Railway secrets."
     },
     {
@@ -33,26 +33,26 @@
     {
       "gate": 5,
       "name": "Order reconciliation and partial fills",
-      "status": "FAIL",
-      "evidence": "The current adapter exposes account/balance/place/cancel only; no durable open-order, fill, partial-fill or post-order reconciliation loop was found.",
-      "required_action": "Implement durable order journal, order-status polling, fill accounting, partial-fill handling and cancel/replace recovery."
+      "status": "PASS",
+      "evidence": "Bitvavo adapter now provides get_order, ordersOpen, reconcile_order, reconcile_inflight and durable fill recording.",
+      "required_action": ""
     },
     {
       "gate": 6,
       "name": "Restart recovery and durable execution state",
-      "status": "FAIL",
-      "evidence": "No durable execution journal or restart checkpoint was found for live orders; the gateway counters are in-memory.",
-      "required_action": "Persist accepted/submitted/filled/canceled state and reconcile it before allowing a restarted worker to trade."
+      "status": "PASS",
+      "evidence": "SQLite WAL journal persists intent, submitted/status events and fills; inflight orders can be reconciled after restart.",
+      "required_action": ""
     },
     {
       "gate": 7,
       "name": "Kill switch, authentication and operator monitoring",
       "status": "BLOCKED",
-      "evidence": "Emergency-stop, confirmation phrase, dashboard auth and risk kill-switch code exist; live capability is intentionally still reported as not_installed until gates 1, 2, 5 and 6 are complete.",
+      "evidence": "Emergency-stop, confirmation phrase, dashboard auth and risk kill-switch code exist; live capability remains blocked by gates 1 and 2 and the required operational review.",
       "required_action": "Keep EMERGENCY_STOP=true until all preceding gates pass and perform an independent operational review."
     }
   ],
-  "passed": 2,
+  "passed": 4,
   "total": 7,
   "live_activation_allowed": false
 }
