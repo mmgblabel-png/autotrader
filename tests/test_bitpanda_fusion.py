@@ -42,6 +42,7 @@ def test_authenticate_uses_documented_header_and_redacts_key():
     request = captured["request"]
     assert request.full_url == "https://api.fusion.bitpanda.com/v1/account/balances"
     assert request.get_header("X-api-key") == "secret-value"
+    assert request.get_header("User-agent").startswith("AutoTrader/")
     assert "secret-value" not in json.dumps(result)
     assert "10" not in json.dumps(result)
 

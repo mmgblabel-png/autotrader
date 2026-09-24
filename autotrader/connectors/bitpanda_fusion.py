@@ -84,7 +84,8 @@ class BitpandaFusionAdapter:
         if query:
             url += "?" + urllib.parse.urlencode(query)
         body_text = json.dumps(body, separators=(",", ":")) if body is not None else ""
-        headers = {"Accept": "application/json", "x-api-key": self.api_key}
+        user_agent = os.getenv("BITPANDA_FUSION_USER_AGENT", "AutoTrader/1.0 (+https://github.com/mmgblabel-png/autotrader)").strip()
+        headers = {"Accept": "application/json", "User-Agent": user_agent, "x-api-key": self.api_key}
         if body_text:
             headers["Content-Type"] = "application/json"
         request = urllib.request.Request(
@@ -100,18 +101,25 @@ class BitpandaFusionAdapter:
         except urllib.error.HTTPError as exc:
             response_code: str | int | None = None
             response_body: Any = None
+            payload: Any = None
             try:
                 raw_body = exc.read().decode("utf-8", "replace")
                 payload = json.loads(raw_body)
                 if isinstance(payload, dict):
-                    response_code = payload.get("code") or payload.get("error") or payload.get("message")
+                    response_code = payload.get("code") or payload.get("error_code") or payload.get("error") or payload.get("message")
                     response_body = {
                         key: value for key, value in payload.items()
                         if key.lower() not in {"apikey", "api_key", "secret", "token", "authorization"}
                     }
             except (ValueError, TypeError, json.JSONDecodeError, UnicodeDecodeError):
                 pass
-            category = "invalid_credentials" if exc.code in {401, 403} else "fusion_http_error"
+            is_cloudflare_access_denied = isinstance(payload, dict) and (
+                payload.get("error_code") == 1010 or payload.get("cloudflare_error") is True
+            )
+            if is_cloudflare_access_denied:
+                category = "upstream_access_denied"
+            else:
+                category = "invalid_credentials" if exc.code in {401, 403} else "fusion_http_error"
             raise BitpandaFusionError(
                 "Bitpanda Fusion request was rejected",
                 category=category,
