@@ -40,7 +40,7 @@ from typing import Final
 
 from fastapi import Body, Depends, FastAPI, Header, HTTPException, Query, Request, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import HTMLResponse, JSONResponse
 from slowapi import Limiter, _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
 from slowapi.middleware import SlowAPIMiddleware
@@ -54,6 +54,7 @@ from autotrader.core.logger import get_logger
 from autotrader.core.notifications import notify_paper_report
 from autotrader.core.paper_reporting import build_paper_report, export_paper_report
 from autotrader.core.execution_gateway import ExecutionGateway
+from autotrader.api.dashboard_html import dashboard_html
 from autotrader.ml.shadow import walk_forward
 
 log = get_logger("api.server")
@@ -171,6 +172,12 @@ app = FastAPI(
 )
 
 app.state.execution_gateway = ExecutionGateway()
+
+
+@app.get("/dashboard", response_class=HTMLResponse, include_in_schema=False)
+def dashboard() -> HTMLResponse:
+    """Serve the visual protected dashboard shell; data remains API-authenticated."""
+    return HTMLResponse(dashboard_html())
 
 
 def _protected_path(path: str) -> bool:
