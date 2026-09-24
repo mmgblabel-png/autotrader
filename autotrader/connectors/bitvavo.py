@@ -10,6 +10,7 @@ from __future__ import annotations
 import hashlib
 import hmac
 import json
+import logging
 import os
 import time
 import urllib.error
@@ -20,6 +21,8 @@ from typing import Any
 
 from autotrader.core.execution_gateway import ExecutionGateway, ExecutionRequest
 from autotrader.core.order_journal import OrderJournal
+
+LOGGER = logging.getLogger(__name__)
 
 
 class BitvavoError(RuntimeError):
@@ -52,6 +55,18 @@ class BitvavoAdapter:
         timestamp = str(int(time.time() * 1000))
         payload = f"{timestamp}{method}/v2{endpoint}{body_text}"
         signature = hmac.new(self.api_secret.encode(), payload.encode(), hashlib.sha256).hexdigest()
+        if os.getenv("BITVAVO_DEBUG_SIGNING", "false").lower() in {"1", "true", "yes"}:
+            LOGGER.warning(
+                "Bitvavo signing debug method=%s path=/v2%s timestamp=%s body_len=%d "
+                "payload_sha256=%s signature_prefix=%s signature_suffix=%s",
+                method,
+                endpoint,
+                timestamp,
+                len(body_text.encode("utf-8")),
+                hashlib.sha256(payload.encode("utf-8")).hexdigest(),
+                signature[:4],
+                signature[-4:],
+            )
         headers = {
             "Bitvavo-Access-Key": self.api_key,
             "Bitvavo-Access-Timestamp": timestamp,
