@@ -18,6 +18,7 @@ from abc import ABC, abstractmethod
 from typing import Dict, List, Optional
 
 from autotrader.connectors.binance_spot import BinanceSpotAdapter
+from autotrader.connectors.bitvavo import BitvavoAdapter
 from autotrader.connectors.polymarket import PolymarketAdapter
 
 
@@ -170,6 +171,7 @@ CONNECTOR_REGISTRY: Dict[str, type] = {
     "kraken": KrakenConnector,
     "coinbase": CoinbaseConnector,
     "binance_spot_safe": BinanceSpotAdapter,
+    "bitvavo_safe": BitvavoAdapter,
     "polymarket_safe": PolymarketAdapter,
 }
 

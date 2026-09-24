@@ -215,3 +215,26 @@ python tools/make_dashboard_hash.py
 ```
 
 Set the printed PBKDF2 value as Railway secret `DASHBOARD_PASSWORD_HASH`; do not send or commit the plaintext password. Set `DASHBOARD_USERNAME=admin` and a separate random `PUBLIC_JWT_SECRET` in Railway. The morning monitoring service is configured as a separate short-lived cron job at `0 8 * * *` UTC; it checks `/api/health` first and only then triggers the paper PnL export.
+
+
+## Bitvavo in plaats van Binance
+
+Voor een gebruiker die Binance niet kan of wil gebruiken, is Bitvavo als EUR-venue toegevoegd via `autotrader/connectors/bitvavo.py`. De adapter gebruikt Bitvavo’s officiële REST HMAC-SHA256-authenticatie en `BTC-EUR`-markten. Bitvavo gebruikt API-keyrechten voor **View access** en **Trade digital assets**; **Withdraw digital assets** moet uitgeschakeld blijven. Gebruik IP-whitelisting en 2FA volgens de officiële Bitvavo-instructies.
+
+Veilige Railway/local defaults:
+
+```text
+BITVAVO_DRY_RUN=true
+EXECUTION_MODE=shadow
+EMERGENCY_STOP=true
+```
+
+Benodigde variabelen voor een later gecontroleerde Bitvavo-test:
+
+```text
+BITVAVO_API_KEY=<Railway secret>
+BITVAVO_API_SECRET=<Railway secret>
+BITVAVO_ACCESS_WINDOW=10000
+```
+
+Voeg deze secrets nog niet toe zolang je alleen shadow mode wilt gebruiken. De adapter ondersteunt geen withdrawals en live orders blijven geblokkeerd door de bestaande execution gates. Dit is technische informatie, geen juridisch of financieel advies; controleer zelf de actuele Bitvavo-voorwaarden, jouw accountstatus en Nederlandse regelgeving voordat je live orders activeert.

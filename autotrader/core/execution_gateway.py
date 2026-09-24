@@ -102,7 +102,7 @@ class ExecutionGateway:
             return self._reject(request, "missing or duplicate client_order_id")
         if request.timestamp > now + 5 or now - request.timestamp > 30:
             return self._reject(request, "request timestamp is stale or invalid")
-        if request.venue not in {"binance_spot", "polymarket"}:
+        if request.venue not in {"binance_spot", "bitvavo", "polymarket"}:
             return self._reject(request, "venue is not allowlisted")
         if request.side not in {"BUY", "SELL"}:
             return self._reject(request, "side is invalid")
