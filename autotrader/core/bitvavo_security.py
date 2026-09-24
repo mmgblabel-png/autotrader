@@ -12,6 +12,7 @@ import urllib.request
 from typing import Any
 
 from autotrader.connectors.bitvavo import BitvavoAdapter, BitvavoError
+from autotrader.core.order_journal import OrderJournal
 
 
 def current_public_ip(timeout: float = 5.0) -> str:
@@ -64,7 +65,12 @@ def validate_bitvavo_security(adapter: BitvavoAdapter, *, expected_ip: str | Non
 
 
 def main() -> int:
-    report = validate_bitvavo_security(BitvavoAdapter())
+    # The security probe only reads account/balance endpoints.  Keep its
+    # journal ephemeral so `railway run` can execute outside the mounted
+    # production volume without trying to create /app/data.
+    report = validate_bitvavo_security(
+        BitvavoAdapter(journal=OrderJournal("/tmp/bitvavo-security.sqlite3"))
+    )
     print(json.dumps(report, indent=2))
     return 0 if report["passed"] else 2
 
