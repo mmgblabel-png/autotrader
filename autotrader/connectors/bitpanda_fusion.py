@@ -34,11 +34,13 @@ class BitpandaFusionError(RuntimeError):
         category: str = "bitpanda_fusion_error",
         status: int | None = None,
         response_code: str | int | None = None,
+        response_body: Any = None,
     ) -> None:
         super().__init__(message)
         self.category = category
         self.status = status
         self.response_code = response_code
+        self.response_body = response_body
 
 
 class BitpandaFusionAdapter:
@@ -97,10 +99,16 @@ class BitpandaFusionAdapter:
             return json.loads(raw) if raw else {}
         except urllib.error.HTTPError as exc:
             response_code: str | int | None = None
+            response_body: Any = None
             try:
-                payload = json.loads(exc.read().decode("utf-8"))
+                raw_body = exc.read().decode("utf-8", "replace")
+                payload = json.loads(raw_body)
                 if isinstance(payload, dict):
                     response_code = payload.get("code") or payload.get("error") or payload.get("message")
+                    response_body = {
+                        key: value for key, value in payload.items()
+                        if key.lower() not in {"apikey", "api_key", "secret", "token", "authorization"}
+                    }
             except (ValueError, TypeError, json.JSONDecodeError, UnicodeDecodeError):
                 pass
             category = "invalid_credentials" if exc.code in {401, 403} else "fusion_http_error"
@@ -109,6 +117,7 @@ class BitpandaFusionAdapter:
                 category=category,
                 status=exc.code,
                 response_code=response_code,
+                response_body=response_body,
             ) from exc
         except (urllib.error.URLError, TimeoutError) as exc:
             raise BitpandaFusionError("Bitpanda Fusion request could not reach the service", category="network_error") from exc

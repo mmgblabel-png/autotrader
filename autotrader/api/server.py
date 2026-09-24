@@ -484,6 +484,7 @@ def bitpanda_fusion_security_status() -> dict[str, object]:
             "category": category,
             "status": getattr(exc, "status", None),
             "response_code": getattr(exc, "response_code", None),
+            "response_body": getattr(exc, "response_body", None),
         }
 
 
