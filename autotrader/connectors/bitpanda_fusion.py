@@ -1,22 +1,27 @@
 """Bitpanda Fusion REST adapter.
 
-This adapter intentionally starts with authenticated read-only support. Fusion
-uses an ``x-api-key`` header; it does not use the Bitvavo HMAC scheme. Live
-order methods remain fail-closed until the exact order contract and a suitable
-non-production validation path are confirmed from the vendor documentation.
+Fusion uses an ``x-api-key`` header. This adapter supports authenticated
+read-only calls and deterministic shadow order validation. Live order sending
+is fail-closed behind venue-specific and global execution gates.
 """
 from __future__ import annotations
 
 import json
 import logging
 import os
+import re
 import urllib.error
 import urllib.parse
 import urllib.request
-from decimal import Decimal
+from decimal import Decimal, InvalidOperation
 from typing import Any, Mapping
 
 LOGGER = logging.getLogger(__name__)
+_PAIR_RE = re.compile(r"^[A-Za-z0-9]{1,10}-[A-Za-z0-9]{1,10}$")
+_ORDER_STATUSES = {
+    "new", "filled", "filled-and-canceled", "partially-filled",
+    "canceled", "done-for-day", "rejected",
+}
 
 
 class BitpandaFusionError(RuntimeError):
@@ -37,20 +42,12 @@ class BitpandaFusionError(RuntimeError):
 
 
 class BitpandaFusionAdapter:
-    """Safe Fusion client with authenticated read-only capability.
-
-    Environment variables:
-      BITPANDA_FUSION_API_KEY: Fusion API key; never logged.
-      BITPANDA_FUSION_BASE_URL: override only for an approved test endpoint.
-      BITPANDA_FUSION_DRY_RUN: defaults to true.
-      EXECUTION_MODE: live orders are blocked unless explicitly set to live,
-        but the adapter still blocks order methods by design until enabled in a
-        later, separately audited change.
-    """
+    """Safe Fusion client with authenticated account and order support."""
 
     name = "bitpanda_fusion"
     BASE_URL = "https://api.fusion.bitpanda.com"
     BALANCES_PATH = "/v1/account/balances"
+    ORDERS_PATH = "/v1/account/orders"
 
     def __init__(
         self,
@@ -79,19 +76,13 @@ class BitpandaFusionAdapter:
         query: Mapping[str, str] | None = None,
     ) -> Any:
         if not self.api_key:
-            raise BitpandaFusionError(
-                "BITPANDA_FUSION_API_KEY is not configured",
-                category="credentials_missing",
-            )
+            raise BitpandaFusionError("BITPANDA_FUSION_API_KEY is not configured", category="credentials_missing")
         method = method.upper()
         url = self.base_url + path
         if query:
             url += "?" + urllib.parse.urlencode(query)
         body_text = json.dumps(body, separators=(",", ":")) if body is not None else ""
-        headers = {
-            "Accept": "application/json",
-            "x-api-key": self.api_key,
-        }
+        headers = {"Accept": "application/json", "x-api-key": self.api_key}
         if body_text:
             headers["Content-Type"] = "application/json"
         request = urllib.request.Request(
@@ -120,22 +111,12 @@ class BitpandaFusionAdapter:
                 response_code=response_code,
             ) from exc
         except (urllib.error.URLError, TimeoutError) as exc:
-            raise BitpandaFusionError(
-                "Bitpanda Fusion request could not reach the service",
-                category="network_error",
-            ) from exc
+            raise BitpandaFusionError("Bitpanda Fusion request could not reach the service", category="network_error") from exc
         except (json.JSONDecodeError, UnicodeDecodeError) as exc:
-            raise BitpandaFusionError(
-                "Bitpanda Fusion returned an invalid response",
-                category="invalid_response",
-            ) from exc
+            raise BitpandaFusionError("Bitpanda Fusion returned an invalid response", category="invalid_response") from exc
 
     def authenticate(self) -> dict[str, Any]:
-        """Validate the key using Fusion's documented balances endpoint.
-
-        Returns only safe metadata; the balance payload is intentionally not
-        included in the returned diagnostic object.
-        """
+        """Validate the key using Fusion's documented balances endpoint."""
         payload = self._request("GET", self.BALANCES_PATH)
         if not isinstance(payload, (dict, list)):
             raise BitpandaFusionError("Unexpected Fusion balances response", category="invalid_response")
@@ -149,52 +130,132 @@ class BitpandaFusionAdapter:
         }
 
     def balances(self) -> Any:
-        """Return the authenticated balances payload for internal callers."""
         return self._request("GET", self.BALANCES_PATH)
 
-    def supported_pairs(self) -> Any:
-        """Fetch supported pairs using a configurable documented path.
+    def list_orders(self, *, status: str | None = None, pair: str | None = None, limit: int = 100, cursor: str | None = None) -> Any:
+        if not 1 <= limit <= 1000:
+            raise BitpandaFusionError("Fusion order limit must be between 1 and 1000", category="invalid_request")
+        query: dict[str, str] = {"limit": str(limit)}
+        if status:
+            status = status.lower()
+            if status not in _ORDER_STATUSES and status not in {"open", "closed"}:
+                raise BitpandaFusionError("Unsupported Fusion order status", category="invalid_request")
+            query["status"] = status
+        if pair:
+            self._validate_pair(pair)
+            query["pair"] = pair.upper()
+        if cursor:
+            query["cursor"] = cursor
+        return self._request("GET", self.ORDERS_PATH, query=query)
 
-        Fusion's public docs should be checked at deployment time before this
-        method is enabled in production; the path can be supplied explicitly.
-        """
-        path = os.getenv("BITPANDA_FUSION_SUPPORTED_PAIRS_PATH", "")
-        if not path:
-            raise BitpandaFusionError(
-                "Fusion supported-pairs endpoint is not configured",
-                category="endpoint_not_configured",
-            )
-        return self._request("GET", path)
+    def get_order(self, order_id: str) -> Any:
+        if not order_id or "/" in order_id:
+            raise BitpandaFusionError("A valid Fusion order ID is required", category="invalid_request")
+        return self._request("GET", f"{self.ORDERS_PATH}/{urllib.parse.quote(order_id, safe='')}")
 
-    def place_limit_order(self, *args: Any, **kwargs: Any) -> dict[str, Any]:
-        """Return a shadow proposal only; live Fusion orders are blocked."""
-        proposal = {"venue": self.name, "order_type": "limit", "args": args, "kwargs": kwargs}
-        if self.dry_run or os.getenv("EXECUTION_MODE", "paper") != "live":
-            return {"status": "SHADOW", "would_place": proposal}
-        raise BitpandaFusionError(
-            "Fusion live order placement is blocked until the order contract and safety audit are complete",
-            category="live_orders_blocked",
+    def cancel_order(self, order_id: str) -> Any:
+        if not order_id or "/" in order_id:
+            raise BitpandaFusionError("A valid Fusion order ID is required", category="invalid_request")
+        if not self._live_orders_enabled():
+            return {"status": "SHADOW", "would_cancel": {"order_id": order_id}}
+        return self._request("DELETE", f"{self.ORDERS_PATH}/{urllib.parse.quote(order_id, safe='')}")
+
+    @staticmethod
+    def _validate_pair(pair: str) -> str:
+        normalized = pair.upper().strip()
+        if not _PAIR_RE.fullmatch(normalized):
+            raise BitpandaFusionError("Fusion pair must use the ASSET-QUOTE format", category="invalid_request")
+        return normalized
+
+    @staticmethod
+    def _decimal(value: Any, field: str) -> Decimal:
+        try:
+            parsed = Decimal(str(value))
+        except (InvalidOperation, ValueError, TypeError) as exc:
+            raise BitpandaFusionError(f"Fusion {field} must be numeric", category="invalid_request") from exc
+        if not parsed.is_finite() or parsed <= 0:
+            raise BitpandaFusionError(f"Fusion {field} must be positive", category="invalid_request")
+        return parsed
+
+    def shadow_validate_order(
+        self,
+        *,
+        pair: str,
+        side: str,
+        order_type: str,
+        quantity: Any = None,
+        amount: Any = None,
+        limit_price: Any = None,
+        trigger_price: Any = None,
+        time_in_force: str | None = None,
+        end_time: str | None = None,
+    ) -> dict[str, Any]:
+        """Validate and return the exact Fusion JSON order proposal without network I/O."""
+        normalized_pair = self._validate_pair(pair)
+        normalized_side = str(side).capitalize()
+        normalized_type = str(order_type).replace("_", "").replace("-", "").lower()
+        type_map = {"limit": "Limit", "market": "Market", "stoplimit": "StopLimit", "stopmarket": "StopMarket"}
+        if normalized_side not in {"Buy", "Sell"} or normalized_type not in type_map:
+            raise BitpandaFusionError("Unsupported Fusion order side or type", category="invalid_request")
+        fusion_type = type_map[normalized_type]
+        if (quantity is None) == (amount is None):
+            raise BitpandaFusionError("Provide exactly one of quantity or amount", category="invalid_request")
+        payload: dict[str, Any] = {"pair": normalized_pair, "side": normalized_side, "type": fusion_type}
+        if quantity is not None:
+            payload["quantity"] = str(self._decimal(quantity, "quantity"))
+        if amount is not None:
+            payload["amount"] = str(self._decimal(amount, "amount"))
+        if fusion_type in {"Limit", "StopLimit"}:
+            if limit_price is None:
+                raise BitpandaFusionError("limitPrice is required for this order type", category="invalid_request")
+            payload["limitPrice"] = str(self._decimal(limit_price, "limitPrice"))
+        elif limit_price is not None:
+            raise BitpandaFusionError("limitPrice is not valid for this order type", category="invalid_request")
+        if fusion_type in {"StopLimit", "StopMarket"}:
+            if trigger_price is None:
+                raise BitpandaFusionError("triggerPrice is required for this order type", category="invalid_request")
+            payload["triggerPrice"] = str(self._decimal(trigger_price, "triggerPrice"))
+        elif trigger_price is not None:
+            raise BitpandaFusionError("triggerPrice is not valid for this order type", category="invalid_request")
+        if time_in_force:
+            tif = time_in_force.upper()
+            if tif not in {"GTC", "GTD", "IOC", "FOK"}:
+                raise BitpandaFusionError("Unsupported Fusion timeInForce", category="invalid_request")
+            if tif == "GTD" and not end_time:
+                raise BitpandaFusionError("endTime is required for GTD orders", category="invalid_request")
+            payload["timeInForce"] = tif
+        if end_time:
+            payload["endTime"] = end_time
+        return payload
+
+    def _live_orders_enabled(self) -> bool:
+        return (
+            not self.dry_run
+            and os.getenv("EXECUTION_MODE", "paper") == "live"
+            and os.getenv("BITPANDA_FUSION_LIVE_ORDERS_ENABLED", "false").lower() == "true"
+            and os.getenv("LIVE_EXECUTION_APPROVED") == "true"
+            and os.getenv("LIVE_EXECUTION_ADAPTER_INSTALLED") == "true"
+            and os.getenv("LIVE_TRADING_CONFIRMATION") == "I_UNDERSTAND_LIVE_ORDERS"
+            and os.getenv("EMERGENCY_STOP", "true").lower() != "true"
         )
 
-    def place_market_order(self, *args: Any, **kwargs: Any) -> dict[str, Any]:
-        """Return a shadow proposal only; live Fusion orders are blocked."""
-        proposal = {"venue": self.name, "order_type": "market", "args": args, "kwargs": kwargs}
-        if self.dry_run or os.getenv("EXECUTION_MODE", "paper") != "live":
-            return {"status": "SHADOW", "would_place": proposal}
-        raise BitpandaFusionError(
-            "Fusion live order placement is blocked until the order contract and safety audit are complete",
-            category="live_orders_blocked",
-        )
+    def create_order(self, **kwargs: Any) -> dict[str, Any]:
+        """Validate an order, return shadow output by default, or submit only when all gates pass."""
+        payload = self.shadow_validate_order(**kwargs)
+        if not self._live_orders_enabled():
+            return {"status": "SHADOW", "would_place": payload, "live_orders_sent": False}
+        response = self._request("POST", self.ORDERS_PATH, body=payload)
+        if not isinstance(response, dict):
+            raise BitpandaFusionError("Unexpected Fusion create-order response", category="invalid_response")
+        return response
 
-    def get_mid_price(self, symbol: str) -> Decimal:
-        """Market-price endpoint is intentionally not guessed from docs."""
-        raise BitpandaFusionError(
-            f"Fusion market-price endpoint is not configured for {symbol.upper()}",
-            category="endpoint_not_configured",
-        )
+    def place_limit_order(self, pair: str, side: str, *, quantity: Any = None, amount: Any = None, limit_price: Any = None, time_in_force: str | None = None, end_time: str | None = None) -> dict[str, Any]:
+        return self.create_order(pair=pair, side=side, order_type="limit", quantity=quantity, amount=amount, limit_price=limit_price, time_in_force=time_in_force, end_time=end_time)
+
+    def place_market_order(self, pair: str, side: str, *, quantity: Any = None, amount: Any = None, time_in_force: str | None = None) -> dict[str, Any]:
+        return self.create_order(pair=pair, side=side, order_type="market", quantity=quantity, amount=amount, time_in_force=time_in_force)
 
     def redacted_status(self) -> dict[str, Any]:
-        """Return credential-presence status without contacting Fusion."""
         return {"venue": self.name, "credentials_present": self.credentials_present}
 
 
