@@ -21,6 +21,8 @@ def current_public_ip(timeout: float = 5.0) -> str:
 
 
 def validate_bitvavo_security(adapter: BitvavoAdapter, *, expected_ip: str | None = None) -> dict[str, Any]:
+    expected_value = expected_ip or os.getenv("BITVAVO_EXPECTED_PUBLIC_IP") or ""
+    expected_ips = [item.strip() for item in expected_value.split(",") if item.strip()]
     checks: dict[str, Any] = {
         "credentials_present": bool(adapter.api_key and adapter.api_secret),
         "authenticated_probe": False,
@@ -28,7 +30,7 @@ def validate_bitvavo_security(adapter: BitvavoAdapter, *, expected_ip: str | Non
         "withdrawals_disabled": os.getenv("BITVAVO_WITHDRAWALS_DISABLED", "false").lower() == "true",
         "ip_whitelist_confirmed": os.getenv("BITVAVO_IP_WHITELIST_CONFIRMED", "false").lower() == "true",
         "current_public_ip": None,
-        "expected_public_ip": expected_ip or os.getenv("BITVAVO_EXPECTED_PUBLIC_IP") or None,
+        "expected_public_ips": expected_ips,
         "errors": [],
     }
     if not checks["credentials_present"]:
@@ -43,10 +45,10 @@ def validate_bitvavo_security(adapter: BitvavoAdapter, *, expected_ip: str | Non
             checks["errors"].append(exc.category)
             if exc.status in {401, 403}:
                 checks["trade_permission"] = "rejected_or_not_authorized"
-    if checks["expected_public_ip"]:
+    if expected_ips:
         try:
             checks["current_public_ip"] = current_public_ip()
-            if checks["current_public_ip"] != checks["expected_public_ip"]:
+            if checks["current_public_ip"] not in expected_ips:
                 checks["errors"].append("public_ip_mismatch")
         except Exception:
             checks["errors"].append("public_ip_lookup_failed")
@@ -55,7 +57,7 @@ def validate_bitvavo_security(adapter: BitvavoAdapter, *, expected_ip: str | Non
         and checks["authenticated_probe"]
         and checks["withdrawals_disabled"]
         and checks["ip_whitelist_confirmed"]
-        and (not checks["expected_public_ip"] or checks["current_public_ip"] == checks["expected_public_ip"])
+        and (not expected_ips or checks["current_public_ip"] in expected_ips)
         and not checks["errors"]
     )
     return checks

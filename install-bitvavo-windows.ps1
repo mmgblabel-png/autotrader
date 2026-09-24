@@ -13,6 +13,6 @@ if (-not (Test-Path '.venv\Scripts\python.exe')) {
 $python = Join-Path $root '.venv\Scripts\python.exe'
 & $python -m pip install --upgrade pip
 & $python -m pip install -e '.[dev]'
-& $python -m pytest -q
+& $python -m pytest -q tests
 Write-Host 'Bitvavo project installed and tested. No API keys were requested or stored.' -ForegroundColor Green
 Write-Host 'Start shadow mode with .\run-bitvavo-shadow-windows.ps1' -ForegroundColor Cyan

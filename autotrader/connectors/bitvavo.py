@@ -148,13 +148,18 @@ class BitvavoAdapter:
         for order in open_orders:
             market = str(order.get("market") or "").upper()
             order_id = str(order.get("orderId") or "")
+            client_id = str(order.get("clientOrderId") or "")
             if not market or not order_id:
                 continue
             if self.dry_run or os.getenv("EXECUTION_MODE", "paper") != "live":
                 report["orders_canceled"].append({"market": market, "orderId": order_id, "status": "SHADOW"})
+                if client_id and self.journal.get(client_id):
+                    self.journal.update(client_id, "cancelled", {"reason": "kill_switch_shadow", "orderId": order_id})
                 continue
             response = self._private_request("DELETE", f"/order/{urllib.parse.quote(market)}/{urllib.parse.quote(order_id)}")
             report["orders_canceled"].append({"market": market, "orderId": order_id, "status": "canceled", "response": response})
+            if client_id and self.journal.get(client_id):
+                self.journal.update(client_id, "canceled", response, exchange_order_id=order_id)
             report["live_orders_sent"] = True
 
         gates = (
@@ -182,7 +187,9 @@ class BitvavoAdapter:
                 continue
             client_id = f"kill-{int(time.time())}-{base.lower()}"
             body = {"market": market, "side": "sell", "orderType": "market", "amount": str(amount), "clientOrderId": client_id, "responseRequired": True}
+            self.journal.record_intent(client_order_id=client_id, market=market, side="sell", order_type="market", amount=str(amount), price=None)
             response = self._private_request("POST", "/order", body)
+            self.journal.update(client_id, str(response.get("status") or "submitted").lower(), response, exchange_order_id=str(response.get("orderId") or "") or None)
             report["positions_closed"].append({"market": market, "amount": str(amount), "response": response})
             report["live_orders_sent"] = True
         report["position_close_status"] = "completed"
