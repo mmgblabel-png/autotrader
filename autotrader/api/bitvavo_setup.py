@@ -36,7 +36,7 @@ body{font:16px system-ui,sans-serif;max-width:720px;margin:40px auto;padding:0 2
 </style></head><body><main>
 <h1>Bitvavo verbinding testen</h1>
 <p class="note">Deze pagina draait alleen lokaal. Je API-secret wordt één keer gebruikt voor een private saldo-aanvraag en wordt niet opgeslagen, teruggestuurd of in de URL geplaatst.</p>
-<form id="f"><label>Bitvavo API-key<input name="api_key" autocomplete="off" required></label>
+<form id="f" method="post" action="/api/validate"><label>Bitvavo API-key<input name="api_key" autocomplete="off" required></label>
 <label>Bitvavo API-secret<input name="api_secret" type="password" autocomplete="off" required></label>
 <label>Optioneel asset-symbool<input name="symbol" placeholder="EUR of BTC" maxlength="12"></label>
 <button id="submit">Valideer en haal saldo op</button></form><p id="hint" class="hint">Je gegevens worden na elke poging uit het formulier gewist.</p><pre id="out" role="status" aria-live="polite">Nog niet getest.</pre>
