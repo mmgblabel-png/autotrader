@@ -1,0 +1,109 @@
+{
+  "document_type": "live_execution_gate_acceptance_exception",
+  "document_version": "1.0",
+  "status": "PENDING_APPROVAL",
+  "created_at": "2026-09-25",
+  "venue": {
+    "name": "Bitpanda Fusion",
+    "environment": "production",
+    "market": "BTC-EUR",
+    "api_capability": "read_and_trade",
+    "sandbox_available": false
+  },
+  "exception": {
+    "gate": 2,
+    "title": "No venue-supported sandbox or private test order",
+    "reason": "Bitpanda Fusion does not provide an available non-production order path for this account; connectivity and order behavior cannot be validated with a test order.",
+    "accepted_risk": "The first production order is a small sell-only canary and may be filled, partially filled, rejected, or incur fees and slippage.",
+    "not_a_pass": true,
+    "requires_gate_7_review": true
+  },
+  "scope": {
+    "side": "SELL_ONLY",
+    "allowed_market": "BTC-EUR",
+    "allowed_order_type": "market",
+    "max_canary_notional_eur": "30.00",
+    "configured_max_order_eur": "32.00",
+    "max_daily_exposure_eur": "50.00",
+    "max_daily_loss_eur": "25.00",
+    "max_slippage_bps": 50,
+    "withdrawals_allowed": false,
+    "transfers_allowed": false,
+    "other_markets_allowed": false,
+    "buy_orders_allowed": false,
+    "order_count": 1
+  },
+  "preconditions": [
+    "Gate 1 operator verification confirms the active Bitpanda key is Activated.",
+    "Gate 1 operator verification confirms Read and Trade permissions.",
+    "Gate 1 operator verification confirms withdrawals and transfers are disabled or unavailable.",
+    "Gate 1 operator verification confirms the Railway static outbound IP whitelist.",
+    "Railway service is Online after the latest deployment.",
+    "Authenticated read-only balance request succeeds.",
+    "BTC-EUR market feed is live and not stale.",
+    "Available BTC balance is sufficient for the Bitpanda minimum order and current price buffer.",
+    "Emergency-stop test and recovery test are recorded as PASS.",
+    "Gates 3, 4, 5, and 6 are recorded as PASS.",
+    "ORDER_JOURNAL_PATH is mounted on persistent storage at /app/data/orders.sqlite3.",
+    "No unresolved inflight order exists.",
+    "A human operator approves this exception and the exact canary payload."
+  ],
+  "canary": {
+    "purpose": "Validate one controlled sell-only production order and its reconciliation.",
+    "pair": "BTC-EUR",
+    "side": "SELL",
+    "order_type": "market",
+    "target_notional_eur": "30.00",
+    "notional_upper_bound_eur": "30.00",
+    "quantity": "RECALCULATE_AT_EXECUTION_TIME",
+    "client_order_id": "GENERATE_UNIQUE_ID_AT_EXECUTION_TIME",
+    "quantity_must_respect_size_increment": "0.00000001",
+    "price_must_respect_tick_size": "0.01",
+    "minimum_order_amount_eur": "30.00",
+    "live_orders_before_canary": false,
+    "second_order_before_reconciliation": false
+  },
+  "execution_controls": {
+    "execution_mode_before_canary": "shadow",
+    "dry_run_before_canary": true,
+    "live_orders_enabled_before_canary": false,
+    "emergency_stop_before_canary": true,
+    "sell_only": true,
+    "approval_flags_must_remain_false_until_gate_7": true
+  },
+  "reconciliation_requirements": [
+    "Persist order intent before submission.",
+    "Record exchange order ID and response.",
+    "Reconcile filled, partially filled, cancelled, rejected, or timed-out status.",
+    "Record all fills and fees in the durable journal.",
+    "Confirm local journal and Bitpanda status agree.",
+    "Confirm updated BTC and EUR balances.",
+    "Do not submit a second order after timeout until the first order is reconciled."
+  ],
+  "rollback": {
+    "emergency_stop": "true",
+    "execution_mode": "shadow",
+    "dry_run": "true",
+    "live_orders_enabled": "false",
+    "sell_only": "true",
+    "cancel_open_orders": "Only after authenticated status review and using the kill-switch procedure.",
+    "no_withdrawals": true
+  },
+  "evidence_required": [
+    "Bitpanda key settings screenshot or operator attestation stored outside chat.",
+    "Railway deployment ID and Online status.",
+    "Read-only authentication response with secrets redacted.",
+    "BTC-EUR feed response with stale=false.",
+    "Gate 2 emergency-stop/recovery test output.",
+    "Gates 3-6 smoke-test output.",
+    "Journal path and volume mount confirmation.",
+    "Canary order ID and reconciliation record, if executed."
+  ],
+  "approval": {
+    "required_approver": "ACCOUNT_OWNER_OR_DESIGNATED_OPERATOR",
+    "approved": false,
+    "approved_at": null,
+    "approver_note": null
+  },
+  "final_disposition": "DO_NOT_ENABLE_LIVE_EXECUTION_UNTIL_GATE_1_TRADE_PERMISSION_AND_GATE_7_REVIEW_ARE_COMPLETE"
+}
