@@ -551,6 +551,64 @@ def bitpanda_fusion_security_status() -> dict[str, object]:
         }
 
 
+@app.get("/api/security/bitpanda-fusion/balance-analysis", tags=["security"])
+def bitpanda_fusion_balance_analysis() -> dict[str, object]:
+    """Read-only balance/risk analysis; never creates, cancels, or broadcasts orders."""
+    adapter = BitpandaFusionAdapter()
+    try:
+        balances = adapter.balances()
+        pairs = adapter.get_pairs(pair="BTC-EUR")
+        execution = app.state.execution_gateway.status()
+        risk = get_agent().risk_manager.status()
+        balance_rows: list[dict[str, object]] = []
+        for row in balances if isinstance(balances, list) else []:
+            if not isinstance(row, dict):
+                continue
+            asset = row.get("asset") or row.get("currency") or row.get("symbol")
+            available = row.get("available") or row.get("free") or row.get("availableAmount")
+            locked = row.get("locked") or row.get("reserved") or row.get("lockedAmount")
+            total = row.get("total") or row.get("balance")
+            balance_rows.append({"asset": asset, "available": available, "locked": locked, "total": total})
+        pair = next((row for row in pairs if isinstance(row, dict) and row.get("pair") == "BTC-EUR"), {}) if isinstance(pairs, list) else {}
+        eur_total = next((row.get("total") for row in balance_rows if str(row.get("asset", "")).upper() == "EUR"), None)
+        max_order = float(execution.get("limits", {}).get("max_trade_eur", 0) or 0)
+        max_daily = float(execution.get("limits", {}).get("max_daily_exposure_eur", 0) or 0)
+        available_eur = float(eur_total) if eur_total is not None else None
+        return {
+            "venue": "bitpanda_fusion",
+            "read_only": True,
+            "authenticated": True,
+            "balances": balance_rows,
+            "btc_eur_constraints": {
+                "min_order_amount": pair.get("minOrderAmount"),
+                "amount_increment": pair.get("amountIncrement"),
+                "size_increment": pair.get("sizeIncrement"),
+                "tick_size": pair.get("tickSize"),
+            },
+            "risk": {
+                "configured_max_order_eur": max_order,
+                "configured_max_daily_exposure_eur": max_daily,
+                "configured_max_daily_loss_eur": execution.get("limits", {}).get("max_daily_loss_eur"),
+                "current_daily_exposure_eur": execution.get("daily_exposure_eur", "0"),
+                "current_daily_loss_eur": execution.get("daily_loss_eur", "0"),
+                "effective_max_order_eur": min(max_order, available_eur) if available_eur is not None else None,
+                "emergency_stop": execution.get("emergency_stop", True),
+                "mode": execution.get("mode", "shadow"),
+            },
+            "agent_risk_status": risk,
+            "live_orders_sent": False,
+        }
+    except Exception as exc:
+        return {
+            "venue": "bitpanda_fusion",
+            "read_only": True,
+            "authenticated": False,
+            "category": getattr(exc, "category", "balance_analysis_failed"),
+            "status": getattr(exc, "status", None),
+            "live_orders_sent": False,
+        }
+
+
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
 _VALID: Final[set[str]] = {"market_maker", "arbitrage", "grid", "sniper"}
