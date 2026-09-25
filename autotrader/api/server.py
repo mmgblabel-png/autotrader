@@ -568,6 +568,11 @@ def bitpanda_fusion_balance_analysis() -> dict[str, object]:
             available = row.get("available") or row.get("free") or row.get("availableAmount")
             locked = row.get("locked") or row.get("reserved") or row.get("lockedAmount")
             total = row.get("total") or row.get("balance")
+            if total is None and available is not None:
+                try:
+                    total = float(available) + float(locked or 0)
+                except (TypeError, ValueError):
+                    total = None
             balance_rows.append({"asset": asset, "available": available, "locked": locked, "total": total})
         pair = next((row for row in pairs if isinstance(row, dict) and row.get("pair") == "BTC-EUR"), {}) if isinstance(pairs, list) else {}
         eur_total = next((row.get("total") for row in balance_rows if str(row.get("asset", "")).upper() == "EUR"), None)
