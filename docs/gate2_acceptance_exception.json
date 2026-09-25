@@ -53,6 +53,7 @@
     "pair": "BTC-EUR",
     "side": "SELL",
     "order_type": "market",
+    "order_count": 1,
     "target_notional_eur": "30.00",
     "notional_upper_bound_eur": "30.00",
     "quantity": "RECALCULATE_AT_EXECUTION_TIME",
