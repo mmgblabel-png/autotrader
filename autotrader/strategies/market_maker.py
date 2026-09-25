@@ -22,6 +22,7 @@ class MarketMaker(BaseStrategy):
         max_order_size  : upper bound on order quantity
         min_order_size  : lower bound on order quantity
         max_daily_loss  : forwarded to RiskManager
+        max_order_eur   : maximum notional per quoted order
     """
 
     name = "MarketMaker"
@@ -40,13 +41,41 @@ class MarketMaker(BaseStrategy):
         mid_price: float = cfg.get("_mid_price", 30_000.0)   # injected by connector
         spread_pct: float = cfg.get("target_spread", 0.2) / 100
         size: float = cfg.get("order_size", 0.001)
+        min_size: float = cfg.get("min_order_size", 0.0001)
+        max_size: float = cfg.get("max_order_size", 1.0)
+        max_order_eur: float = float(cfg.get("max_order_eur", 32.0))
+
+        if mid_price <= 0 or max_order_eur <= 0:
+            log.warning("Invalid price or max_order_eur; skipping tick.")
+            return
+
+        # Recompute quantity from the current price so every individual quote
+        # remains inside the EUR notional cap, even when BTC moves sharply.
+        # The ask is the worst-case quote for notional sizing; use it so both
+        # bid and ask remain below the cap after spread is applied.
+        quote_max_price = mid_price * (1 + spread_pct / 2)
+        price_capped_size = max(0.0, (max_order_eur - 1e-9) / quote_max_price)
+        if price_capped_size < min_size:
+            log.warning(
+                "Price %.2f makes the configured minimum size %.8f exceed "
+                "the €%.2f order cap; skipping tick.",
+                mid_price, min_size, max_order_eur,
+            )
+            return
 
         # Clamp size
-        size = max(cfg.get("min_order_size", 0.0001), min(size, cfg.get("max_order_size", 1.0)))
+        size = max(min_size, min(size, max_size, price_capped_size))
 
         bid_price = round(mid_price * (1 - spread_pct / 2), 2)
         ask_price = round(mid_price * (1 + spread_pct / 2), 2)
         notional = size * mid_price
+
+        # Guard against floating-point rounding or future changes to the
+        # sizing calculation. This is deliberately before any order object is
+        # registered.
+        if notional > max_order_eur + 1e-9:
+            log.warning("Computed notional %.8f exceeds €%.2f; skipping tick.", notional, max_order_eur)
+            return
 
         # Risk gate
         if not self._rm.check_order(self.name, notional):
