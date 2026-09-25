@@ -74,6 +74,8 @@ class BitpandaFusionAdapter:
     name = "bitpanda_fusion"
     BASE_URL = "https://api.fusion.bitpanda.com"
     BALANCES_PATH = "/v1/account/balances"
+    TICKERS_PATH = "/v1/tickers"
+    PAIRS_PATH = "/v1/pairs"
     ORDERS_PATH = "/v1/account/orders"
 
     def __init__(
@@ -167,6 +169,16 @@ class BitpandaFusionAdapter:
 
     def balances(self) -> Any:
         return self._request("GET", self.BALANCES_PATH)
+
+    def get_tickers(self, *, pair: str | None = None) -> Any:
+        """Return current Fusion mid-price statistics; read-only."""
+        query = {"pair": pair.upper()} if pair else None
+        return self._request("GET", self.TICKERS_PATH, query=query)
+
+    def get_pairs(self, *, pair: str | None = None) -> Any:
+        """Return active Fusion pairs and their trading constraints; read-only."""
+        query = {"pair": pair.upper()} if pair else None
+        return self._request("GET", self.PAIRS_PATH, query=query)
 
     def list_orders(self, *, status: str | None = None, pair: str | None = None, limit: int = 100, cursor: str | None = None) -> Any:
         if not 1 <= limit <= 1000:

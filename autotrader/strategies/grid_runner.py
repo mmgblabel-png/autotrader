@@ -87,6 +87,12 @@ class GridRunner(BaseStrategy):
         lower: float = cfg.get("lower_price", 90.0)
         levels: int = max(2, cfg.get("grid_levels", 10))
 
+        if upper <= 0 or lower <= 0 or upper <= lower:
+            self._grid_prices = []
+            self._initialized = True
+            log.warning("Grid disabled until a valid live price range is configured: lower=%s upper=%s", lower, upper)
+            return
+
         step = (upper - lower) / (levels - 1)
         self._grid_prices = [round(lower + i * step, 4) for i in range(levels)]
         self._initialized = True

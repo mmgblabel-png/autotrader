@@ -55,6 +55,7 @@ from autotrader.core.notifications import notify_paper_report
 from autotrader.core.paper_reporting import build_paper_report, export_paper_report
 from autotrader.core.execution_gateway import ExecutionGateway
 from autotrader.core.bitvavo_security import validate_bitvavo_security
+from autotrader.core.market_feed import BitpandaFusionMarketFeed
 from autotrader.connectors.bitvavo import BitvavoAdapter
 from autotrader.connectors.bitpanda_fusion import BitpandaFusionAdapter
 from autotrader.api.dashboard_html import dashboard_html
@@ -399,6 +400,13 @@ def markets_overview():
         "live_prices": False,
         "orders_enabled": False,
     }
+
+
+@app.get("/api/markets/feed", tags=["markets"])
+def markets_feed():
+    """Fetch one validated BTC-EUR ticker; this endpoint is strictly read-only."""
+    pair = os.getenv("BITPANDA_FUSION_MARKETS", os.getenv("TRADING_MARKETS", "BTC-EUR")).split(",")[0].strip().upper()
+    return BitpandaFusionMarketFeed(pair=pair).fetch_once()
 
 
 @app.get("/strategies/status", tags=["strategies"])
