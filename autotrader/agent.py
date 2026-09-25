@@ -95,6 +95,14 @@ class AutoTrader:
             if strat.is_running:
                 strat.tick()
 
+    def shadow_tick(self, *, pair: str, price: float) -> None:
+        """Process one market tick using only local paper-order machinery."""
+        for strat in self._strategies.values():
+            strat._config["_current_price"] = price
+            strat._config["_mid_price"] = price
+            strat._config["_prices"] = {"bitpanda_fusion": price}
+        self.tick_all()
+
     def status(self) -> dict:
         return {
             "strategies": {n: s.is_running for n, s in self._strategies.items()},

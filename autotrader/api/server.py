@@ -410,6 +410,36 @@ def markets_feed():
     return BitpandaFusionMarketFeed(pair=pair).fetch_once()
 
 
+@app.post("/api/markets/shadow-validation", tags=["markets"])
+def markets_shadow_validation(ticks: int = Query(default=3, ge=2, le=10)):
+    """Process a bounded number of real read-only ticks in a fresh paper agent."""
+    pair = os.getenv("BITPANDA_FUSION_MARKETS", os.getenv("TRADING_MARKETS", "BTC-EUR")).split(",")[0].strip().upper()
+    agent = init_agent(_CONFIG_PATH)
+    started = agent.start()
+    observed: list[dict[str, object]] = []
+    feed = BitpandaFusionMarketFeed(pair=pair)
+    for _ in range(ticks):
+        tick = feed.fetch_once()
+        if tick.get("status") != "live":
+            observed.append({"status": "feed_unavailable", "error": tick.get("error")})
+            break
+        agent.shadow_tick(pair=pair, price=float(tick["price"]))
+        observed.append({"status": "processed", "pair": pair, "price_present": True})
+    stopped = agent.stop()
+    return {
+        "mode": "shadow",
+        "pair": pair,
+        "ticks_requested": ticks,
+        "ticks_processed": sum(1 for item in observed if item.get("status") == "processed"),
+        "observed": observed,
+        "strategies_started": started,
+        "strategies_stopped": stopped,
+        "local_orders_registered": len(agent._om._orders),
+        "live_orders_sent": False,
+        "exchange_order_calls": 0,
+    }
+
+
 @app.get("/strategies/status", tags=["strategies"])
 @app.get("/api/strategies/status", tags=["strategies"])
 def strategies_status():
