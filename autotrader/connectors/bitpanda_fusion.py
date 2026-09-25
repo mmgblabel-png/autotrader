@@ -287,8 +287,14 @@ class BitpandaFusionAdapter:
             and os.getenv("EMERGENCY_STOP", "true").lower() != "true"
         )
 
+    @staticmethod
+    def _sell_only() -> bool:
+        return os.getenv("BITPANDA_FUSION_SELL_ONLY", "false").lower() == "true"
+
     def create_order(self, **kwargs: Any) -> dict[str, Any]:
         """Validate an order, return shadow output by default, or submit only when all gates pass."""
+        if self._sell_only() and str(kwargs.get("side", "")).lower() != "sell":
+            return {"status": "BLOCKED", "reason": "sell_only_policy", "live_orders_sent": False}
         payload = self.shadow_validate_order(**kwargs)
         if not self._live_orders_enabled():
             return {"status": "SHADOW", "would_place": payload, "live_orders_sent": False}

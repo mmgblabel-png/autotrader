@@ -108,6 +108,13 @@ def test_live_order_path_is_blocked_even_when_live_mode_is_requested(monkeypatch
     assert result["live_orders_sent"] is False
 
 
+def test_sell_only_policy_blocks_buy(monkeypatch):
+    monkeypatch.setenv("BITPANDA_FUSION_SELL_ONLY", "true")
+    adapter = BitpandaFusionAdapter(api_key="placeholder")
+    result = adapter.place_market_order("BTC-EUR", "buy", amount=Decimal("10"))
+    assert result == {"status": "BLOCKED", "reason": "sell_only_policy", "live_orders_sent": False}
+
+
 def test_invalid_quantity_and_amount_are_rejected():
     adapter = BitpandaFusionAdapter(api_key="placeholder")
     with pytest.raises(BitpandaFusionError, match="exactly one"):
