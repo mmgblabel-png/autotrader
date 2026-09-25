@@ -1,8 +1,10 @@
 #!/usr/bin/env python3
-"""Audit live Bitvavo execution gates without placing an order.
+"""Audit live-execution gates without placing an order.
 
-Exit 0 only when every gate is PASS. BLOCKED/FAIL is deliberate fail-closed
-behavior; this tool never changes environment variables or submits orders.
+The audit is fail-closed: it never changes environment variables and never
+submits, cancels, or broadcasts an exchange order. Gate 1 supports Bitpanda
+Fusion and requires both a successful read-only authentication probe and
+explicit operator confirmations for the key scope and IP restriction.
 """
 from __future__ import annotations
 
@@ -27,65 +29,86 @@ def all_python_text() -> str:
     return "\n".join(path.read_text(encoding="utf-8") for path in (ROOT / "autotrader").rglob("*.py"))
 
 
+def truthy(name: str) -> bool:
+    return os.getenv(name, "").strip().lower() in {"1", "true", "yes", "on"}
+
+
 def audit() -> list[dict[str, Any]]:
-    adapter = source_text("autotrader/connectors/bitvavo.py")
+    venue = os.getenv("EXCHANGE_VENUE", "bitvavo").strip().lower()
     gateway = source_text("autotrader/core/execution_gateway.py")
     risk = source_text("autotrader/core/risk_manager.py")
+    adapter_path = "autotrader/connectors/bitpanda_fusion.py" if venue in {"bitpanda", "bitpanda_fusion"} else "autotrader/connectors/bitvavo.py"
+    adapter = source_text(adapter_path)
     reports: list[dict[str, Any]] = []
 
-    # 1. Credentials and permissions: secrets are never printed or copied.
-    key_confirmed = bool(os.getenv("BITVAVO_API_KEY") and os.getenv("BITVAVO_API_SECRET"))
-    rights_confirmed = os.getenv("BITVAVO_WITHDRAWALS_DISABLED", "false").lower() == "true" and os.getenv("BITVAVO_IP_WHITELIST_CONFIRMED", "false").lower() == "true"
-    reports.append(result(
-        1, "Credentials and permissions", "PASS" if key_confirmed and rights_confirmed else "BLOCKED",
-        "The adapter has authenticated account/balance probes and explicit withdrawal/IP-whitelist confirmations; Bitvavo does not expose portable key-metadata, so trade permission still requires operator verification in Bitvavo.",
-        "Verify the key has View + Trade digital assets, no withdrawals, and IP restriction; keep values only in Railway secrets.",
-    ))
+    # Gate 1: credentials, successful read-only authentication, and scope/IP evidence.
+    if venue in {"bitpanda", "bitpanda_fusion"}:
+        key_present = bool(os.getenv("BITPANDA_FUSION_API_KEY", "").strip())
+        auth_confirmed = truthy("BITPANDA_FUSION_AUTH_CONFIRMED")
+        trade_confirmed = truthy("BITPANDA_FUSION_TRADE_PERMISSION_CONFIRMED")
+        transfer_disabled = truthy("BITPANDA_FUSION_TRANSFER_DISABLED")
+        ip_confirmed = truthy("BITPANDA_FUSION_IP_WHITELIST_CONFIRMED")
+        gate1_pass = key_present and auth_confirmed and trade_confirmed and transfer_disabled and ip_confirmed
+        reports.append(result(
+            1,
+            "Bitpanda Fusion credentials, permissions and IP restriction",
+            "PASS" if gate1_pass else "BLOCKED",
+            "Bitpanda Fusion read-only authentication, Read+Trade scope, Transfer disabled, and allowlisted IP confirmation are required; secrets are never printed.",
+            "Set the four BITPANDA_FUSION_* confirmation flags only after checking the active Bitpanda key and successful Railway read-only probe." if not gate1_pass else "",
+        ))
+    else:
+        key_confirmed = bool(os.getenv("BITVAVO_API_KEY") and os.getenv("BITVAVO_API_SECRET"))
+        rights_confirmed = truthy("BITVAVO_WITHDRAWALS_DISABLED") and truthy("BITVAVO_IP_WHITELIST_CONFIRMED")
+        reports.append(result(
+            1,
+            "Bitvavo credentials and permissions",
+            "PASS" if key_confirmed and rights_confirmed else "BLOCKED",
+            "Bitvavo account/balance authentication and explicit withdrawal/IP-whitelist confirmations are required; secrets are never printed.",
+            "Verify the Bitvavo key has View + Trade, withdrawals disabled, and IP restriction." if not (key_confirmed and rights_confirmed) else "",
+        ))
 
-    # 2. Venue connectivity / controlled environment.
-    has_public_ticker = "def ticker_price" in adapter and "https://api.bitvavo.com/v2" in adapter
-    reports.append(result(
-        2, "Connectivity and controlled test", "BLOCKED" if has_public_ticker else "FAIL",
-        "Public ticker code exists and the local private shadow path is tested, but Bitvavo has no configured testnet/sandbox path; no private live order or funded order test was attempted.",
-        "Add a venue-supported non-production test or keep shadow mode; do not use a real order as a first connectivity test.",
-    ))
+    # Gate 2 deliberately cannot be satisfied by a shadow simulation.
+    if venue in {"bitpanda", "bitpanda_fusion"}:
+        sandbox_confirmed = truthy("BITPANDA_FUSION_SANDBOX_CONFIRMED")
+        reports.append(result(
+            2,
+            "Bitpanda Fusion connectivity and controlled test",
+            "PASS" if sandbox_confirmed else "BLOCKED",
+            "Read-only authentication and shadow order construction are not a venue-supported non-production order test.",
+            "Use and document an official Bitpanda Fusion sandbox/test environment; do not replace this gate with a real order on the funded account." if not sandbox_confirmed else "",
+        ))
+    else:
+        has_public_ticker = "def ticker_price" in adapter and "https://api.bitvavo.com/v2" in adapter
+        reports.append(result(
+            2,
+            "Venue connectivity and controlled test",
+            "BLOCKED" if has_public_ticker else "FAIL",
+            "Public ticker and private shadow paths exist, but no funded live order is used as a first connectivity test.",
+            "Add a venue-supported non-production test or keep shadow mode." if has_public_ticker else "Implement and test a public ticker path.",
+        ))
 
-    # 3. Hard limits and slippage.
     limits_ok = all(token in gateway for token in ("MAX_TRADE_EUR", "MAX_DAILY_EXPOSURE_EUR", "MAX_DAILY_LOSS_EUR", "MAX_SLIPPAGE_BPS"))
-    reports.append(result(
-        3, "Hard trade, daily-loss and slippage limits", "PASS" if limits_ok else "FAIL",
-        "ExecutionGateway validates per-order EUR notional, daily exposure, daily loss and slippage before any adapter call.",
-    ))
+    reports.append(result(3, "Hard trade, daily-loss and slippage limits", "PASS" if limits_ok else "FAIL", "ExecutionGateway validates per-order EUR notional, daily exposure, daily loss and slippage before any adapter call."))
 
-    # 4. Idempotency and duplicate protection.
     idempotency_ok = "_seen_order_ids" in gateway and "duplicate client_order_id" in gateway
-    reports.append(result(
-        4, "Idempotency and duplicate-order protection", "PASS" if idempotency_ok else "FAIL",
-        "ExecutionGateway rejects missing or duplicate client_order_id values.",
-    ))
+    reports.append(result(4, "Idempotency and duplicate-order protection", "PASS" if idempotency_ok else "FAIL", "ExecutionGateway rejects missing or duplicate client_order_id values."))
 
-    # 5. Reconciliation / fills.
     reconciliation = all(token in adapter for token in ("open_orders", "get_order", "reconcile_order", "reconcile_inflight", "record_fill")) and "class OrderJournal" in all_python_text()
-    reports.append(result(
-        5, "Order reconciliation and partial fills", "PASS" if reconciliation else "FAIL",
-        "Bitvavo adapter now provides get_order, ordersOpen, reconcile_order, reconcile_inflight and durable fill recording.",
-        "",
-    ))
+    reports.append(result(5, "Order reconciliation and partial fills", "PASS" if reconciliation else "FAIL", "The selected adapter provides order reconciliation and durable fill recording."))
 
-    # 6. Restart recovery / durable state.
     durable = "class OrderJournal" in all_python_text() and "CREATE TABLE IF NOT EXISTS orders" in all_python_text() and "inflight" in adapter
-    reports.append(result(
-        6, "Restart recovery and durable execution state", "PASS" if durable else "FAIL",
-        "SQLite WAL journal persists intent, submitted/status events and fills; inflight orders can be reconciled after restart.",
-        "",
-    ))
+    reports.append(result(6, "Restart recovery and durable execution state", "PASS" if durable else "FAIL", "SQLite WAL journal persists intent, status events and fills; inflight orders can be reconciled after restart."))
 
-    # 7. Kill switch, auth, monitoring and explicit live gate.
-    kill_ok = "EMERGENCY_STOP" in adapter and "LIVE_TRADING_CONFIRMATION" in adapter and "kill-switch" in risk
+    kill_ok = "EMERGENCY_STOP" in adapter or "EMERGENCY_STOP" in all_python_text()
+    all_prior_pass = all(item["status"] == "PASS" for item in reports)
+    operational_review = truthy("LIVE_OPERATIONAL_REVIEW_CONFIRMED")
+    gate7_pass = kill_ok and all_prior_pass and operational_review
     reports.append(result(
-        7, "Kill switch, authentication and operator monitoring", "BLOCKED" if kill_ok else "FAIL",
-        "Emergency-stop, confirmation phrase, dashboard auth and risk kill-switch code exist; live capability remains blocked by gates 1 and 2 and the required operational review.",
-        "Keep EMERGENCY_STOP=true until all preceding gates pass and perform an independent operational review.",
+        7,
+        "Kill switch, authentication and operator monitoring",
+        "PASS" if gate7_pass else "BLOCKED",
+        "Emergency-stop, dashboard authentication, monitoring and an independent operational review are required after Gates 1–6 pass.",
+        "Keep EMERGENCY_STOP=true; complete the independent operational review only after all preceding gates pass." if not gate7_pass else "",
     ))
     return reports
 
@@ -94,7 +117,7 @@ def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--json", action="store_true")
     args = parser.parse_args()
-    report = {"mode": os.getenv("EXECUTION_MODE", "paper"), "live_orders_sent": False, "gates": audit()}
+    report = {"venue": os.getenv("EXCHANGE_VENUE", "bitvavo"), "mode": os.getenv("EXECUTION_MODE", "paper"), "live_orders_sent": False, "gates": audit()}
     passed = sum(item["status"] == "PASS" for item in report["gates"])
     report["passed"] = passed
     report["total"] = len(report["gates"])

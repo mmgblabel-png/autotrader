@@ -201,6 +201,56 @@ class BitpandaFusionAdapter:
             raise BitpandaFusionError("A valid Fusion order ID is required", category="invalid_request")
         return self._request("GET", f"{self.ORDERS_PATH}/{urllib.parse.quote(order_id, safe='')}")
 
+    def open_orders(self, *, pair: str | None = None, limit: int = 100) -> Any:
+        """Return open orders using Fusion's read-only order endpoint."""
+        return self.list_orders(status="open", pair=pair, limit=limit)
+
+    def ordersOpen(self, *, pair: str | None = None, limit: int = 100) -> Any:
+        """Compatibility alias used by the execution reconciliation layer."""
+        return self.open_orders(pair=pair, limit=limit)
+
+    @staticmethod
+    def record_fill(journal: Any, client_order_id: str, fill: dict[str, Any]) -> None:
+        """Persist one fill through the durable OrderJournal interface."""
+        journal.record_fill(client_order_id, fill)
+
+    def reconcile_order(
+        self,
+        order_id: str,
+        *,
+        journal: Any | None = None,
+        client_order_id: str | None = None,
+    ) -> Any:
+        """Fetch an order and optionally persist its status and fills."""
+        order = self.get_order(order_id)
+        if journal is None or not isinstance(order, dict):
+            return order
+        cid = client_order_id or str(order.get("clientOrderId") or order.get("client_order_id") or "")
+        if not cid:
+            return order
+        status = str(order.get("status") or "unknown").lower()
+        journal.update(cid, status, order, exchange_order_id=order_id)
+        fills = order.get("fills") or order.get("trades") or []
+        if isinstance(fills, list):
+            for fill in fills:
+                if isinstance(fill, dict):
+                    self.record_fill(journal, cid, fill)
+        return order
+
+    def reconcile_inflight(self, journal: Any) -> list[Any]:
+        """Reconcile journal rows that have an exchange order ID after restart."""
+        results: list[Any] = []
+        for row in journal.inflight():
+            exchange_order_id = row.get("exchange_order_id")
+            if not exchange_order_id:
+                continue
+            results.append(self.reconcile_order(
+                str(exchange_order_id),
+                journal=journal,
+                client_order_id=str(row.get("client_order_id") or ""),
+            ))
+        return results
+
     def cancel_order(self, order_id: str) -> Any:
         if not order_id or "/" in order_id:
             raise BitpandaFusionError("A valid Fusion order ID is required", category="invalid_request")
