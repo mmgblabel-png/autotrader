@@ -385,6 +385,7 @@ def markets_overview():
     """Return configured markets and feed state without fabricating prices."""
     raw = os.getenv("BITPANDA_FUSION_MARKETS", os.getenv("TRADING_MARKETS", "BTC-EUR"))
     markets = [item.strip().upper() for item in raw.split(",") if item.strip()]
+    feed = BitpandaFusionMarketFeed(pair=markets[0] if markets else "BTC-EUR").fetch_once() if markets else {"status": "unavailable"}
     return {
         "venue": "bitpanda_fusion",
         "mode": "paper",
@@ -392,12 +393,12 @@ def markets_overview():
             {
                 "symbol": market,
                 "configured": True,
-                "price_status": "not_available",
-                "note": "Geen live prijs claimen totdat de Fusion-marktfeed is geverifieerd.",
+                "price_status": feed.get("status", "unavailable") if market == (markets[0] if markets else "") else "not_checked",
+                "note": "Read-only Fusion-feed; live orders blijven uitgeschakeld.",
             }
             for market in markets
         ],
-        "live_prices": False,
+        "live_prices": feed.get("status") == "live",
         "orders_enabled": False,
     }
 
