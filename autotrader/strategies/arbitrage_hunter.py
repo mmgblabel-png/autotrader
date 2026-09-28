@@ -36,6 +36,9 @@ class ArbitrageHunter(BaseStrategy):
         symbol: str = cfg.get("symbol", "ETH/USDT")
         size: float = cfg.get("order_size", 0.01)
         min_profit: float = cfg.get("min_profit_pct", 0.15) / 100
+        fee_pct = cfg.get("estimated_fee_pct", 0.25) / 100
+        slippage_pct = cfg.get("estimated_slippage_pct", 0.10) / 100
+        min_edge = cfg.get("min_edge_after_costs_pct", 0.10) / 100
         # Exchange prices are injected via config["_prices"] = {"binance": 1900.0, "kraken": 1905.0}
         prices: dict[str, float] = cfg.get("_prices", {})
 
@@ -48,7 +51,8 @@ class ArbitrageHunter(BaseStrategy):
         sell_exchange, sell_price = sorted_prices[-1]
 
         spread_pct = (sell_price - buy_price) / buy_price
-        if spread_pct < min_profit:
+        required_edge = min_profit + (2 * fee_pct) + (2 * slippage_pct) + min_edge
+        if spread_pct < required_edge:
             log.debug("Spread %.4f%% below threshold %.4f%% – no trade.", spread_pct * 100, min_profit * 100)
             return
 
