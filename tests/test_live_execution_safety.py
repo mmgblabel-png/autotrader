@@ -182,3 +182,38 @@ def test_market_maker_does_not_sell_unrelated_account_btc():
     orders = list(om._orders.values())
     assert len(orders) == 1
     assert orders[0].side is OrderSide.BUY
+
+
+def test_market_maker_exit_never_below_entry_markup():
+    om = OrderManager()
+    strategy = MarketMaker(
+        order_manager=om,
+        risk_manager=AllowRisk(),
+        profit_engine=DummyProfit(),
+        config={
+            "enabled": True,
+            "symbol": "BTC-EUR",
+            "exchange": "bitvavo",
+            "order_size": 0.0001,
+            "min_order_size": 0.0001,
+            "max_order_size": 0.0001,
+            "target_spread": 0.80,
+            "cycle_exit_markup_pct": 0.80,
+            "estimated_fee_pct": 0.25,
+            "estimated_slippage_pct": 0.05,
+            "quote_refresh_seconds": 0,
+            "inventory_cycle_mode": True,
+            "_mid_price": 73000.0,
+            "_live_balance_snapshot_ready": True,
+            "_available_quote": 42.0,
+            "_available_base": 0.0001,
+            "_bot_base_inventory": 0.0001,
+            "_bot_average_entry_price": 73539.0,
+        },
+    )
+    strategy.start()
+    strategy.tick()
+    orders = list(om._orders.values())
+    assert len(orders) == 1
+    assert orders[0].side is OrderSide.SELL
+    assert orders[0].price >= round(73539.0 * 1.008, 2)
