@@ -83,3 +83,44 @@ def test_ticker_price_accepts_list_response(monkeypatch):
     monkeypatch.setattr("urllib.request.urlopen", lambda *args, **kwargs: DummyResponse())
     adapter = BitvavoAdapter(api_key="key", api_secret="secret")
     assert adapter.ticker_price("BTC-EUR") == Decimal("73452.01")
+
+
+def test_get_order_uses_official_query_route(monkeypatch):
+    adapter = BitvavoAdapter(api_key="key", api_secret="secret")
+    seen = {}
+    def fake(method, endpoint, body=None, query=None):
+        seen.update(method=method, endpoint=endpoint, query=query)
+        return {"status": "filled", "fills": []}
+    monkeypatch.setattr(adapter, "_private_request", fake)
+    adapter.get_order("BTC-EUR", order_id="11111111-1111-1111-1111-111111111111")
+    assert seen == {
+        "method": "GET",
+        "endpoint": "/order",
+        "query": {
+            "market": "BTC-EUR",
+            "orderId": "11111111-1111-1111-1111-111111111111",
+        },
+    }
+
+
+def test_cancel_order_uses_official_query_route(monkeypatch):
+    monkeypatch.setenv("EXECUTION_MODE", "live")
+    monkeypatch.setenv("BITVAVO_DRY_RUN", "false")
+    monkeypatch.setenv("BITVAVO_OPERATOR_ID", "1")
+    adapter = BitvavoAdapter(api_key="key", api_secret="secret")
+    adapter.dry_run = False
+    seen = {}
+    def fake(method, endpoint, body=None, query=None):
+        seen.update(method=method, endpoint=endpoint, query=query)
+        return {"orderId": query["orderId"]}
+    monkeypatch.setattr(adapter, "_private_request", fake)
+    adapter.cancel_order("BTC-EUR", "11111111-1111-1111-1111-111111111111")
+    assert seen == {
+        "method": "DELETE",
+        "endpoint": "/order",
+        "query": {
+            "market": "BTC-EUR",
+            "orderId": "11111111-1111-1111-1111-111111111111",
+            "operatorId": "1",
+        },
+    }
