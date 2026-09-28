@@ -25,3 +25,15 @@ def test_bitvavo_live_gate_rejects(monkeypatch):
     monkeypatch.setattr(adapter, "markets", lambda market=None: [{"status": "trading", "orderTypes": ["limit", "market"], "quantityDecimals": 6, "tickSize": "0.01", "minOrderInBaseAsset": "0.00001", "minOrderInQuoteAsset": "5"}])
     with pytest.raises(BitvavoError, match="adapter|gates"):
         adapter.place_market_order("BTC-EUR", "buy", Decimal("0.0001"), "2be7d0df-d8dc-7b93-a550-6f3b3f3b393e")
+
+
+def test_signature_matches_bitvavo_documented_example():
+    body = '{"market":"BTC-EUR","side":"buy","price":"5000","amount":"1.23","orderType":"limit"}'
+    signature = BitvavoAdapter._create_signature(
+        "bitvavo",
+        "1548172481125",
+        "POST",
+        "/order",
+        body,
+    )
+    assert signature == "44d022723a20973a18f7ee97398b9fdd405d2d019c8d39e24b8cc0dcb39ca016"
