@@ -24,6 +24,7 @@ class BaseStrategy(ABC):
         self._pe = profit_engine
         self._config = config
         self._running = False
+        self._enabled = bool(config.get("enabled", True))
 
     # ------------------------------------------------------------------
     # Lifecycle
@@ -40,6 +41,10 @@ class BaseStrategy(ABC):
     @property
     def is_running(self) -> bool:
         return self._running
+
+    @property
+    def is_enabled(self) -> bool:
+        return self._enabled
 
     # ------------------------------------------------------------------
     # Hooks
