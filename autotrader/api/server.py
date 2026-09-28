@@ -394,6 +394,7 @@ def live_readiness():
         bitvavo_security_passed = bool(bitvavo_security.get("passed"))
     except Exception:
         bitvavo_security_passed = False
+    strategy_state = get_agent().list_strategies().get("market_maker", {})
     gates = {
         "execution_mode_live": os.getenv("EXECUTION_MODE", "paper").strip().lower() == "live",
         "live_execution_approved": os.getenv("LIVE_EXECUTION_APPROVED", "false").strip().lower() == "true",
@@ -401,8 +402,11 @@ def live_readiness():
         "emergency_stop_off": os.getenv("EMERGENCY_STOP", "true").strip().lower() != "true",
         "confirmation_present": os.getenv("LIVE_TRADING_CONFIRMATION", "") == "I_UNDERSTAND_LIVE_ORDERS",
         "bitvavo_live_trading": os.getenv("BITVAVO_LIVE_TRADING", "false").strip().lower() == "true",
+        "bitvavo_dry_run_off": os.getenv("BITVAVO_DRY_RUN", "true").strip().lower() not in {"1", "true", "yes"},
         "bitvavo_credentials_present": credentials,
         "bitvavo_security_passed": bitvavo_security_passed,
+        "market_maker_enabled": bool(strategy_state.get("enabled")),
+        "market_maker_running": bool(strategy_state.get("running")),
         "control_token_present": bool(os.getenv("AUTOTRADER_CONTROL_TOKEN", "").strip()),
     }
     return {
