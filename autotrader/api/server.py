@@ -431,13 +431,21 @@ def live_readiness():
         "market_maker_running": bool(strategy_state.get("running")),
         "control_token_present": bool(os.getenv("AUTOTRADER_CONTROL_TOKEN", "").strip()),
     }
+    ready = all(gates.values())
+    log.info(
+        "Live readiness: ready=%s mode=%s armed=%s gates=%s",
+        ready,
+        app.state.execution_gateway.mode.value,
+        bool(getattr(app.state, "live_armed", False)),
+        gates,
+    )
     return {
-        "ready": all(gates.values()),
-        "ready_to_arm": all(gates.values()),
+        "ready": ready,
+        "ready_to_arm": ready,
         "armed": bool(getattr(app.state, "live_armed", False)),
         "mode": app.state.execution_gateway.mode.value,
         "gates": gates,
-        "action": "Resolve failed gates first." if not all(gates.values()) else "Ready for explicit runtime activation.",
+        "action": "Resolve failed gates first." if not ready else "Ready for explicit runtime activation.",
         "warning": "Activation is runtime-only and never changes Railway variables.",
     }
 
