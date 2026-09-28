@@ -31,6 +31,9 @@ class BaseStrategy(ABC):
     # ------------------------------------------------------------------
 
     def start(self) -> None:
+        if not self._enabled:
+            self._running = False
+            return
         self._running = True
         self.on_start()
 
