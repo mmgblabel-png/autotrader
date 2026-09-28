@@ -73,19 +73,37 @@ class MarketMaker(BaseStrategy):
         if not self._rm.check_order(self.name, notional):
             return
 
-        # Place bid
-        bid = Order(exchange=exchange, symbol=symbol, side=OrderSide.BUY,
-                    order_type=OrderType.LIMIT, quantity=size, price=bid_price,
-                    strategy=self.name)
-        self._om.register(bid)
-        log.info("BID  %s %.4f @ %.2f  (notional=%.2f)", symbol, size, bid_price, notional)
+        live_snapshot = bool(cfg.get("_live_balance_snapshot_ready", False))
+        can_bid = True
+        can_ask = True
+        if live_snapshot:
+            available_quote = float(cfg.get("_available_quote", 0.0))
+            available_base = float(cfg.get("_available_base", 0.0))
+            can_bid = available_quote >= (size * bid_price)
+            can_ask = available_base >= size
+            if not can_bid:
+                log.info("MM bid skipped: insufficient available quote balance.")
+            if not can_ask:
+                log.info("MM ask skipped: insufficient available base balance.")
 
-        # Place ask
-        ask = Order(exchange=exchange, symbol=symbol, side=OrderSide.SELL,
-                    order_type=OrderType.LIMIT, quantity=size, price=ask_price,
-                    strategy=self.name)
-        self._om.register(ask)
-        cfg["_last_quote_ts"] = now
-        log.info("ASK  %s %.4f @ %.2f  (notional=%.2f)", symbol, size, ask_price, notional)
+        placed = False
+        if can_bid:
+            bid = Order(exchange=exchange, symbol=symbol, side=OrderSide.BUY,
+                        order_type=OrderType.LIMIT, quantity=size, price=bid_price,
+                        strategy=self.name)
+            self._om.register(bid)
+            placed = True
+            log.info("BID  %s %.4f @ %.2f  (notional=%.2f)", symbol, size, bid_price, notional)
+
+        if can_ask:
+            ask = Order(exchange=exchange, symbol=symbol, side=OrderSide.SELL,
+                        order_type=OrderType.LIMIT, quantity=size, price=ask_price,
+                        strategy=self.name)
+            self._om.register(ask)
+            placed = True
+            log.info("ASK  %s %.4f @ %.2f  (notional=%.2f)", symbol, size, ask_price, notional)
+
+        if placed:
+            cfg["_last_quote_ts"] = now
 
         # Fills must come from exchange/paper execution events; never self-generate PnL.\n
