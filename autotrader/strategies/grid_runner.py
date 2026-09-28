@@ -74,8 +74,6 @@ class GridRunner(BaseStrategy):
             self._active_levels.add(level_price)
             log.debug("GRID %s %s %.2f qty=%.4f", order.side.value, symbol, level_price, size)
 
-        # Record a simulated PnL update
-        self._pe.update_unrealized_pnl(self.name, self._estimate_unrealized(current_price))
 
     # ------------------------------------------------------------------
     # Private helpers
@@ -99,11 +97,3 @@ class GridRunner(BaseStrategy):
         log.info("Grid built: %d levels from %.2f to %.2f (step=%.4f)",
                  levels, lower, upper, step)
 
-    def _estimate_unrealized(self, current_price: float) -> float:
-        """Rough unrealized PnL based on open grid orders."""
-        open_orders = self._om.open_orders(self.name)
-        unrealized = 0.0
-        for o in open_orders:
-            if o.price and o.side == OrderSide.BUY:
-                unrealized += o.quantity * (current_price - o.price)
-        return unrealized
