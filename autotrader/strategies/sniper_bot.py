@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from autotrader.core.logger import get_logger
 from autotrader.core.order_manager import Order, OrderSide, OrderType
-from autotrader.core.profit_engine import Trade
 from autotrader.strategies.base import BaseStrategy
 
 log = get_logger("SniperBot")
@@ -63,8 +62,8 @@ class SniperBot(BaseStrategy):
                 order = Order(exchange=exchange, symbol=symbol, side=side,
                               order_type=OrderType.MARKET, quantity=size, strategy=self.name)
                 self._om.register(order)
-                self._position = size if side == OrderSide.BUY else -size
-                self._entry_price = current_price
+                # Order registration is not a fill. Position state changes only
+                # after the execution layer confirms a fill.
                 log.info("SNIPE ENTER %s %s %.4f @ %.2f (move=%.3f%%)",
                          side.value, symbol, size, current_price, move * 100)
 
@@ -89,22 +88,10 @@ class SniperBot(BaseStrategy):
                         price: float, reason: str) -> None:
         side = OrderSide.SELL if self._position > 0 else OrderSide.BUY
         size = abs(self._position)
-        fee_rate = 0.001
-        fee = size * price * fee_rate
-
         order = Order(exchange=exchange, symbol=symbol, side=side,
                       order_type=OrderType.MARKET, quantity=size, strategy=self.name)
         self._om.register(order)
 
-        pnl = size * (price - self._entry_price) * (1 if self._position > 0 else -1) - fee
-        self._pe.record_trade(Trade(strategy=self.name, symbol=symbol,
-                                    side=side.value, quantity=size, price=price, fee=fee))
-        self._pe.record_realized_pnl(self.name, pnl)
-
-        if pnl < 0:
-            self._rm.record_loss(self.name, abs(pnl))
-
-        log.info("SNIPE EXIT (%s) %s %.4f @ %.2f  pnl=%.4f", reason, symbol, size, price, pnl)
-
-        self._position = 0.0
-        self._entry_price = 0.0
+        # No synthetic fill, fee, position reset or PnL. These are applied by
+        # the execution/fill reconciliation path.
+        log.info("SNIPE EXIT (%s) %s %.4f @ %.2f — awaiting fill", reason, symbol, size, price)
