@@ -143,6 +143,12 @@ async def _tick_loop(app: FastAPI, agent: AutoTrader) -> None:
                     except Exception as balance_exc:
                         app.state.bitvavo_balance_snapshot_ready = False
                         log.warning("Bitvavo balance refresh failed: %s", balance_exc)
+                    try:
+                        app.state.bitvavo_open_orders = agent._bitvavo.open_orders("BTC-EUR")
+                        app.state.bitvavo_open_orders_snapshot_ready = True
+                    except Exception as orders_exc:
+                        app.state.bitvavo_open_orders_snapshot_ready = False
+                        log.warning("Bitvavo open-orders refresh failed: %s", orders_exc)
                 for strategy in agent._strategies.values():
                     if strategy.is_running and strategy._config.get("exchange", "bitvavo").lower() == "bitvavo":
                         symbol = str(strategy._config.get("symbol", "BTC-EUR")).upper()
@@ -157,6 +163,12 @@ async def _tick_loop(app: FastAPI, agent: AutoTrader) -> None:
                             )
                             strategy._config["_available_base"] = float(balances.get(base, 0.0))
                             strategy._config["_available_quote"] = float(balances.get(quote, 0.0))
+                            strategy._config["_exchange_open_orders_snapshot_ready"] = bool(
+                                getattr(app.state, "bitvavo_open_orders_snapshot_ready", False)
+                            )
+                            strategy._config["_exchange_open_order_count"] = len(
+                                getattr(app.state, "bitvavo_open_orders", []) or []
+                            )
                 agent.tick_all()
                 if app.state.tick_count % 30 == 0:
                     agent.live_reconcile()
@@ -183,6 +195,8 @@ async def _lifespan(app: FastAPI):
     app.state.tick_count = 0
     app.state.bitvavo_balances = {}
     app.state.bitvavo_balance_snapshot_ready = False
+    app.state.bitvavo_open_orders = []
+    app.state.bitvavo_open_orders_snapshot_ready = False
     app.state.last_tick_at = None
     app.state.last_tick_error = None
     app.state.peak_equity_usd = float(os.getenv("PAPER_STARTING_BALANCE_USD", "1000"))
