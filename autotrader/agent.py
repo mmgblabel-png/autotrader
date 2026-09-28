@@ -99,6 +99,22 @@ class AutoTrader:
             if strat.is_running:
                 strat.tick()
 
+    def shadow_tick(self, pair: str, price: float) -> None:
+        """Inject one read-only market-data sample into matching enabled strategies."""
+        if price <= 0:
+            return
+        for strat in self._strategies.values():
+            if not strat.is_enabled:
+                continue
+            configured_symbol = str(strat._config.get("symbol", pair))
+            if configured_symbol.upper() != str(pair).upper():
+                continue
+            exchange = str(strat._config.get("exchange", "bitvavo")).lower()
+            strat._config["_current_price"] = price
+            strat._config["_mid_price"] = price
+            strat._config["_prices"] = {exchange: price}
+        self.tick_all()
+
     def status(self) -> dict:
         return {
             "strategies": {n: s.is_running for n, s in self._strategies.items()},
