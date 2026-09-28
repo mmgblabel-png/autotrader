@@ -82,12 +82,30 @@ class MarketMaker(BaseStrategy):
         if live_snapshot:
             available_quote = float(cfg.get("_available_quote", 0.0))
             available_base = float(cfg.get("_available_base", 0.0))
-            can_bid = available_quote >= (size * bid_price)
-            can_ask = available_base >= size
-            if not can_bid:
+            cycle_mode = bool(cfg.get("inventory_cycle_mode", True))
+            bot_inventory = max(0.0, float(cfg.get("_bot_base_inventory", 0.0)))
+            min_size = float(cfg.get("min_order_size", 0.0001))
+            if cycle_mode:
+                if bot_inventory >= min_size:
+                    can_bid = False
+                    can_ask = available_base >= min_size
+                    size = min(size, bot_inventory, available_base)
+                    log.info("MM inventory cycle: bot inventory %.8f, quoting SELL only.", bot_inventory)
+                elif bot_inventory > 0:
+                    can_bid = False
+                    can_ask = False
+                    log.info("MM inventory cycle paused: bot inventory %.8f is below minimum %.8f.", bot_inventory, min_size)
+                else:
+                    can_bid = available_quote >= (size * bid_price)
+                    can_ask = False
+                    log.info("MM inventory cycle: no bot inventory, quoting BUY only.")
+            else:
+                can_bid = available_quote >= (size * bid_price)
+                can_ask = available_base >= size
+            if not can_bid and (not cycle_mode or bot_inventory <= 0):
                 log.info("MM bid skipped: insufficient available quote balance.")
-            if not can_ask:
-                log.info("MM ask skipped: insufficient available base balance.")
+            if not can_ask and (not cycle_mode or bot_inventory >= min_size):
+                log.info("MM ask skipped: insufficient available bot-owned base balance.")
 
         placed = False
         if can_bid:
