@@ -449,12 +449,24 @@ def live_readiness():
         "control_token_present": bool(os.getenv("AUTOTRADER_CONTROL_TOKEN", "").strip()),
     }
     ready = all(gates.values())
+    try:
+        journal_state = get_agent()._bitvavo.journal.strategy_market_state("BTC-EUR", "MarketMaker")
+    except Exception:
+        journal_state = {
+            "latest_side": None,
+            "latest_status": None,
+            "latest_amount": None,
+            "fill_count": 0,
+            "nonterminal_count": -1,
+            "net_base_inventory": "0",
+        }
     log.info(
-        "Live readiness: ready=%s mode=%s armed=%s gates=%s",
+        "Live readiness: ready=%s mode=%s armed=%s gates=%s journal=%s",
         ready,
         app.state.execution_gateway.mode.value,
         bool(getattr(app.state, "live_armed", False)),
         gates,
+        journal_state,
     )
     return {
         "ready": ready,
@@ -462,6 +474,7 @@ def live_readiness():
         "armed": bool(getattr(app.state, "live_armed", False)),
         "mode": app.state.execution_gateway.mode.value,
         "gates": gates,
+        "journal": journal_state,
         "action": "Resolve failed gates first." if not ready else "Ready for explicit runtime activation.",
         "warning": "Activation is runtime-only and never changes Railway variables.",
     }
