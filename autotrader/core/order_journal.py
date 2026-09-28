@@ -7,6 +7,7 @@ import sqlite3
 import threading
 import time
 from pathlib import Path
+from decimal import Decimal
 from typing import Any
 
 
@@ -108,6 +109,33 @@ class OrderJournal:
         with self._lock:
             rows = self._db.execute("SELECT * FROM fills WHERE client_order_id=? ORDER BY observed_at", (client_order_id,)).fetchall()
         return [dict(row) for row in rows]
+
+    def net_base_inventory(self, market: str, strategy: str) -> Decimal:
+        """Return base-asset inventory created by this strategy's recorded fills."""
+        base = market.upper().split("-", 1)[0]
+        with self._lock:
+            rows = self._db.execute(
+                """
+                SELECT o.side, f.amount, f.fee, f.raw_json
+                FROM fills AS f
+                JOIN orders AS o ON o.client_order_id=f.client_order_id
+                WHERE o.market=? AND o.strategy=?
+                ORDER BY f.observed_at
+                """,
+                (market.upper(), strategy),
+            ).fetchall()
+        total = Decimal("0")
+        for row in rows:
+            amount = Decimal(str(row["amount"] or "0"))
+            side = str(row["side"] or "").lower()
+            total += amount if side == "buy" else -amount
+            try:
+                payload = json.loads(row["raw_json"] or "{}")
+            except (TypeError, json.JSONDecodeError):
+                payload = {}
+            if str(payload.get("feeCurrency") or "").upper() == base:
+                total -= abs(Decimal(str(row["fee"] or payload.get("fee") or "0")))
+        return max(total, Decimal("0"))
 
     def counts(self) -> dict[str, int]:
         with self._lock:
