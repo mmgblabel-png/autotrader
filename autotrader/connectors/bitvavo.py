@@ -315,7 +315,7 @@ class BitvavoAdapter:
             raise BitvavoError("Live gates are not satisfied; no order was sent")
         body: dict[str, Any] = {"market": market, "side": side, "orderType": order_type, "operatorId": operator_id if operator_id > 0 else int(os.getenv("BITVAVO_OPERATOR_ID", "1")), "clientOrderId": client_order_id, "amount": str(amount), "responseRequired": True}
         if order_type == "limit":
-            body.update({"price": str(price), "timeInForce": "GTC"})
+            body.update({"price": str(price), "timeInForce": "GTC", "postOnly": True})
         try:
             response = self._private_request("POST", "/order", body)
             self.journal.update(client_order_id, str(response.get("status") or "submitted").lower(), response, exchange_order_id=str(response.get("orderId") or "") or None)
