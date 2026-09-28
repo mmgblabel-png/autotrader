@@ -455,24 +455,31 @@ def strategies():
 
 @app.get("/api/markets/overview", tags=["markets"])
 def markets_overview():
-    """Return configured markets and feed state without fabricating prices."""
-    raw = os.getenv("BITPANDA_FUSION_MARKETS", os.getenv("TRADING_MARKETS", "BTC-EUR"))
+    """Return configured Bitvavo markets and read-only ticker state."""
+    raw = os.getenv("TRADING_MARKETS", "BTC-EUR")
     markets = [item.strip().upper() for item in raw.split(",") if item.strip()]
-    feed = BitpandaFusionMarketFeed(pair=markets[0] if markets else "BTC-EUR").fetch_once() if markets else {"status": "unavailable"}
+    rows = []
+    live_prices = False
+    adapter = get_agent()._bitvavo
+    for market in markets:
+        try:
+            adapter.ticker_price(market)
+            price_status = "live"
+            live_prices = True
+        except Exception:
+            price_status = "unavailable"
+        rows.append({
+            "symbol": market,
+            "configured": True,
+            "price_status": price_status,
+            "note": "Read-only Bitvavo ticker; orderuitvoering vereist alle live-gates en runtime-arm.",
+        })
     return {
-        "venue": "bitpanda_fusion",
-        "mode": "paper",
-        "markets": [
-            {
-                "symbol": market,
-                "configured": True,
-                "price_status": feed.get("status", "unavailable") if market == (markets[0] if markets else "") else "not_checked",
-                "note": "Read-only Fusion-feed; live orders blijven uitgeschakeld.",
-            }
-            for market in markets
-        ],
-        "live_prices": feed.get("status") == "live",
-        "orders_enabled": False,
+        "venue": "bitvavo",
+        "mode": "live" if getattr(app.state, "live_mode", False) else "paper",
+        "markets": rows,
+        "live_prices": live_prices,
+        "orders_enabled": bool(getattr(app.state, "live_mode", False) and getattr(app.state, "live_armed", False)),
     }
 
 
