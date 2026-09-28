@@ -66,27 +66,4 @@ class MarketMaker(BaseStrategy):
         self._om.register(ask)
         log.info("ASK  %s %.4f @ %.2f  (notional=%.2f)", symbol, size, ask_price, notional)
 
-        # Simulate a fill for demonstration purposes
-        self._simulate_fill(bid, ask, symbol, size, mid_price)
-
-    # ------------------------------------------------------------------
-    # Private helpers
-    # ------------------------------------------------------------------
-
-    def _simulate_fill(self, bid: Order, ask: Order,
-                       symbol: str, size: float, mid: float) -> None:
-        """In production this would be driven by exchange WebSocket events."""
-        fee_rate = 0.001
-        fee = size * mid * fee_rate
-
-        self._pe.record_trade(Trade(strategy=self.name, symbol=symbol,
-                                    side="BUY", quantity=size, price=bid.price or mid, fee=fee))
-        self._pe.record_trade(Trade(strategy=self.name, symbol=symbol,
-                                    side="SELL", quantity=size, price=ask.price or mid, fee=fee))
-
-        spread_income = size * ((ask.price or mid) - (bid.price or mid))
-        realized = spread_income - 2 * fee
-        self._pe.record_realized_pnl(self.name, realized)
-
-        if realized < 0:
-            self._rm.record_loss(self.name, abs(realized))
+        # Fills must come from exchange/paper execution events; never self-generate PnL.\n
