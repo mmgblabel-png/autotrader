@@ -85,7 +85,6 @@ class BitvavoAdapter:
             with urllib.request.urlopen(request, timeout=self.timeout) as response:
                 return json.loads(response.read().decode())
         except urllib.error.HTTPError as exc:
-            retry_after = exc.headers.get("Retry-After") if exc.headers else None
             error_code = None
             error_message = None
             try:
@@ -270,7 +269,7 @@ class BitvavoAdapter:
             amount = min(available, max_eur / price)
             if amount <= 0:
                 continue
-            client_id = f"kill-{int(time.time())}-{base.lower()}"
+            client_id = str(uuid.uuid4())
             body = {"market": market, "side": "sell", "orderType": "market", "amount": str(amount), "clientOrderId": client_id, "responseRequired": True}
             self.journal.record_intent(client_order_id=client_id, market=market, side="sell", order_type="market", amount=str(amount), price=None)
             response = self._private_request("POST", "/order", body)
