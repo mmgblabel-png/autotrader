@@ -8,6 +8,8 @@ from typing import Dict, Optional
 import yaml
 
 from autotrader.core.logger import get_logger
+from autotrader.connectors.bitvavo import BitvavoAdapter
+from autotrader.core.execution_coordinator import ExecutionCoordinator
 from autotrader.core.order_manager import OrderManager
 from autotrader.core.profit_engine import ProfitEngine
 from autotrader.core.risk_manager import RiskManager, StrategyRiskConfig
@@ -33,6 +35,8 @@ class AutoTrader:
     def __init__(self, config_path: str = "config.yaml") -> None:
         self._config = self._load_config(config_path)
         self._om = OrderManager()
+        self._bitvavo = BitvavoAdapter()
+        self._executor = ExecutionCoordinator(self._om, self._bitvavo)
         self._rm = RiskManager()
         self._pe = ProfitEngine(export_dir=self._config.get("export_dir", "exports"))
         self._rm.set_profit_engine(self._pe)   # forward risk events to event log
@@ -95,10 +99,18 @@ class AutoTrader:
             for name, strat in self._strategies.items()
         }
     def tick_all(self) -> None:
-        """Call once per market-data update (or loop iteration)."""
+        """Run strategies, then execute only if the central live gates permit it."""
         for strat in self._strategies.values():
             if strat.is_running:
                 strat.tick()
+        if os.getenv("EXECUTION_MODE", "paper").strip().lower() == "live":
+            self._executor.submit_pending()
+
+    def live_reconcile(self) -> list[dict]:
+        """Reconcile durable Bitvavo orders after startup/reconnect."""
+        if os.getenv("EXECUTION_MODE", "paper").strip().lower() != "live":
+            return []
+        return self._executor.reconcile()
 
     def shadow_tick(self, *, pair: str, price: float) -> None:
         """Process one market tick using only local paper-order machinery."""
