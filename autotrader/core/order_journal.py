@@ -11,7 +11,7 @@ from typing import Any
 
 
 class OrderJournal:
-    TERMINAL = {"filled", "canceled", "cancelled", "rejected", "error", "expired"}
+    TERMINAL = {"filled", "canceled", "cancelled", "rejected", "error", "expired", "shadow", "blocked"}
 
     def __init__(self, path: str | None = None) -> None:
         self.path = Path(path or os.getenv("ORDER_JOURNAL_PATH", "data/orders.sqlite3"))
@@ -90,7 +90,7 @@ class OrderJournal:
 
     def inflight(self) -> list[dict[str, Any]]:
         with self._lock:
-            rows = self._db.execute("SELECT * FROM orders WHERE status NOT IN ('filled','canceled','cancelled','rejected','error','expired') ORDER BY created_at").fetchall()
+            rows = self._db.execute("SELECT * FROM orders WHERE status NOT IN ('filled','canceled','cancelled','rejected','error','expired','shadow','blocked') ORDER BY created_at").fetchall()
         return [dict(row) for row in rows]
 
     def fills(self, client_order_id: str) -> list[dict[str, Any]]:
