@@ -389,6 +389,11 @@ def live_readiness():
         os.getenv("BITVAVO_API_KEY", "").strip()
         and os.getenv("BITVAVO_API_SECRET", "").strip()
     )
+    try:
+        bitvavo_security = validate_bitvavo_security(get_agent()._bitvavo)
+        bitvavo_security_passed = bool(bitvavo_security.get("passed"))
+    except Exception:
+        bitvavo_security_passed = False
     gates = {
         "execution_mode_live": os.getenv("EXECUTION_MODE", "paper").strip().lower() == "live",
         "live_execution_approved": os.getenv("LIVE_EXECUTION_APPROVED", "false").strip().lower() == "true",
@@ -397,6 +402,7 @@ def live_readiness():
         "confirmation_present": os.getenv("LIVE_TRADING_CONFIRMATION", "") == "I_UNDERSTAND_LIVE_ORDERS",
         "bitvavo_live_trading": os.getenv("BITVAVO_LIVE_TRADING", "false").strip().lower() == "true",
         "bitvavo_credentials_present": credentials,
+        "bitvavo_security_passed": bitvavo_security_passed,
         "control_token_present": bool(os.getenv("AUTOTRADER_CONTROL_TOKEN", "").strip()),
     }
     return {
