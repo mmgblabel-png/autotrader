@@ -175,20 +175,6 @@ class ProfitEngine:
         }
 
 
-        return {
-            strat: {
-                "realized_pnl": s.realized_pnl,
-                "unrealized_pnl": s.unrealized_pnl,
-                "net_pnl": s.net_pnl,
-                "total_fees": s.total_fees,
-                "wins": s.wins,
-                "losses": s.losses,
-                "winrate_pct": round(s.winrate, 2),
-                "num_trades": len(s.trades),
-            }
-            for strat, s in self._stats.items()
-        }
-
     # ------------------------------------------------------------------
     # Exports
     # ------------------------------------------------------------------
