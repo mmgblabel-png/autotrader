@@ -40,7 +40,18 @@ class OrderJournal:
           FOREIGN KEY(client_order_id) REFERENCES orders(client_order_id)
         );
         """)
+        columns = {row["name"] for row in self._db.execute("PRAGMA table_info(orders)").fetchall()}
+        if "strategy" not in columns:
+            self._db.execute("ALTER TABLE orders ADD COLUMN strategy TEXT NOT NULL DEFAULT ''")
         self._db.commit()
+
+    def set_strategy(self, client_order_id: str, strategy: str) -> None:
+        with self._lock:
+            self._db.execute(
+                "UPDATE orders SET strategy=?, updated_at=? WHERE client_order_id=?",
+                (strategy, time.time(), client_order_id),
+            )
+            self._db.commit()
 
     def close(self) -> None:
         with self._lock:
