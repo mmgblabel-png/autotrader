@@ -100,11 +100,14 @@ class AutoTrader:
             for name, strat in self._strategies.items()
         }
     def tick_all(self) -> None:
-        """Run strategies, then execute only if the central live gates permit it."""
+        """Run strategies; in live mode, do not even create intents until runtime-armed."""
+        live = os.getenv("EXECUTION_MODE", "paper").strip().lower() == "live"
+        if live and not self._is_live_armed():
+            return
         for strat in self._strategies.values():
             if strat.is_running:
                 strat.tick()
-        if os.getenv("EXECUTION_MODE", "paper").strip().lower() == "live":
+        if live:
             self._executor.submit_pending()
 
     def live_reconcile(self) -> list[dict]:
