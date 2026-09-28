@@ -131,7 +131,11 @@ async def _tick_loop(app: FastAPI, agent: AutoTrader) -> None:
     while True:
         try:
             if app.state.live_mode:
-                if app.state.tick_count % 30 == 0:
+                now_mono = time.monotonic()
+                account_refresh_seconds = max(1.0, float(os.getenv("BITVAVO_ACCOUNT_REFRESH_SECONDS", "5")))
+                reconcile_seconds = max(1.0, float(os.getenv("BITVAVO_RECONCILE_SECONDS", "5")))
+
+                if now_mono - app.state.last_account_refresh_mono >= account_refresh_seconds:
                     try:
                         balance_rows = agent._bitvavo.balance()
                         app.state.bitvavo_balances = {
@@ -149,6 +153,8 @@ async def _tick_loop(app: FastAPI, agent: AutoTrader) -> None:
                     except Exception as orders_exc:
                         app.state.bitvavo_open_orders_snapshot_ready = False
                         log.warning("Bitvavo open-orders refresh failed: %s", orders_exc)
+                    app.state.last_account_refresh_mono = now_mono
+
                 for strategy in agent._strategies.values():
                     if strategy.is_running and strategy._config.get("exchange", "bitvavo").lower() == "bitvavo":
                         symbol = str(strategy._config.get("symbol", "BTC-EUR")).upper()
@@ -173,8 +179,10 @@ async def _tick_loop(app: FastAPI, agent: AutoTrader) -> None:
                                 getattr(app.state, "bitvavo_open_orders", []) or []
                             )
                 agent.tick_all()
-                if app.state.tick_count % 30 == 0:
+
+                if now_mono - app.state.last_reconcile_mono >= reconcile_seconds:
                     agent.live_reconcile()
+                    app.state.last_reconcile_mono = now_mono
             else:
                 agent.tick_all()
             app.state.tick_count += 1
@@ -196,6 +204,8 @@ async def _lifespan(app: FastAPI):
     if app.state.live_mode:
         agent.live_reconcile()
     app.state.tick_count = 0
+    app.state.last_account_refresh_mono = 0.0
+    app.state.last_reconcile_mono = 0.0
     app.state.bitvavo_balances = {}
     app.state.bitvavo_balance_snapshot_ready = False
     app.state.bitvavo_open_orders = []

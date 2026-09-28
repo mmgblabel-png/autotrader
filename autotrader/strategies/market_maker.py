@@ -10,6 +10,44 @@ log = get_logger("MarketMaker")
 
 
 class MarketMaker(BaseStrategy):
+    @staticmethod
+    def _clamp(value: float, low: float, high: float) -> float:
+        return max(low, min(value, high))
+
+    def _update_adaptive_state(self, mid_price: float) -> tuple[float, float]:
+        """Update one-step EWMA volatility/momentum and return (spread_fraction, momentum_fraction)."""
+        cfg = self._config
+        base_spread = float(cfg.get("target_spread", 0.80)) / 100
+        if not bool(cfg.get("adaptive_enabled", True)):
+            cfg["_adaptive_spread_pct"] = base_spread * 100
+            return base_spread, 0.0
+
+        previous = float(cfg.get("_adaptive_prev_mid", 0.0))
+        alpha = self._clamp(float(cfg.get("adaptive_ema_alpha", 0.18)), 0.01, 1.0)
+        if previous > 0:
+            ret = (mid_price - previous) / previous
+            vol = alpha * abs(ret) + (1 - alpha) * float(cfg.get("_adaptive_vol_ema", 0.0))
+            momentum = alpha * ret + (1 - alpha) * float(cfg.get("_adaptive_momentum_ema", 0.0))
+            cfg["_adaptive_vol_ema"] = vol
+            cfg["_adaptive_momentum_ema"] = momentum
+            cfg["_adaptive_samples"] = int(cfg.get("_adaptive_samples", 0)) + 1
+        else:
+            vol = float(cfg.get("_adaptive_vol_ema", 0.0))
+            momentum = float(cfg.get("_adaptive_momentum_ema", 0.0))
+        cfg["_adaptive_prev_mid"] = mid_price
+
+        fee_pct = float(cfg.get("estimated_fee_pct", 0.25)) / 100
+        slippage_pct = float(cfg.get("estimated_slippage_pct", 0.05)) / 100
+        cost_floor = 2 * (fee_pct + slippage_pct)
+        min_spread = max(cost_floor, float(cfg.get("adaptive_min_spread_pct", 0.65)) / 100)
+        max_spread = max(min_spread, float(cfg.get("adaptive_max_spread_pct", 1.50)) / 100)
+        vol_spread = vol * float(cfg.get("adaptive_volatility_multiplier", 4.0))
+        spread = self._clamp(max(base_spread, min_spread, vol_spread), min_spread, max_spread)
+        cfg["_adaptive_spread_pct"] = spread * 100
+        cfg["_adaptive_volatility_bps"] = vol * 10000
+        cfg["_adaptive_momentum_bps"] = momentum * 10000
+        return spread, momentum
+
     """
     Quotes a bid and an ask around the mid-price.
 
@@ -40,7 +78,7 @@ class MarketMaker(BaseStrategy):
         if mid_price <= 0:
             return
 
-        spread_pct = cfg.get("target_spread", 0.2) / 100
+        spread_pct, adaptive_momentum = self._update_adaptive_state(mid_price)
         size: float = cfg.get("order_size", 0.001)
 
         # Never quote more frequently than configured and never stack duplicate
@@ -102,7 +140,20 @@ class MarketMaker(BaseStrategy):
                 else:
                     can_bid = available_quote >= (size * bid_price)
                     can_ask = False
-                    log.info("MM inventory cycle: no bot inventory, quoting BUY only.")
+                    samples = int(cfg.get("_adaptive_samples", 0))
+                    guard = float(cfg.get("adaptive_downtrend_guard_pct", 0.12)) / 100
+                    if bool(cfg.get("adaptive_enabled", True)) and samples >= int(cfg.get("adaptive_min_samples", 6)) and adaptive_momentum < -guard:
+                        can_bid = False
+                        log.info(
+                            "MM adaptive guard: BUY paused; momentum %.2f bps < -%.2f bps.",
+                            adaptive_momentum * 10000,
+                            guard * 10000,
+                        )
+                    else:
+                        log.info(
+                            "MM inventory cycle: no bot inventory, quoting BUY only (adaptive spread %.3f%%).",
+                            spread_pct * 100,
+                        )
             else:
                 can_bid = available_quote >= (size * bid_price)
                 can_ask = available_base >= size
