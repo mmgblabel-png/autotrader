@@ -1,6 +1,6 @@
 # AutoTrader – Automaton Trading Agent
 
-A modular, headless trading backend inspired by Hummingbot's architecture. Bitvavo REST connectivity is implemented for authenticated market/account/order operations, but live execution remains fail-closed by the execution gateway and requires explicit operational approval. The default configuration is safe paper/shadow mode; no profitability is guaranteed.
+A modular, headless trading backend inspired by Hummingbot's architecture. Bitvavo REST connectivity and a gated live execution coordinator are implemented for authenticated market/account/order operations. Live trading remains disabled by default and requires explicit operational approval plus all server-side gates. The default configuration is safe paper/shadow mode; no profitability is guaranteed.
 
 ## Project structure
 
@@ -55,7 +55,7 @@ python main.py --config /path/to/config.yaml --tick-interval 2.0
 
 ### Railway deployment
 
-Railway detects the root `Procfile` and starts the API with `app:app`. On startup the API creates a controlled background tick loop, so strategies started through the API now advance without a separate `main.py` process. This process remains **paper mode**: its order, PnL, and risk output are simulated.
+Railway uses `railway.toml` in this repository to start the FastAPI service on Railway's `$PORT` and health-check `/api/health`. On startup the API creates a controlled background tick loop, so strategies started through the API now advance without a separate `main.py` process. This process remains **paper mode**: its order, PnL, and risk output are simulated.
 
 The health check is available at `/api/health`; it includes `mode: "paper"` plus the tick-loop state. The simple strategy status check is available at `/strategies/status`.
 
@@ -169,7 +169,7 @@ The API now supports a single-user login endpoint at `POST /api/auth/login`. Set
 
 The ML component at `autotrader/ml/shadow.py` is deliberately dependency-free and paper-only. It trains an online logistic shadow model on OHLCV rows, evaluates it walk-forward, and emits `BUY`, `SELL` or `HOLD` signals for research. It does not submit orders. The API endpoint `POST /api/ml/walk-forward` returns accuracy and model diagnostics after authentication.
 
-The execution gateway at `autotrader/core/execution_gateway.py` validates venue, timestamps, idempotency, slippage and EUR limits. The configured defaults are **EUR 10 per trade**, **EUR 50 daily exposure** and **EUR 25 daily loss**, with a 50 bps slippage ceiling. `EXECUTION_MODE` defaults to `paper`; `shadow` validates signals without sending orders. `live` is intentionally rejected because the repository still has no audited Binance or Polymarket order adapter. `LIVE_EXECUTION_APPROVED`, `LIVE_EXECUTION_ADAPTER_INSTALLED` and `EMERGENCY_STOP=false` are not sufficient on their own until a separately reviewed adapter exists.
+The execution gateway at `autotrader/core/execution_gateway.py` validates venue, timestamps, idempotency, slippage and EUR limits. Bitvavo live execution is wired through `autotrader/core/execution_coordinator.py`, with durable intent/reconciliation handling. The configured defaults remain **EUR 10 per trade**, **EUR 50 daily exposure** and **EUR 25 daily loss**, with a 50 bps slippage ceiling. `EXECUTION_MODE` defaults to `paper`; `shadow` validates signals without sending orders. `live` is possible only when every explicit Bitvavo gate is satisfied. `LIVE_EXECUTION_APPROVED`, `LIVE_EXECUTION_ADAPTER_INSTALLED` and `EMERGENCY_STOP=false` are not sufficient on their own until a separately reviewed adapter exists.
 
 Example Railway configuration for the safe phase:
 
@@ -185,7 +185,7 @@ DASHBOARD_PASSWORD_HASH=<PBKDF2 hash, never plaintext>
 PUBLIC_JWT_SECRET=<long random secret>
 ```
 
-This release is therefore ready for authenticated paper/shadow operation and ML evaluation. It is **not** a claim that live trading is enabled. Before real execution, the Binance Spot and Polymarket adapters require venue-specific testnet/sandbox tests, signed-request verification, durable order reconciliation, restart recovery, monitoring, and a separate explicit activation step.
+This release is therefore ready for authenticated paper/shadow operation and contains the live Bitvavo execution path. It is **not** enabled by default and no profitability is guaranteed. Production live readiness still requires Railway secrets, Bitvavo account permissions, a controlled validation run, and confirmation that the deployed service reports the expected live safety state. Before real execution, the Binance Spot and Polymarket adapters require venue-specific testnet/sandbox tests, signed-request verification, durable order reconciliation, restart recovery, monitoring, and a separate explicit activation step.
 
 ## Security incident note
 
