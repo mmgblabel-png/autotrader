@@ -10,7 +10,14 @@ strategies:
     min_order_size: 0.0001
     max_order_size: 0.0001
     target_spread: 0.80
-    quote_refresh_seconds: 10
+    quote_refresh_seconds: 5
+    adaptive_enabled: true
+    adaptive_ema_alpha: 0.18
+    adaptive_min_samples: 6
+    adaptive_min_spread_pct: 0.65
+    adaptive_max_spread_pct: 1.50
+    adaptive_volatility_multiplier: 4.0
+    adaptive_downtrend_guard_pct: 0.12
     inventory_target: 0.0
     inventory_cycle_mode: true
     cycle_exit_markup_pct: 0.80
