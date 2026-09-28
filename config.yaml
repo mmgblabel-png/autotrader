@@ -1,59 +1,65 @@
-# AutoTrader – main configuration file
-# Copy this file to config.yaml and adjust values before running.
-
-# Where to write PnL export files
+# AutoTrader – safe Bitvavo defaults
 export_dir: exports
 
 strategies:
-
-  # ── Market Maker ──────────────────────────────────────────────────────
   market_maker:
+    enabled: true
     symbol: BTC-EUR
-    exchange: bitpanda_fusion
-    order_size: 0.001          # base-asset quantity per order
+    exchange: bitvavo
+    order_size: 0.001
     min_order_size: 0.0001
     max_order_size: 0.01
-    target_spread: 0.20        # spread in %, e.g. 0.20 = 0.20%
-    max_daily_loss: 20.0       # USD
-    max_position_size: 500.0   # USD notional
+    target_spread: 0.30
+    quote_refresh_seconds: 10
+    inventory_target: 0.0
+    inventory_skew_pct: 0.10
+    estimated_fee_pct: 0.25
+    estimated_slippage_pct: 0.05
+    max_daily_loss: 20.0
+    max_position_size: 500.0
     max_slippage_pct: 0.5
     max_consecutive_errors: 5
 
-  # ── Arbitrage Hunter ──────────────────────────────────────────────────
   arbitrage:
-    symbol: BTC-EUR
-    exchanges:
-      - bitpanda_fusion
-    # Stays stopped until a second independently verified venue is connected.
+    enabled: false
+    symbol: ETH-EUR
+    exchanges: []
     order_size: 0.01
     max_order_size: 0.1
-    min_profit_pct: 0.15       # minimum net profit % to trigger trade
+    min_profit_pct: 0.40
+    estimated_fee_pct: 0.25
+    min_edge_after_costs_pct: 0.10
     max_daily_loss: 30.0
     max_position_size: 1000.0
     max_slippage_pct: 0.3
     max_consecutive_errors: 3
 
-  # ── Grid Runner ────────────────────────────────────────────────────────
   grid:
-    symbol: BTC-EUR
-    exchange: bitpanda_fusion
-    upper_price: 0.0
-    lower_price: 0.0
+    enabled: false
+    symbol: SOL-EUR
+    exchange: bitvavo
+    upper_price: 110.0
+    lower_price: 90.0
     grid_levels: 10
-    order_size: 1.0            # SOL per grid level
+    max_inventory_base: 0.01
+    rebalance_threshold_pct: 1.0
+    order_size: 1.0
     max_daily_loss: 25.0
     max_position_size: 300.0
     max_slippage_pct: 0.5
     max_consecutive_errors: 5
 
-  # ── Sniper Bot ────────────────────────────────────────────────────────
   sniper:
+    enabled: false
     symbol: BTC-EUR
-    exchange: bitpanda_fusion
+    exchange: bitvavo
     order_size: 0.001
-    momentum_pct: 0.5          # % price move to trigger entry
-    take_profit_pct: 1.0       # exit at +1%
-    stop_loss_pct: 0.3         # exit at -0.3%
+    momentum_pct: 0.5
+    take_profit_pct: 1.0
+    stop_loss_pct: 0.3
+    cooldown_seconds: 60
+    ema_fast: 9
+    ema_slow: 21
     max_slippage_pct: 0.2
     max_daily_loss: 15.0
     max_position_size: 200.0
