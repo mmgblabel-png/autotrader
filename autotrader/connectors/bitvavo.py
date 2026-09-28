@@ -40,7 +40,7 @@ class BitvavoError(RuntimeError):
 class BitvavoAdapter:
     BASE_URL = "https://api.bitvavo.com/v2"
 
-    def __init__(self, gateway: ExecutionGateway | None = None, *, timeout: float = 10.0, api_key: str | None = None, api_secret: str | None = None, journal: OrderJournal | None = None) -> None:
+    def __init__(self, gateway: ExecutionGateway | None = None, *, timeout: float = 10.0, api_key: str | None = None, api_secret: str | None = None, journal: OrderJournal | None = None, is_armed=None) -> None:
         self.api_key = (api_key if api_key is not None else os.getenv("BITVAVO_API_KEY", os.getenv("Bitvavo_API_key", ""))).strip()
         self.api_secret = (api_secret if api_secret is not None else os.getenv("BITVAVO_API_SECRET", "")).strip()
         self.access_window = int(os.getenv("BITVAVO_ACCESS_WINDOW", "10000"))
@@ -48,6 +48,7 @@ class BitvavoAdapter:
         self.timeout = timeout
         self.gateway = gateway or ExecutionGateway()
         self.journal = journal or OrderJournal()
+        self.is_armed = is_armed or (lambda: False)
 
     def _private_request(self, method: str, endpoint: str, body: dict[str, Any] | None = None, query: dict[str, str] | None = None) -> Any:
         if not self.api_key or not self.api_secret:
@@ -299,7 +300,7 @@ class BitvavoAdapter:
         observed = self.ticker_price(market)
         expected = price or observed
         notional_eur = amount * expected if side == "buy" else amount * observed
-        decision = self.gateway.evaluate(ExecutionRequest("bitvavo", market, side.upper(), notional_eur, expected, observed, client_order_id, time.time()))
+        decision = self.gateway.evaluate(ExecutionRequest("bitvavo", market, side.upper(), notional_eur, expected, observed, client_order_id, time.time()), armed=bool(self.is_armed()))
         proposal = {"venue": "bitvavo", "market": market, "side": side, "orderType": order_type, "amount": str(amount), "price": str(price) if price else None, "clientOrderId": client_order_id}
         new_intent = self.journal.record_intent(client_order_id=client_order_id, market=market, side=side, order_type=order_type, amount=str(amount), price=str(price) if price else None)
         if not decision.accepted:
