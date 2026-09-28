@@ -81,7 +81,11 @@ class ExecutionGateway:
         if self.daily_exposure_eur+request.notional_eur>self.limits.max_daily_exposure_eur: return self._reject(request,"daily exposure limit exceeded")
         if self.daily_loss_eur>=self.limits.max_daily_loss_eur: return self._reject(request,"daily loss stop is active")
         if request.expected_price<=0 or request.observed_price<=0: return self._reject(request,"price must be positive")
-        slippage_bps=abs(request.observed_price-request.expected_price)/request.expected_price*10000
+        if request.side=="BUY":
+            adverse_move=max(Decimal("0"),request.expected_price-request.observed_price)
+        else:
+            adverse_move=max(Decimal("0"),request.observed_price-request.expected_price)
+        slippage_bps=adverse_move/request.observed_price*10000
         if slippage_bps>self.limits.max_slippage_bps: return self._reject(request,"slippage limit exceeded")
         if self.mode is ExecutionMode.LIVE:
             if not armed:
