@@ -163,9 +163,9 @@ async def _tick_loop(app: FastAPI, agent: AutoTrader) -> None:
                             )
                             strategy._config["_available_base"] = float(balances.get(base, 0.0))
                             strategy._config["_available_quote"] = float(balances.get(quote, 0.0))
-                            strategy._config["_bot_base_inventory"] = float(
-                                agent._bitvavo.journal.net_base_inventory(symbol, strategy.name)
-                            )
+                            inventory = agent._bitvavo.journal.inventory_cost_basis(symbol, strategy.name)
+                            strategy._config["_bot_base_inventory"] = float(inventory["quantity"])
+                            strategy._config["_bot_average_entry_price"] = float(inventory["average_entry_price"])
                             strategy._config["_exchange_open_orders_snapshot_ready"] = bool(
                                 getattr(app.state, "bitvavo_open_orders_snapshot_ready", False)
                             )
