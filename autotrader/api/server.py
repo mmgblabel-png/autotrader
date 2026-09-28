@@ -634,6 +634,68 @@ def health():
     }
 
 
+@app.get("/api/bitvavo/live-state", tags=["execution"])
+def bitvavo_live_state() -> dict[str, object]:
+    """Return authenticated, read-only Bitvavo balances and open BTC-EUR orders."""
+    agent = get_agent()
+    market = "BTC-EUR"
+    try:
+        balances_raw = agent._bitvavo.balance()
+        orders_raw = agent._bitvavo.open_orders(market)
+        ticker = float(agent._bitvavo.ticker_price(market))
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail="Bitvavo live-state read failed") from exc
+
+    balances: dict[str, dict[str, float]] = {}
+    for row in balances_raw if isinstance(balances_raw, list) else []:
+        if not isinstance(row, dict):
+            continue
+        symbol = str(row.get("symbol") or "").upper()
+        if symbol not in {"EUR", "BTC"}:
+            continue
+        available = float(row.get("available") or 0)
+        in_order = float(row.get("inOrder") or row.get("in_order") or 0)
+        balances[symbol] = {
+            "available": available,
+            "in_order": in_order,
+            "total": available + in_order,
+        }
+
+    open_orders: list[dict[str, object]] = []
+    for row in orders_raw if isinstance(orders_raw, list) else []:
+        if not isinstance(row, dict):
+            continue
+        amount = float(row.get("amount") or 0)
+        filled = float(row.get("filledAmount") or row.get("amountFilled") or 0)
+        price = float(row.get("price") or 0)
+        remaining = max(0.0, amount - filled)
+        open_orders.append({
+            "market": str(row.get("market") or market).upper(),
+            "side": str(row.get("side") or "").lower(),
+            "order_type": str(row.get("orderType") or row.get("type") or "").lower(),
+            "status": str(row.get("status") or "open").lower(),
+            "amount": amount,
+            "filled_amount": filled,
+            "remaining_amount": remaining,
+            "price": price,
+            "notional_eur": remaining * price,
+            "created": row.get("created") or row.get("createdTimestamp") or row.get("timestamp"),
+        })
+
+    eur = balances.get("EUR", {"available": 0.0, "in_order": 0.0, "total": 0.0})
+    btc = balances.get("BTC", {"available": 0.0, "in_order": 0.0, "total": 0.0})
+    return {
+        "venue": "bitvavo",
+        "market": market,
+        "ticker_eur": ticker,
+        "armed": bool(getattr(app.state, "live_armed", False)),
+        "balances": {"EUR": eur, "BTC": btc},
+        "bot_assets_value_eur": float(eur["total"]) + float(btc["total"]) * ticker,
+        "open_orders": open_orders,
+        "open_order_count": len(open_orders),
+    }
+
+
 @app.get("/api/security/bitvavo", tags=["security"])
 def bitvavo_security_status() -> dict[str, object]:
     """Run the fail-closed Bitvavo security gate inside the Railway container.
