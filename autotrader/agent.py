@@ -61,6 +61,10 @@ class AutoTrader:
         results = []
         for n in targets:
             if n in self._strategies:
+                if not self._strategies[n].is_enabled:
+                    log.warning("Strategy '%s' is disabled by configuration.", n)
+                    results.append({"strategy": n, "status": "disabled"})
+                    continue
                 self._strategies[n].start()
                 log.info("Strategy '%s' started.", n)
                 results.append({"strategy": n, "status": "started"})
@@ -84,9 +88,9 @@ class AutoTrader:
         return results[0] if name else {"stopped": [r["strategy"] for r in results if "status" in r]}
 
     def list_strategies(self) -> dict:
-        """Return {name: {running: bool}} — used by api/server.py."""
+        """Return strategy runtime/config state for the API."""
         return {
-            name: {"running": strat.is_running}
+            name: {"running": strat.is_running, "enabled": strat.is_enabled}
             for name, strat in self._strategies.items()
         }
     def tick_all(self) -> None:
