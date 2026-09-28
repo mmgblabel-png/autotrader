@@ -8,8 +8,9 @@ strategies:
 
   # ── Market Maker ──────────────────────────────────────────────────────
   market_maker:
-    symbol: BTC/USDT
-    exchange: binance
+    enabled: true
+    symbol: BTC-EUR
+    exchange: bitvavo
     order_size: 0.001          # base-asset quantity per order
     min_order_size: 0.0001
     max_order_size: 0.01
@@ -24,11 +25,10 @@ strategies:
 
   # ── Arbitrage Hunter ──────────────────────────────────────────────────
   arbitrage:
-    symbol: ETH/USDT
+    enabled: false
+    symbol: ETH-EUR
     exchanges:
-      - binance
-      - kraken
-      - coinbase
+      # Disabled until two independent real order-book feeds are wired.
     order_size: 0.01
     max_order_size: 0.1
     min_profit_pct: 0.40
@@ -41,8 +41,9 @@ strategies:
 
   # ── Grid Runner ────────────────────────────────────────────────────────
   grid:
-    symbol: SOL/USDT
-    exchange: binance
+    enabled: false
+    symbol: SOL-EUR
+    exchange: bitvavo
     upper_price: 110.0
     lower_price: 90.0
     grid_levels: 10
@@ -56,8 +57,9 @@ strategies:
 
   # ── Sniper Bot ────────────────────────────────────────────────────────
   sniper:
-    symbol: BTC/USDT
-    exchange: binance
+    enabled: false
+    symbol: BTC-EUR
+    exchange: bitvavo
     order_size: 0.001
     momentum_pct: 0.5          # % price move to trigger entry
     take_profit_pct: 1.0       # exit at +1%
