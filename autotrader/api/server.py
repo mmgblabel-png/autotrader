@@ -610,6 +610,15 @@ def bitvavo_security_status() -> dict[str, object]:
     child-process stdout.
     """
     report = validate_bitvavo_security(BitvavoAdapter())
+    log.info(
+        "Bitvavo security probe: passed=%s authenticated=%s withdrawals_disabled=%s ip_whitelist_confirmed=%s errors=%s error_code=%s",
+        report.get("passed"),
+        report.get("authenticated_probe"),
+        report.get("withdrawals_disabled"),
+        report.get("ip_whitelist_confirmed"),
+        report.get("errors"),
+        report.get("bitvavo_error_code"),
+    )
     return report
 
 
