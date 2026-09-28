@@ -61,9 +61,11 @@ class BitvavoAdapter:
             raise BitvavoError("BITVAVO_API_KEY and BITVAVO_API_SECRET are required")
         method = method.upper()
         body_text = "" if method == "GET" else json.dumps(body or {}, separators=(",", ":"))
+        query_text = urllib.parse.urlencode(query) if query else ""
+        signed_endpoint = endpoint + (f"?{query_text}" if query_text else "")
         timestamp = str(int(time.time() * 1000))
-        payload = f"{timestamp}{method}/v2{endpoint}{body_text}"
-        signature = self._create_signature(self.api_secret, timestamp, method, endpoint, body_text)
+        payload = f"{timestamp}{method}/v2{signed_endpoint}{body_text}"
+        signature = self._create_signature(self.api_secret, timestamp, method, signed_endpoint, body_text)
         if os.getenv("BITVAVO_DEBUG_SIGNING", "false").lower() in {"1", "true", "yes"}:
             LOGGER.warning(
                 "Bitvavo signing debug method=%s path=/v2%s timestamp=%s body_len=%d "
@@ -83,9 +85,7 @@ class BitvavoAdapter:
             "Bitvavo-Access-Window": str(self.access_window),
             "Content-Type": "application/json",
         }
-        url = self.BASE_URL + endpoint
-        if query:
-            url += "?" + urllib.parse.urlencode(query)
+        url = self.BASE_URL + signed_endpoint
         request = urllib.request.Request(url, data=body_text.encode() if body_text else None, method=method, headers=headers)
         try:
             with urllib.request.urlopen(request, timeout=self.timeout) as response:
