@@ -105,6 +105,19 @@ class OrderJournal:
             rows = self._db.execute("SELECT * FROM orders WHERE status NOT IN ('filled','canceled','cancelled','rejected','error','expired','shadow','blocked') ORDER BY created_at").fetchall()
         return [dict(row) for row in rows]
 
+    def reconcile_candidates(self) -> list[dict[str, Any]]:
+        """Return active orders plus errored orders that reached Bitvavo."""
+        with self._lock:
+            rows = self._db.execute(
+                """
+                SELECT * FROM orders
+                WHERE status NOT IN ('filled','canceled','cancelled','rejected','expired','shadow','blocked')
+                   OR (status='error' AND exchange_order_id IS NOT NULL AND exchange_order_id<>'')
+                ORDER BY created_at
+                """
+            ).fetchall()
+        return [dict(row) for row in rows]
+
     def fills(self, client_order_id: str) -> list[dict[str, Any]]:
         with self._lock:
             rows = self._db.execute("SELECT * FROM fills WHERE client_order_id=? ORDER BY observed_at", (client_order_id,)).fetchall()
