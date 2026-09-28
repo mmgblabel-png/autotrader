@@ -131,12 +131,32 @@ async def _tick_loop(app: FastAPI, agent: AutoTrader) -> None:
     while True:
         try:
             if app.state.live_mode:
+                if app.state.tick_count % 30 == 0:
+                    try:
+                        balance_rows = agent._bitvavo.balance()
+                        app.state.bitvavo_balances = {
+                            str(row.get("symbol", "")).upper(): float(row.get("available") or 0)
+                            for row in balance_rows
+                            if isinstance(row, dict) and row.get("symbol")
+                        }
+                        app.state.bitvavo_balance_snapshot_ready = True
+                    except Exception as balance_exc:
+                        app.state.bitvavo_balance_snapshot_ready = False
+                        log.warning("Bitvavo balance refresh failed: %s", balance_exc)
                 for strategy in agent._strategies.values():
                     if strategy.is_running and strategy._config.get("exchange", "bitvavo").lower() == "bitvavo":
                         symbol = str(strategy._config.get("symbol", "BTC-EUR")).upper()
                         price = float(agent._bitvavo.ticker_price(symbol))
                         strategy._config["_mid_price"] = price
                         strategy._config["_current_price"] = price
+                        if strategy.name == "MarketMaker":
+                            base, _, quote = symbol.partition("-")
+                            balances = getattr(app.state, "bitvavo_balances", {})
+                            strategy._config["_live_balance_snapshot_ready"] = bool(
+                                getattr(app.state, "bitvavo_balance_snapshot_ready", False)
+                            )
+                            strategy._config["_available_base"] = float(balances.get(base, 0.0))
+                            strategy._config["_available_quote"] = float(balances.get(quote, 0.0))
                 agent.tick_all()
                 if app.state.tick_count % 30 == 0:
                     agent.live_reconcile()
@@ -161,6 +181,8 @@ async def _lifespan(app: FastAPI):
     if app.state.live_mode:
         agent.live_reconcile()
     app.state.tick_count = 0
+    app.state.bitvavo_balances = {}
+    app.state.bitvavo_balance_snapshot_ready = False
     app.state.last_tick_at = None
     app.state.last_tick_error = None
     app.state.peak_equity_usd = float(os.getenv("PAPER_STARTING_BALANCE_USD", "1000"))
