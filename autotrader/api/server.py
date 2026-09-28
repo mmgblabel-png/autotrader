@@ -130,7 +130,18 @@ async def _tick_loop(app: FastAPI, agent: AutoTrader) -> None:
     """
     while True:
         try:
-            agent.tick_all()
+            if app.state.live_mode:
+                for strategy in agent._strategies.values():
+                    if strategy.is_running and strategy._config.get("exchange", "bitvavo").lower() == "bitvavo":
+                        symbol = str(strategy._config.get("symbol", "BTC-EUR")).upper()
+                        price = float(agent._bitvavo.ticker_price(symbol))
+                        strategy._config["_mid_price"] = price
+                        strategy._config["_current_price"] = price
+                agent.tick_all()
+                if app.state.tick_count % 30 == 0:
+                    agent.live_reconcile()
+            else:
+                agent.tick_all()
             app.state.tick_count += 1
             app.state.last_tick_at = time.time()
             app.state.last_tick_error = None
@@ -145,6 +156,9 @@ async def _lifespan(app: FastAPI):
     """Initialise the agent, run its tick task, then stop it cleanly."""
     agent = init_agent(_CONFIG_PATH)
     app.state.tick_interval_seconds = _tick_interval()
+    app.state.live_mode = os.getenv("EXECUTION_MODE", "paper").strip().lower() == "live"
+    if app.state.live_mode:
+        agent.live_reconcile()
     app.state.tick_count = 0
     app.state.last_tick_at = None
     app.state.last_tick_error = None
@@ -509,7 +523,7 @@ def health():
     return {
         "status": "ok",
         "service": "AutoTrader API",
-        "mode": "paper",
+        "mode": "live" if getattr(app.state, "live_mode", False) else "paper",
         "runtime": {
             "ticker_running": bool(task and not task.done()),
             "tick_interval_seconds": getattr(app.state, "tick_interval_seconds", None),
