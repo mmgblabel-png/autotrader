@@ -6,11 +6,14 @@ from autotrader.core.order_manager import OrderManager, OrderStatus, OrderType
 log=logging.getLogger(__name__)
 
 class ExecutionCoordinator:
-    def __init__(self, order_manager:OrderManager, adapter:BitvavoAdapter|None=None)->None:
+    def __init__(self, order_manager:OrderManager, adapter:BitvavoAdapter|None=None, *, is_armed=None)->None:
         self.om=order_manager
         self.adapter=adapter or BitvavoAdapter()
+        self.is_armed=is_armed or (lambda: False)
 
     def submit_pending(self)->list[dict]:
+        if not self.is_armed():
+            return []
         results=[]
         for order in list(self.om.open_orders()):
             if order.status is not OrderStatus.PENDING: continue
