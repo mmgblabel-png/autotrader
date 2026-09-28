@@ -203,8 +203,12 @@ class BitvavoAdapter:
     def get_order(self, market: str, *, order_id: str | None = None, client_order_id: str | None = None) -> dict[str, Any]:
         if not order_id and not client_order_id:
             raise BitvavoError("order_id or client_order_id is required")
-        query = {"orderId": order_id} if order_id else {"clientOrderId": client_order_id}
-        return self._private_request("GET", f"/order/{urllib.parse.quote(market.upper())}", query=query)
+        query = {"market": market.upper()}
+        if client_order_id:
+            query["clientOrderId"] = client_order_id
+        else:
+            query["orderId"] = str(order_id)
+        return self._private_request("GET", "/order", query=query)
 
     def open_orders(self, market: str | None = None) -> list[dict[str, Any]]:
         query = {"market": market.upper()} if market else None
@@ -229,7 +233,7 @@ class BitvavoAdapter:
 
     def reconcile_inflight(self) -> list[dict[str, Any]]:
         results = []
-        for record in self.journal.inflight():
+        for record in self.journal.reconcile_candidates():
             try:
                 results.append(self.reconcile_order(record["client_order_id"], record["market"]))
             except BitvavoError as exc:
@@ -346,7 +350,12 @@ class BitvavoAdapter:
     def cancel_order(self, market: str, order_id: str) -> dict[str, Any]:
         if self.dry_run or os.getenv("EXECUTION_MODE", "paper") != "live":
             return {"status": "SHADOW", "would_cancel": {"market": market, "orderId": order_id}}
-        response = self._private_request("DELETE", f"/order/{urllib.parse.quote(market.upper())}/{urllib.parse.quote(order_id)}")
+        query = {
+            "market": market.upper(),
+            "orderId": order_id,
+            "operatorId": str(int(os.getenv("BITVAVO_OPERATOR_ID", "1"))),
+        }
+        response = self._private_request("DELETE", "/order", query=query)
         for record in self.journal.inflight():
             if record.get("exchange_order_id") == order_id:
                 self.journal.update(record["client_order_id"], "canceled", response, exchange_order_id=order_id)
