@@ -37,3 +37,14 @@ def test_signature_matches_bitvavo_documented_example():
         body,
     )
     assert signature == "44d022723a20973a18f7ee97398b9fdd405d2d019c8d39e24b8cc0dcb39ca016"
+
+
+def test_signature_includes_private_get_query_parameters():
+    signature = BitvavoAdapter._create_signature(
+        "bitvavo",
+        "1548172481125",
+        "GET",
+        "/balance?symbol=EUR",
+        "",
+    )
+    assert signature == "353597189269861adae42e436d04f24b098fd6924d293dc49792af6590b539ee"
