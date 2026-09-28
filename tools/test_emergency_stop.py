@@ -18,7 +18,7 @@ from autotrader.connectors.bitvavo import BitvavoAdapter, BitvavoError
 adapter = BitvavoAdapter(api_key="DUMMY-KEY", api_secret="DUMMY-SECRET")
 adapter.ticker_price = lambda market: Decimal("50000")
 try:
-    adapter.place_limit_order("BTC-EUR", "buy", Decimal("0.0001"), Decimal("50000"), "emergency-stop-test-001")
+    adapter.place_limit_order("BTC-EUR", "buy", Decimal("0.0001"), Decimal("50000"), "2be7d0df-d8dc-7b93-a550-6f3b3f3b393e")
 except BitvavoError as exc:
     reason = str(exc).lower()
     assert any(token in reason for token in ("gates", "emergency", "not installed", "no order was sent"))
