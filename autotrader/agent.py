@@ -61,7 +61,12 @@ class AutoTrader:
         results = []
         for n in targets:
             if n in self._strategies:
-                self._strategies[n].start()
+                strat = self._strategies[n]
+                if not strat.is_enabled:
+                    log.warning("Strategy '%s' is disabled by configuration.", n)
+                    results.append({"strategy": n, "status": "disabled"})
+                    continue
+                strat.start()
                 log.info("Strategy '%s' started.", n)
                 results.append({"strategy": n, "status": "started"})
             else:
@@ -86,7 +91,7 @@ class AutoTrader:
     def list_strategies(self) -> dict:
         """Return {name: {running: bool}} — used by api/server.py."""
         return {
-            name: {"running": strat.is_running}
+            name: {"running": strat.is_running, "enabled": strat.is_enabled}
             for name, strat in self._strategies.items()
         }
     def tick_all(self) -> None:
@@ -97,10 +102,18 @@ class AutoTrader:
 
     def shadow_tick(self, *, pair: str, price: float) -> None:
         """Process one market tick using only local paper-order machinery."""
+        if price <= 0:
+            return
         for strat in self._strategies.values():
+            if not strat.is_enabled:
+                continue
+            configured_symbol = str(strat._config.get("symbol", pair))
+            if configured_symbol.upper() != str(pair).upper():
+                continue
+            exchange = str(strat._config.get("exchange", "bitvavo")).lower()
             strat._config["_current_price"] = price
             strat._config["_mid_price"] = price
-            strat._config["_prices"] = {"bitpanda_fusion": price}
+            strat._config["_prices"] = {exchange: price}
         self.tick_all()
 
     def status(self) -> dict:
