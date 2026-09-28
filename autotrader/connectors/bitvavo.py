@@ -41,7 +41,7 @@ class BitvavoAdapter:
     BASE_URL = "https://api.bitvavo.com/v2"
 
     def __init__(self, gateway: ExecutionGateway | None = None, *, timeout: float = 10.0, api_key: str | None = None, api_secret: str | None = None, journal: OrderJournal | None = None) -> None:
-        self.api_key = (api_key if api_key is not None else os.getenv("BITVAVO_API_KEY", "")).strip()
+        self.api_key = (api_key if api_key is not None else os.getenv("BITVAVO_API_KEY", os.getenv("Bitvavo_API_key", ""))).strip()
         self.api_secret = (api_secret if api_secret is not None else os.getenv("BITVAVO_API_SECRET", "")).strip()
         self.access_window = int(os.getenv("BITVAVO_ACCESS_WINDOW", "10000"))
         self.dry_run = os.getenv("BITVAVO_DRY_RUN", "true").lower() in {"1", "true", "yes"}
