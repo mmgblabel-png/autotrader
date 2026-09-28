@@ -53,3 +53,45 @@ def test_ml_walk_forward_and_signal_are_deterministic():
     signal = signal_from_recent(rows)
     assert signal.action in {"BUY", "SELL", "HOLD"}
     assert 0 <= signal.probability_up <= 1
+
+
+def test_gateway_allows_favorable_passive_limit_prices(monkeypatch):
+    monkeypatch.setenv("EXECUTION_MODE", "paper")
+    limits = ExecutionLimits(Decimal("10"), Decimal("50"), Decimal("25"), 50)
+
+    sell_gateway = ExecutionGateway(limits)
+    sell = ExecutionRequest(
+        "bitvavo", "BTC-EUR", "SELL", Decimal("7.5"),
+        Decimal("74289.60"), Decimal("73476.00"),
+        "sell-favorable-123456789", time.time(),
+    )
+    assert sell_gateway.evaluate(sell).accepted
+
+    buy_gateway = ExecutionGateway(limits)
+    buy = ExecutionRequest(
+        "bitvavo", "BTC-EUR", "BUY", Decimal("7.5"),
+        Decimal("73000.00"), Decimal("73476.00"),
+        "buy-favorable-1234567890", time.time(),
+    )
+    assert buy_gateway.evaluate(buy).accepted
+
+
+def test_gateway_rejects_only_adverse_slippage(monkeypatch):
+    monkeypatch.setenv("EXECUTION_MODE", "paper")
+    limits = ExecutionLimits(Decimal("10"), Decimal("50"), Decimal("25"), 50)
+
+    buy_gateway = ExecutionGateway(limits)
+    bad_buy = ExecutionRequest(
+        "bitvavo", "BTC-EUR", "BUY", Decimal("7.5"),
+        Decimal("74250.00"), Decimal("73476.00"),
+        "buy-adverse-123456789012", time.time(),
+    )
+    assert not buy_gateway.evaluate(bad_buy).accepted
+
+    sell_gateway = ExecutionGateway(limits)
+    bad_sell = ExecutionRequest(
+        "bitvavo", "BTC-EUR", "SELL", Decimal("7.5"),
+        Decimal("72700.00"), Decimal("73476.00"),
+        "sell-adverse-12345678901", time.time(),
+    )
+    assert not sell_gateway.evaluate(bad_sell).accepted
