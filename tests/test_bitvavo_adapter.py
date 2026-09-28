@@ -48,3 +48,38 @@ def test_signature_includes_private_get_query_parameters():
         "",
     )
     assert signature == "353597189269861adae42e436d04f24b098fd6924d293dc49792af6590b539ee"
+
+
+def test_markets_accepts_single_market_object(monkeypatch):
+    adapter = BitvavoAdapter(api_key="key", api_secret="secret")
+    payload = {
+        "market": "BTC-EUR",
+        "status": "trading",
+        "base": "BTC",
+        "quote": "EUR",
+        "minOrderInBaseAsset": "0.0001",
+        "minOrderInQuoteAsset": "5",
+        "quantityDecimals": "4",
+        "notionalDecimals": "2",
+        "tickSize": "0.01",
+        "orderTypes": ["market", "limit"],
+    }
+    monkeypatch.setattr(adapter, "_public_request", lambda endpoint, query=None: payload)
+    assert adapter.markets("BTC-EUR") == [payload]
+    assert adapter._market_rules("BTC-EUR")["market"] == "BTC-EUR"
+
+
+def test_ticker_price_accepts_list_response(monkeypatch):
+    class DummyResponse:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+        def read(self):
+            return b'[{"market":"BTC-EUR","price":"73452.01"}]'
+
+    monkeypatch.setattr("urllib.request.urlopen", lambda *args, **kwargs: DummyResponse())
+    adapter = BitvavoAdapter(api_key="key", api_secret="secret")
+    assert adapter.ticker_price("BTC-EUR") == Decimal("73452.01")
