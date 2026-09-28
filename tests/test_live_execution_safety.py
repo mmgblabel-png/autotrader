@@ -1,0 +1,118 @@
+from autotrader.core.execution_coordinator import ExecutionCoordinator
+from autotrader.core.order_manager import Order, OrderManager, OrderSide, OrderStatus, OrderType
+from autotrader.core.profit_engine import ProfitEngine
+from autotrader.strategies.market_maker import MarketMaker
+
+
+class AllowRisk:
+    def is_killed(self, _name):
+        return False
+
+    def check_order(self, _name, _notional):
+        return True
+
+
+class DummyProfit:
+    pass
+
+
+def test_live_market_maker_with_only_eur_quotes_buy_side():
+    om = OrderManager()
+    strategy = MarketMaker(
+        order_manager=om,
+        risk_manager=AllowRisk(),
+        profit_engine=DummyProfit(),
+        config={
+            "enabled": True,
+            "symbol": "BTC-EUR",
+            "exchange": "bitvavo",
+            "order_size": 0.0001,
+            "min_order_size": 0.0001,
+            "max_order_size": 0.0001,
+            "target_spread": 0.80,
+            "estimated_fee_pct": 0.25,
+            "estimated_slippage_pct": 0.05,
+            "quote_refresh_seconds": 0,
+            "_mid_price": 70000.0,
+            "_live_balance_snapshot_ready": True,
+            "_available_quote": 50.0,
+            "_available_base": 0.0,
+        },
+    )
+    strategy.start()
+    strategy.tick()
+
+    orders = list(om._orders.values())
+    assert len(orders) == 1
+    assert orders[0].side is OrderSide.BUY
+
+
+class FakeJournal:
+    def __init__(self):
+        self.strategies = {}
+
+    def set_strategy(self, client_order_id, strategy):
+        self.strategies[client_order_id] = strategy
+
+    def get(self, _client_order_id):
+        return None
+
+
+class FilledAdapter:
+    def __init__(self):
+        self.journal = FakeJournal()
+
+    def place_limit_order(self, market, side, amount, price, client_order_id):
+        return {
+            "clientOrderId": client_order_id,
+            "market": market,
+            "side": side,
+            "status": "filled",
+            "filledAmount": str(amount),
+            "feePaid": "0.01",
+            "fills": [
+                {
+                    "id": "fill-1",
+                    "timestamp": 1700000000000,
+                    "amount": str(amount),
+                    "price": str(price),
+                    "fee": "0.01",
+                    "feeCurrency": "EUR",
+                    "settled": True,
+                }
+            ],
+        }
+
+
+def test_real_exchange_fill_is_recorded_as_trade():
+    om = OrderManager()
+    pe = ProfitEngine(export_dir="/tmp/autotrader-test-exports")
+    adapter = FilledAdapter()
+    coordinator = ExecutionCoordinator(
+        om,
+        adapter,
+        is_armed=lambda: True,
+        profit_engine=pe,
+    )
+    order = om.register(
+        Order(
+            exchange="bitvavo",
+            symbol="BTC-EUR",
+            side=OrderSide.BUY,
+            order_type=OrderType.LIMIT,
+            quantity=0.0001,
+            price=70000.0,
+            strategy="MarketMaker",
+        )
+    )
+
+    result = coordinator.submit_pending()
+
+    assert result[0]["status"] == "filled"
+    assert order.status is OrderStatus.FILLED
+    assert pe.as_summary()["trade_count"] == 1
+    trade = pe.recent_trades(1)[0]
+    assert trade["strategy"] == "MarketMaker"
+    assert trade["symbol"] == "BTC-EUR"
+    assert trade["side"] == "BUY"
+    assert trade["quantity"] == 0.0001
