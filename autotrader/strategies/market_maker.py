@@ -52,6 +52,9 @@ class MarketMaker(BaseStrategy):
             return
         if self._om.open_orders(self.name):
             return
+        if bool(cfg.get("_exchange_open_orders_snapshot_ready", False)) and int(cfg.get("_exchange_open_order_count", 0)) > 0:
+            log.info("MM skipped: Bitvavo already has an open BTC-EUR order.")
+            return
 
         # Clamp size
         size = max(cfg.get("min_order_size", 0.0001), min(size, cfg.get("max_order_size", 1.0)))
