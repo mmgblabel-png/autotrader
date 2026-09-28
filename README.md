@@ -1,6 +1,6 @@
 # AutoTrader – Automaton Trading Agent
 
-A modular, headless **paper-trading** backend inspired by Hummingbot's architecture. The current strategies, exchange connectors, and blockchain services are simulations or interface stubs; this repository does **not** place live exchange orders or execute MetaMask transactions.
+A modular, headless trading backend inspired by Hummingbot's architecture. Bitvavo REST connectivity is implemented for authenticated market/account/order operations, but live execution remains fail-closed by the execution gateway and requires explicit operational approval. The default configuration is safe paper/shadow mode; no profitability is guaranteed.
 
 ## Project structure
 
@@ -25,7 +25,8 @@ autotrader/
 │   └── cli/
 │       └── main.py               # `autotrader` CLI entry point
 ├── tests/
-│   └── test_core.py
+│   ├── test_core.py
+│   └── test_strategy_safety.py
 ├── config.yaml                   # Example / default configuration
 ├── main.py                       # Headless server entry point
 └── pyproject.toml
@@ -157,6 +158,11 @@ pytest tests/
 [1] [MetaMask Ethereum Provider API](https://docs.metamask.io/metamask-connect/evm/reference/provider-api/) and [EIP-1193: Ethereum Provider JavaScript API](https://eips.ethereum.org/EIPS/eip-1193)
 
 
+## Bitvavo production readiness
+
+The Bitvavo connector validates market availability and exchange trading rules before order submission, uses UUID client order IDs, stores order state in the durable SQLite journal, and can reconcile inflight orders after a restart. Bitvavo documents quantityDecimals, tickSize, order status, client order IDs and rate-limit headers as part of the order lifecycle.
+
+The project deliberately keeps the final live execution gate closed by default. Before enabling any real-money path, verify API permissions, balances, open orders, rate limits, partial fills, fees, reconnect/reconciliation and manual-order isolation. The test strategy follows the connector QA principles used by Hummingbot.
 ## Secure login, ML shadow mode and execution gates
 
 The API now supports a single-user login endpoint at `POST /api/auth/login`. Set `DASHBOARD_USERNAME`, `DASHBOARD_PASSWORD_HASH` (generated with `make_password_hash`) and `PUBLIC_JWT_SECRET` as Railway secrets. Login returns a one-hour bearer token; protected dashboard routes require `Authorization: Bearer <token>` or the existing API key. Never store a plaintext password in Railway.
