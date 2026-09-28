@@ -35,8 +35,9 @@ class AutoTrader:
     def __init__(self, config_path: str = "config.yaml") -> None:
         self._config = self._load_config(config_path)
         self._om = OrderManager()
-        self._bitvavo = BitvavoAdapter()
-        self._executor = ExecutionCoordinator(self._om, self._bitvavo, is_armed=lambda: bool(getattr(__import__('autotrader.api.server', fromlist=['app']).app.state, 'live_armed', False)))
+        self._is_live_armed = lambda: bool(getattr(__import__('autotrader.api.server', fromlist=['app']).app.state, 'live_armed', False))
+        self._bitvavo = BitvavoAdapter(is_armed=self._is_live_armed)
+        self._executor = ExecutionCoordinator(self._om, self._bitvavo, is_armed=self._is_live_armed)
         self._rm = RiskManager()
         self._pe = ProfitEngine(export_dir=self._config.get("export_dir", "exports"))
         self._rm.set_profit_engine(self._pe)   # forward risk events to event log
