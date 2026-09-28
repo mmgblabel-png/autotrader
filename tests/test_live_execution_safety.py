@@ -217,3 +217,61 @@ def test_market_maker_exit_never_below_entry_markup():
     assert len(orders) == 1
     assert orders[0].side is OrderSide.SELL
     assert orders[0].price >= round(73539.0 * 1.008, 2)
+
+
+def test_adaptive_spread_widens_after_price_shock():
+    strategy = MarketMaker(
+        order_manager=OrderManager(),
+        risk_manager=AllowRisk(),
+        profit_engine=DummyProfit(),
+        config={
+            "target_spread": 0.80,
+            "estimated_fee_pct": 0.25,
+            "estimated_slippage_pct": 0.05,
+            "adaptive_enabled": True,
+            "adaptive_ema_alpha": 1.0,
+            "adaptive_min_spread_pct": 0.65,
+            "adaptive_max_spread_pct": 2.0,
+            "adaptive_volatility_multiplier": 4.0,
+        },
+    )
+    first, _ = strategy._update_adaptive_state(70000.0)
+    second, _ = strategy._update_adaptive_state(70700.0)
+    assert first == 0.008
+    assert second > first
+    assert second <= 0.02
+
+
+def test_adaptive_downtrend_guard_blocks_new_buy():
+    om = OrderManager()
+    strategy = MarketMaker(
+        order_manager=om,
+        risk_manager=AllowRisk(),
+        profit_engine=DummyProfit(),
+        config={
+            "enabled": True,
+            "symbol": "BTC-EUR",
+            "exchange": "bitvavo",
+            "order_size": 0.0001,
+            "min_order_size": 0.0001,
+            "max_order_size": 0.0001,
+            "target_spread": 0.80,
+            "estimated_fee_pct": 0.25,
+            "estimated_slippage_pct": 0.05,
+            "quote_refresh_seconds": 0,
+            "inventory_cycle_mode": True,
+            "adaptive_enabled": True,
+            "adaptive_ema_alpha": 1.0,
+            "adaptive_min_samples": 1,
+            "adaptive_downtrend_guard_pct": 0.12,
+            "_adaptive_prev_mid": 70000.0,
+            "_mid_price": 69000.0,
+            "_live_balance_snapshot_ready": True,
+            "_available_quote": 50.0,
+            "_available_base": 0.0,
+            "_bot_base_inventory": 0.0,
+        },
+    )
+    strategy.start()
+    strategy.tick()
+    assert list(om._orders.values()) == []
