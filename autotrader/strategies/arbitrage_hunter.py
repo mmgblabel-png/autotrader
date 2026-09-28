@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from autotrader.core.logger import get_logger
 from autotrader.core.order_manager import Order, OrderSide, OrderType
-from autotrader.core.profit_engine import Trade
 from autotrader.strategies.base import BaseStrategy
 
 log = get_logger("ArbitrageHunter")
@@ -69,18 +68,6 @@ class ArbitrageHunter(BaseStrategy):
         self._om.register(sell_order)
         log.info("ARB SELL %s %.4f @ %.2f on %s", symbol, size, sell_price, sell_exchange)
 
-        fee_rate = 0.001
-        fee = size * buy_price * fee_rate + size * sell_price * fee_rate
-        gross = size * (sell_price - buy_price)
-        net = gross - fee
-
-        self._pe.record_trade(Trade(strategy=self.name, symbol=symbol,
-                                    side="BUY", quantity=size, price=buy_price, fee=fee / 2))
-        self._pe.record_trade(Trade(strategy=self.name, symbol=symbol,
-                                    side="SELL", quantity=size, price=sell_price, fee=fee / 2))
-        self._pe.record_realized_pnl(self.name, net)
-
-        if net < 0:
-            self._rm.record_loss(self.name, abs(net))
-
-        log.info("ARB result: gross=%.4f fee=%.4f net=%.4f", gross, fee, net)
+        # PnL is deliberately not synthesized here. It must be produced from
+        # actual/paper fill events after both legs have executed.
+        log.info("ARB signal emitted; awaiting execution/fill events.")
