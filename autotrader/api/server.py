@@ -370,8 +370,40 @@ def risk_status():
 
 @app.get("/api/execution/status", tags=["execution"])
 def execution_status():
-    """Expose non-secret execution mode and limits for the dashboard."""
-    return app.state.execution_gateway.status()
+    """Expose non-secret execution mode, gates and limits for the dashboard."""
+    status = app.state.execution_gateway.status()
+    status["emergency_stop"] = os.getenv("EMERGENCY_STOP", "true").strip().lower() == "true"
+    status["bitvavo_credentials_present"] = bool(
+        os.getenv("BITVAVO_API_KEY", "").strip()
+        and os.getenv("BITVAVO_API_SECRET", "").strip()
+    )
+    return status
+
+
+@app.get("/api/live/readiness", tags=["execution"])
+def live_readiness():
+    """Return a redacted checklist; never enables live trading."""
+    credentials = bool(
+        os.getenv("BITVAVO_API_KEY", "").strip()
+        and os.getenv("BITVAVO_API_SECRET", "").strip()
+    )
+    gates = {
+        "execution_mode_live": os.getenv("EXECUTION_MODE", "paper").strip().lower() == "live",
+        "live_execution_approved": os.getenv("LIVE_EXECUTION_APPROVED", "false").strip().lower() == "true",
+        "adapter_installed": os.getenv("LIVE_EXECUTION_ADAPTER_INSTALLED", "false").strip().lower() == "true",
+        "emergency_stop_off": os.getenv("EMERGENCY_STOP", "true").strip().lower() != "true",
+        "confirmation_present": os.getenv("LIVE_TRADING_CONFIRMATION", "") == "I_UNDERSTAND_LIVE_ORDERS",
+        "bitvavo_live_trading": os.getenv("BITVAVO_LIVE_TRADING", "false").strip().lower() == "true",
+        "bitvavo_credentials_present": credentials,
+        "control_token_present": bool(os.getenv("AUTOTRADER_CONTROL_TOKEN", "").strip()),
+    }
+    return {
+        "ready": all(gates.values()),
+        "mode": app.state.execution_gateway.mode.value,
+        "gates": gates,
+        "action": "Set the remaining Railway secrets/gates, then use the Live Trading button." if not all(gates.values()) else "Ready for explicit Live Trading activation.",
+        "warning": "This endpoint never changes Railway variables and never places an order.",
+    }
 
 
 @app.post("/api/ml/walk-forward", tags=["ml"])
