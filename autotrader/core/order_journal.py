@@ -137,6 +137,39 @@ class OrderJournal:
                 total -= abs(Decimal(str(row["fee"] or payload.get("fee") or "0")))
         return max(total, Decimal("0"))
 
+    def strategy_market_state(self, market: str, strategy: str) -> dict[str, Any]:
+        """Return redacted journal diagnostics for one strategy/market."""
+        with self._lock:
+            latest = self._db.execute(
+                "SELECT side,status,amount FROM orders WHERE market=? AND strategy=? ORDER BY created_at DESC LIMIT 1",
+                (market.upper(), strategy),
+            ).fetchone()
+            fill_count = self._db.execute(
+                """
+                SELECT COUNT(*) AS n
+                FROM fills AS f
+                JOIN orders AS o ON o.client_order_id=f.client_order_id
+                WHERE o.market=? AND o.strategy=?
+                """,
+                (market.upper(), strategy),
+            ).fetchone()["n"]
+            nonterminal = self._db.execute(
+                """
+                SELECT COUNT(*) AS n FROM orders
+                WHERE market=? AND strategy=?
+                  AND status NOT IN ('filled','canceled','cancelled','rejected','error','expired','shadow','blocked')
+                """,
+                (market.upper(), strategy),
+            ).fetchone()["n"]
+        return {
+            "latest_side": str(latest["side"]).lower() if latest else None,
+            "latest_status": str(latest["status"]).lower() if latest else None,
+            "latest_amount": str(latest["amount"]) if latest else None,
+            "fill_count": int(fill_count or 0),
+            "nonterminal_count": int(nonterminal or 0),
+            "net_base_inventory": str(self.net_base_inventory(market, strategy)),
+        }
+
     def counts(self) -> dict[str, int]:
         with self._lock:
             rows = self._db.execute("SELECT status, COUNT(*) AS n FROM orders GROUP BY status").fetchall()
