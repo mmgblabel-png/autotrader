@@ -71,7 +71,7 @@ class ExecutionGateway:
     def reset_daily(self)->None:
         self.daily_exposure_eur=Decimal("0"); self.daily_loss_eur=Decimal("0"); self._seen_order_ids.clear()
 
-    def evaluate(self, request:ExecutionRequest)->ExecutionDecision:
+    def evaluate(self, request:ExecutionRequest, *, armed: bool = False)->ExecutionDecision:
         now=time.time()
         if not request.client_order_id or request.client_order_id in self._seen_order_ids: return self._reject(request,"missing or duplicate client_order_id")
         if request.timestamp>now+5 or now-request.timestamp>30: return self._reject(request,"request timestamp is stale or invalid")
@@ -83,8 +83,11 @@ class ExecutionGateway:
         if request.expected_price<=0 or request.observed_price<=0: return self._reject(request,"price must be positive")
         slippage_bps=abs(request.observed_price-request.expected_price)/request.expected_price*10000
         if slippage_bps>self.limits.max_slippage_bps: return self._reject(request,"slippage limit exceeded")
-        if self.mode is ExecutionMode.LIVE and not live_activation_is_allowed():
-            return self._reject(request,"live activation gates are not satisfied")
+        if self.mode is ExecutionMode.LIVE:
+            if not armed:
+                return self._reject(request,"live trading is not armed")
+            if not live_activation_is_allowed():
+                return self._reject(request,"live activation gates are not satisfied")
         self._seen_order_ids.add(request.client_order_id)
         self.daily_exposure_eur+=request.notional_eur
         return ExecutionDecision(True,self.mode,"validated for execution" if self.mode is ExecutionMode.LIVE else "validated without sending an order",request.client_order_id,request.venue,str(request.notional_eur))
