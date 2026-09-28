@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from autotrader.core.logger import get_logger
 from autotrader.core.order_manager import Order, OrderSide, OrderType
-from autotrader.core.profit_engine import Trade
 from autotrader.strategies.base import BaseStrategy
 
 log = get_logger("ArbitrageHunter")
@@ -37,6 +36,9 @@ class ArbitrageHunter(BaseStrategy):
         symbol: str = cfg.get("symbol", "ETH/USDT")
         size: float = cfg.get("order_size", 0.01)
         min_profit: float = cfg.get("min_profit_pct", 0.15) / 100
+        fee_pct = cfg.get("estimated_fee_pct", 0.25) / 100
+        slippage_pct = cfg.get("estimated_slippage_pct", 0.10) / 100
+        min_edge = cfg.get("min_edge_after_costs_pct", 0.10) / 100
         # Exchange prices are injected via config["_prices"] = {"binance": 1900.0, "kraken": 1905.0}
         prices: dict[str, float] = cfg.get("_prices", {})
 
@@ -49,7 +51,8 @@ class ArbitrageHunter(BaseStrategy):
         sell_exchange, sell_price = sorted_prices[-1]
 
         spread_pct = (sell_price - buy_price) / buy_price
-        if spread_pct < min_profit:
+        required_edge = min_profit + (2 * fee_pct) + (2 * slippage_pct) + min_edge
+        if spread_pct < required_edge:
             log.debug("Spread %.4f%% below threshold %.4f%% – no trade.", spread_pct * 100, min_profit * 100)
             return
 
@@ -69,18 +72,6 @@ class ArbitrageHunter(BaseStrategy):
         self._om.register(sell_order)
         log.info("ARB SELL %s %.4f @ %.2f on %s", symbol, size, sell_price, sell_exchange)
 
-        fee_rate = 0.001
-        fee = size * buy_price * fee_rate + size * sell_price * fee_rate
-        gross = size * (sell_price - buy_price)
-        net = gross - fee
-
-        self._pe.record_trade(Trade(strategy=self.name, symbol=symbol,
-                                    side="BUY", quantity=size, price=buy_price, fee=fee / 2))
-        self._pe.record_trade(Trade(strategy=self.name, symbol=symbol,
-                                    side="SELL", quantity=size, price=sell_price, fee=fee / 2))
-        self._pe.record_realized_pnl(self.name, net)
-
-        if net < 0:
-            self._rm.record_loss(self.name, abs(net))
-
-        log.info("ARB result: gross=%.4f fee=%.4f net=%.4f", gross, fee, net)
+        # PnL is deliberately not synthesized here. It must be produced from
+        # actual/paper fill events after both legs have executed.
+        log.info("ARB signal emitted; awaiting execution/fill events.")
