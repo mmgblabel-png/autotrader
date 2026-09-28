@@ -157,6 +157,7 @@ async def _lifespan(app: FastAPI):
     agent = init_agent(_CONFIG_PATH)
     app.state.tick_interval_seconds = _tick_interval()
     app.state.live_mode = os.getenv("EXECUTION_MODE", "paper").strip().lower() == "live"
+    app.state.live_armed = False
     if app.state.live_mode:
         agent.live_reconcile()
     app.state.tick_count = 0
@@ -372,6 +373,7 @@ def risk_status():
 def execution_status():
     """Expose non-secret execution mode, gates and limits for the dashboard."""
     status = app.state.execution_gateway.status()
+    status["armed"] = bool(getattr(app.state, "live_armed", False))
     status["emergency_stop"] = os.getenv("EMERGENCY_STOP", "true").strip().lower() == "true"
     status["bitvavo_credentials_present"] = bool(
         os.getenv("BITVAVO_API_KEY", "").strip()
@@ -399,11 +401,30 @@ def live_readiness():
     }
     return {
         "ready": all(gates.values()),
+        "ready_to_arm": all(gates.values()),
+        "armed": bool(getattr(app.state, "live_armed", False)),
         "mode": app.state.execution_gateway.mode.value,
         "gates": gates,
-        "action": "Set the remaining Railway secrets/gates, then use the Live Trading button." if not all(gates.values()) else "Ready for explicit Live Trading activation.",
-        "warning": "This endpoint never changes Railway variables and never places an order.",
+        "action": "Resolve failed gates first." if not all(gates.values()) else "Ready for explicit runtime activation.",
+        "warning": "Activation is runtime-only and never changes Railway variables.",
     }
+
+
+@app.post("/api/live/activate", tags=["execution"])
+def activate_live(payload: dict = Body(...)):
+    if str(payload.get("confirmation", "")) != "I_UNDERSTAND_LIVE_ORDERS":
+        raise HTTPException(status_code=400, detail="Explicit live-order confirmation is required.")
+    check = live_readiness()
+    if not check["ready_to_arm"]:
+        raise HTTPException(status_code=409, detail={"message":"Live trading is not ready.","gates":check["gates"]})
+    app.state.live_armed = True
+    return {"armed": True, "message": "Live trading armed for this running process. No order was placed."}
+
+
+@app.post("/api/live/deactivate", tags=["execution"])
+def deactivate_live():
+    app.state.live_armed = False
+    return {"armed": False, "message": "Live trading disarmed. Existing exchange orders are not automatically canceled."}
 
 
 @app.post("/api/ml/walk-forward", tags=["ml"])
