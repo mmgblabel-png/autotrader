@@ -123,7 +123,15 @@ class BitvavoAdapter:
         try:
             with urllib.request.urlopen(f"{self.BASE_URL}/ticker/price?{query}", timeout=self.timeout) as response:
                 payload = json.loads(response.read().decode())
+            if isinstance(payload, list):
+                if not payload:
+                    raise BitvavoError("Empty Bitvavo ticker response", category="invalid_response")
+                payload = payload[0]
+            if not isinstance(payload, dict) or "price" not in payload:
+                raise BitvavoError("Unexpected Bitvavo ticker response", category="invalid_response")
             return Decimal(str(payload["price"]))
+        except BitvavoError:
+            raise
         except Exception as exc:
             raise BitvavoError(f"Bitvavo ticker failed: {exc}") from exc
 
@@ -140,8 +148,10 @@ class BitvavoAdapter:
 
     def markets(self, market: str | None = None) -> list[dict[str, Any]]:
         result = self._public_request("/markets", {"market": market.upper()} if market else None)
-        if not isinstance(result, list):
-            raise BitvavoError("Unexpected Bitvavo markets response")
+        if isinstance(result, dict):
+            result = [result]
+        if not isinstance(result, list) or not all(isinstance(row, dict) for row in result):
+            raise BitvavoError("Unexpected Bitvavo markets response", category="invalid_response")
         return result
 
     def _market_rules(self, market: str) -> dict[str, Any]:
