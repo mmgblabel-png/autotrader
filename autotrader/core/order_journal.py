@@ -150,6 +150,50 @@ class OrderJournal:
                 total -= abs(Decimal(str(row["fee"] or payload.get("fee") or "0")))
         return max(total, Decimal("0"))
 
+    def inventory_cost_basis(self, market: str, strategy: str) -> dict[str, Decimal]:
+        """Average-cost basis for currently bot-owned base inventory."""
+        base, _, quote = market.upper().partition("-")
+        with self._lock:
+            rows = self._db.execute(
+                """
+                SELECT o.side, f.amount, f.price, f.fee, f.raw_json
+                FROM fills AS f
+                JOIN orders AS o ON o.client_order_id=f.client_order_id
+                WHERE o.market=? AND o.strategy=?
+                ORDER BY f.observed_at, f.fill_key
+                """,
+                (market.upper(), strategy),
+            ).fetchall()
+        quantity = Decimal("0")
+        cost = Decimal("0")
+        for row in rows:
+            amount = Decimal(str(row["amount"] or "0"))
+            price = Decimal(str(row["price"] or "0"))
+            fee = abs(Decimal(str(row["fee"] or "0")))
+            try:
+                payload = json.loads(row["raw_json"] or "{}")
+            except (TypeError, json.JSONDecodeError):
+                payload = {}
+            fee_currency = str(payload.get("feeCurrency") or "").upper()
+            side = str(row["side"] or "").lower()
+            if side == "buy":
+                received = amount - fee if fee_currency == base else amount
+                added_cost = amount * price + (fee if fee_currency == quote else Decimal("0"))
+                if received > 0:
+                    quantity += received
+                    cost += added_cost
+            elif side == "sell" and quantity > 0:
+                outgoing = amount + (fee if fee_currency == base else Decimal("0"))
+                outgoing = min(outgoing, quantity)
+                avg = cost / quantity if quantity > 0 else Decimal("0")
+                quantity -= outgoing
+                cost -= avg * outgoing
+                if quantity <= Decimal("0.000000000000000001"):
+                    quantity = Decimal("0")
+                    cost = Decimal("0")
+        average = cost / quantity if quantity > 0 else Decimal("0")
+        return {"quantity": max(quantity, Decimal("0")), "average_entry_price": max(average, Decimal("0"))}
+
     def strategy_market_state(self, market: str, strategy: str) -> dict[str, Any]:
         """Return redacted journal diagnostics for one strategy/market."""
         with self._lock:
@@ -174,13 +218,15 @@ class OrderJournal:
                 """,
                 (market.upper(), strategy),
             ).fetchone()["n"]
+        inventory = self.inventory_cost_basis(market, strategy)
         return {
             "latest_side": str(latest["side"]).lower() if latest else None,
             "latest_status": str(latest["status"]).lower() if latest else None,
             "latest_amount": str(latest["amount"]) if latest else None,
             "fill_count": int(fill_count or 0),
             "nonterminal_count": int(nonterminal or 0),
-            "net_base_inventory": str(self.net_base_inventory(market, strategy)),
+            "net_base_inventory": str(inventory["quantity"]),
+            "average_entry_price": str(inventory["average_entry_price"]),
         }
 
     def counts(self) -> dict[str, int]:
