@@ -16,6 +16,7 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
+import uuid
 from decimal import Decimal
 from typing import Any
 
@@ -119,6 +120,59 @@ class BitvavoAdapter:
         except Exception as exc:
             raise BitvavoError(f"Bitvavo ticker failed: {exc}") from exc
 
+    def _public_request(self, endpoint: str, query: dict[str, str] | None = None) -> Any:
+        url = self.BASE_URL + endpoint
+        if query:
+            url += "?" + urllib.parse.urlencode(query)
+        request = urllib.request.Request(url, method="GET", headers={"Accept": "application/json"})
+        try:
+            with urllib.request.urlopen(request, timeout=self.timeout) as response:
+                return json.loads(response.read().decode())
+        except Exception as exc:
+            raise BitvavoError("Bitvavo public request failed", category="network_error") from exc
+
+    def markets(self, market: str | None = None) -> list[dict[str, Any]]:
+        result = self._public_request("/markets", {"market": market.upper()} if market else None)
+        if not isinstance(result, list):
+            raise BitvavoError("Unexpected Bitvavo markets response")
+        return result
+
+    def _market_rules(self, market: str) -> dict[str, Any]:
+        rows = self.markets(market)
+        if not rows:
+            raise BitvavoError(f"Bitvavo market not found: {market}", category="invalid_market")
+        rules = rows[0]
+        if str(rules.get("status", "")).lower() != "trading":
+            raise BitvavoError(f"Bitvavo market is not trading: {market}", category="market_unavailable")
+        return rules
+
+    @staticmethod
+    def _quantize_step(value: Decimal, step: Decimal) -> Decimal:
+        if step <= 0:
+            return value
+        return (value / step).to_integral_value() * step
+
+    def _validate_order_rules(self, market: str, amount: Decimal, price: Decimal | None, order_type: str) -> tuple[Decimal, Decimal | None]:
+        rules = self._market_rules(market)
+        supported = set(rules.get("orderTypes") or [])
+        if order_type not in supported:
+            raise BitvavoError(f"Order type {order_type} is not supported for {market}", category="invalid_order_type")
+        qty_decimals = int(rules.get("quantityDecimals", 18))
+        amount = amount.quantize(Decimal(1).scaleb(-qty_decimals))
+        minimum = Decimal(str(rules.get("minOrderInBaseAsset", "0")))
+        if amount < minimum:
+            raise BitvavoError(f"Order amount {amount} is below Bitvavo minimum {minimum}", category="trading_rule")
+        if price is not None:
+            tick = Decimal(str(rules.get("tickSize", "0")))
+            price = self._quantize_step(price, tick)
+            if price <= 0:
+                raise BitvavoError("Price becomes non-positive after tick-size normalization", category="trading_rule")
+        notional = amount * (price or self.ticker_price(market))
+        min_quote = Decimal(str(rules.get("minOrderInQuoteAsset", "0")))
+        if notional < min_quote:
+            raise BitvavoError(f"Order notional {notional} is below Bitvavo minimum {min_quote}", category="trading_rule")
+        return amount, price
+
     def account(self) -> dict[str, Any]:
         return self._private_request("GET", "/account")
 
@@ -214,7 +268,7 @@ class BitvavoAdapter:
             amount = min(available, max_eur / price)
             if amount <= 0:
                 continue
-            client_id = f"kill-{int(time.time())}-{base.lower()}"
+            client_id = str(uuid.uuid4())
             body = {"market": market, "side": "sell", "orderType": "market", "amount": str(amount), "clientOrderId": client_id, "responseRequired": True}
             self.journal.record_intent(client_order_id=client_id, market=market, side="sell", order_type="market", amount=str(amount), price=None)
             response = self._private_request("POST", "/order", body)
@@ -233,6 +287,15 @@ class BitvavoAdapter:
     def _place(self, market: str, side: str, amount: Decimal, price: Decimal | None, client_order_id: str, operator_id: int, order_type: str) -> dict[str, Any]:
         side = side.lower()
         market = market.upper()
+        if side not in {"buy", "sell"}:
+            raise BitvavoError("side must be buy or sell", category="invalid_order")
+        if not client_order_id:
+            client_order_id = str(uuid.uuid4())
+        try:
+            client_order_id = str(uuid.UUID(client_order_id))
+        except ValueError as exc:
+            raise BitvavoError("client_order_id must be a UUID", category="invalid_order") from exc
+        amount, price = self._validate_order_rules(market, amount, price, order_type)
         observed = self.ticker_price(market)
         expected = price or observed
         notional_eur = amount * expected if side == "buy" else amount * observed
@@ -249,7 +312,7 @@ class BitvavoAdapter:
         if os.getenv("LIVE_EXECUTION_APPROVED") != "true" or os.getenv("LIVE_EXECUTION_ADAPTER_INSTALLED") != "true" or os.getenv("EMERGENCY_STOP", "true") == "true" or os.getenv("LIVE_TRADING_CONFIRMATION") != "I_UNDERSTAND_LIVE_ORDERS":
             self.journal.update(client_order_id, "blocked", proposal, error="live_gates_not_satisfied")
             raise BitvavoError("Live gates are not satisfied; no order was sent")
-        body: dict[str, Any] = {"market": market, "side": side, "orderType": order_type, "operatorId": operator_id, "clientOrderId": client_order_id, "amount": str(amount), "responseRequired": True}
+        body: dict[str, Any] = {"market": market, "side": side, "orderType": order_type, "operatorId": operator_id if operator_id > 0 else int(os.getenv("BITVAVO_OPERATOR_ID", "1")), "clientOrderId": client_order_id, "amount": str(amount), "responseRequired": True}
         if order_type == "limit":
             body.update({"price": str(price), "timeInForce": "GTC"})
         try:
