@@ -85,6 +85,7 @@ class BitvavoAdapter:
             with urllib.request.urlopen(request, timeout=self.timeout) as response:
                 return json.loads(response.read().decode())
         except urllib.error.HTTPError as exc:
+            retry_after = exc.headers.get("Retry-After") if exc.headers else None
             error_code = None
             error_message = None
             try:
