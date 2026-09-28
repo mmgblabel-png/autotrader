@@ -335,6 +335,9 @@ class BitvavoAdapter:
         try:
             response = self._private_request("POST", "/order", body)
             self.journal.update(client_order_id, str(response.get("status") or "submitted").lower(), response, exchange_order_id=str(response.get("orderId") or "") or None)
+            for fill in response.get("fills") or []:
+                if isinstance(fill, dict):
+                    self.journal.record_fill(client_order_id, fill)
             return response
         except BitvavoError as exc:
             self.journal.update(client_order_id, "error", {"category": exc.category}, error=exc.category)
