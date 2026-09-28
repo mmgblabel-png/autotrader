@@ -10,7 +10,8 @@ def test_bitvavo_defaults_to_shadow(monkeypatch):
     monkeypatch.setenv("BITVAVO_DRY_RUN", "true")
     adapter = BitvavoAdapter()
     monkeypatch.setattr(adapter, "ticker_price", lambda market: Decimal("60000"))
-    result = adapter.place_limit_order("BTC-EUR", "buy", Decimal("0.0001"), Decimal("60000"), "bvo-order-1234567890123456")
+    monkeypatch.setattr(adapter, "markets", lambda market=None: [{"status": "trading", "orderTypes": ["limit", "market"], "quantityDecimals": 6, "tickSize": "0.01", "minOrderInBaseAsset": "0.00001", "minOrderInQuoteAsset": "5"}])
+    result = adapter.place_limit_order("BTC-EUR", "buy", Decimal("0.0001"), Decimal("60000"), "2be7d0df-d8dc-7b93-a550-6f3b3f3b393e")
     assert result["status"] == "SHADOW"
     assert result["would_place"]["market"] == "BTC-EUR"
 
@@ -21,5 +22,6 @@ def test_bitvavo_live_gate_rejects(monkeypatch):
     monkeypatch.setenv("EMERGENCY_STOP", "true")
     adapter = BitvavoAdapter()
     monkeypatch.setattr(adapter, "ticker_price", lambda market: Decimal("60000"))
+    monkeypatch.setattr(adapter, "markets", lambda market=None: [{"status": "trading", "orderTypes": ["limit", "market"], "quantityDecimals": 6, "tickSize": "0.01", "minOrderInBaseAsset": "0.00001", "minOrderInQuoteAsset": "5"}])
     with pytest.raises(BitvavoError, match="adapter|gates"):
-        adapter.place_market_order("BTC-EUR", "buy", Decimal("0.0001"), "bvo-live-1234567890123456")
+        adapter.place_market_order("BTC-EUR", "buy", Decimal("0.0001"), "2be7d0df-d8dc-7b93-a550-6f3b3f3b393e")
