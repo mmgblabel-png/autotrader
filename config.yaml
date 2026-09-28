@@ -12,6 +12,7 @@ strategies:
     target_spread: 0.80
     quote_refresh_seconds: 10
     inventory_target: 0.0
+    inventory_cycle_mode: true
     inventory_skew_pct: 0.10
     estimated_fee_pct: 0.25
     estimated_slippage_pct: 0.05
