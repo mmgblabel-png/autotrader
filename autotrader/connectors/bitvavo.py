@@ -50,6 +50,12 @@ class BitvavoAdapter:
         self.journal = journal or OrderJournal()
         self.is_armed = is_armed or (lambda: False)
 
+    @staticmethod
+    def _create_signature(secret: str, timestamp: str, method: str, endpoint: str, body_text: str) -> str:
+        """Create the Bitvavo HMAC exactly as documented: timestamp + method + /v2 + endpoint + body."""
+        payload = f"{timestamp}{method.upper()}/v2{endpoint}{body_text}"
+        return hmac.new(secret.encode("utf-8"), payload.encode("utf-8"), hashlib.sha256).hexdigest()
+
     def _private_request(self, method: str, endpoint: str, body: dict[str, Any] | None = None, query: dict[str, str] | None = None) -> Any:
         if not self.api_key or not self.api_secret:
             raise BitvavoError("BITVAVO_API_KEY and BITVAVO_API_SECRET are required")
@@ -57,7 +63,7 @@ class BitvavoAdapter:
         body_text = "" if method == "GET" else json.dumps(body or {}, separators=(",", ":"))
         timestamp = str(int(time.time() * 1000))
         payload = f"{timestamp}{method}/v2{endpoint}{body_text}"
-        signature = hmac.new(self.api_secret.encode(), payload.encode(), hashlib.sha256).hexdigest()
+        signature = self._create_signature(self.api_secret, timestamp, method, endpoint, body_text)
         if os.getenv("BITVAVO_DEBUG_SIGNING", "false").lower() in {"1", "true", "yes"}:
             LOGGER.warning(
                 "Bitvavo signing debug method=%s path=/v2%s timestamp=%s body_len=%d "
