@@ -6,7 +6,7 @@ from abc import ABC, abstractmethod
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from autotrader.core.order_manager import OrderManager
+    from autotrader.core.order_manager import Order, OrderManager
     from autotrader.core.risk_manager import RiskManager
     from autotrader.core.profit_engine import ProfitEngine
 
@@ -58,6 +58,9 @@ class BaseStrategy(ABC):
 
     def on_stop(self) -> None:
         """Override for custom shutdown logic."""
+
+    def on_fill(self, order: "Order", fill: dict) -> None:
+        """Receive a confirmed exchange fill owned by this strategy."""
 
     @abstractmethod
     def tick(self) -> None:
