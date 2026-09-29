@@ -308,6 +308,7 @@ async def _shadow_strategy_loop(app: FastAPI, agent: AutoTrader) -> None:
     while True:
         try:
             if bool(cfg.get("enabled", True)):
+                updated_names = []
                 for name, raw in strategies.items():
                     strat_cfg = raw or {}
                     if not bool(strat_cfg.get("enabled", True)):
@@ -317,8 +318,15 @@ async def _shadow_strategy_loop(app: FastAPI, agent: AutoTrader) -> None:
                         continue
                     price = float(await asyncio.to_thread(agent._bitvavo.ticker_price, symbol))
                     app.state.shadow_strategy_engine.update(name, price, strat_cfg)
+                    updated_names.append(name)
+                first_success = getattr(app.state, "shadow_strategy_last_at", 0.0) == 0.0
                 app.state.shadow_strategy_last_at = time.time()
                 app.state.shadow_strategy_error = None
+                if first_success:
+                    log.info(
+                        "Shadow alpha lab active: strategies=%s live_orders_sent=False",
+                        updated_names,
+                    )
         except Exception as exc:
             app.state.shadow_strategy_error = type(exc).__name__
             log.warning("Shadow strategy loop failed: %s", type(exc).__name__)
