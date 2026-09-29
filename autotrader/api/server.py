@@ -57,6 +57,7 @@ from autotrader.core.execution_gateway import ExecutionGateway
 from autotrader.core.bitvavo_security import validate_bitvavo_security
 from autotrader.core.market_feed import BitpandaFusionMarketFeed
 from autotrader.connectors.bitvavo import BitvavoAdapter
+from autotrader.connectors.coinbase_advanced import CoinbaseAdvancedMarketData, CoinbaseMarketDataError
 from autotrader.connectors.bitpanda_fusion import BitpandaFusionAdapter
 from autotrader.api.dashboard_html import dashboard_html
 from autotrader.ml.shadow import walk_forward
@@ -530,6 +531,110 @@ def strategies():
             }
             for key, value in strats.items()
         ]
+    }
+
+
+@app.get("/api/arbitrage/coinbase-bitvavo", tags=["arbitrage"])
+def coinbase_bitvavo_shadow_scan():
+    """Compare executable Bitvavo/Coinbase top-of-book prices without placing orders."""
+    raw = os.getenv("ARBITRAGE_MARKETS", "BTC-EUR,ETH-EUR,SOL-EUR,XRP-EUR")
+    markets = [item.strip().upper() for item in raw.split(",") if item.strip()]
+    coinbase = CoinbaseAdvancedMarketData()
+    bitvavo = get_agent()._bitvavo
+
+    fee_values = {
+        "bitvavo": os.getenv("BITVAVO_TAKER_FEE_PCT", "").strip(),
+        "coinbase": os.getenv("COINBASE_TAKER_FEE_PCT", "").strip(),
+        "slippage": os.getenv("ARBITRAGE_SLIPPAGE_PCT", "0.05").strip(),
+    }
+    fees_configured = bool(fee_values["bitvavo"] and fee_values["coinbase"])
+    try:
+        bitvavo_fee = float(fee_values["bitvavo"]) / 100 if fees_configured else 0.0
+        coinbase_fee = float(fee_values["coinbase"]) / 100 if fees_configured else 0.0
+        slippage = float(fee_values["slippage"]) / 100
+    except ValueError as exc:
+        raise HTTPException(status_code=500, detail="Invalid arbitrage fee configuration") from exc
+
+    min_net_edge = float(os.getenv("ARBITRAGE_MIN_NET_EDGE_PCT", "0.20")) / 100
+    max_budget = float(os.getenv("ARBITRAGE_SHADOW_BUDGET_EUR", "10"))
+    rows = []
+    for market in markets:
+        try:
+            bv = bitvavo.ticker_book(market)
+            cb = coinbase.top_of_book(market)
+
+            directions = [
+                {
+                    "buy_venue": "bitvavo",
+                    "sell_venue": "coinbase",
+                    "buy_price": float(bv["ask"]),
+                    "sell_price": float(cb.bid_price),
+                    "max_base_at_top": min(float(bv["ask_size"]), float(cb.bid_size)),
+                },
+                {
+                    "buy_venue": "coinbase",
+                    "sell_venue": "bitvavo",
+                    "buy_price": float(cb.ask_price),
+                    "sell_price": float(bv["bid"]),
+                    "max_base_at_top": min(float(cb.ask_size), float(bv["bid_size"])),
+                },
+            ]
+
+            best = None
+            for candidate in directions:
+                gross = (candidate["sell_price"] - candidate["buy_price"]) / candidate["buy_price"]
+                executable_base = min(
+                    candidate["max_base_at_top"],
+                    max_budget / candidate["buy_price"] if candidate["buy_price"] > 0 else 0.0,
+                )
+                net = None
+                actionable = False
+                if fees_configured:
+                    net = gross - bitvavo_fee - coinbase_fee - (2 * slippage)
+                    actionable = bool(net >= min_net_edge and executable_base > 0)
+                candidate.update({
+                    "gross_edge_pct": round(gross * 100, 5),
+                    "net_edge_pct": round(net * 100, 5) if net is not None else None,
+                    "executable_base_at_budget": executable_base,
+                    "estimated_notional_eur": executable_base * candidate["buy_price"],
+                    "actionable": actionable,
+                })
+                if best is None or candidate["gross_edge_pct"] > best["gross_edge_pct"]:
+                    best = candidate
+
+            rows.append({
+                "market": market,
+                "status": "ok",
+                "bitvavo": {
+                    "bid": float(bv["bid"]),
+                    "ask": float(bv["ask"]),
+                    "bid_size": float(bv["bid_size"]),
+                    "ask_size": float(bv["ask_size"]),
+                },
+                "coinbase": {
+                    "bid": float(cb.bid_price),
+                    "ask": float(cb.ask_price),
+                    "bid_size": float(cb.bid_size),
+                    "ask_size": float(cb.ask_size),
+                },
+                "best_direction": best,
+            })
+        except (CoinbaseMarketDataError, Exception) as exc:
+            rows.append({"market": market, "status": "unavailable", "error": type(exc).__name__})
+
+    return {
+        "mode": "shadow",
+        "live_orders_sent": False,
+        "fees_configured": fees_configured,
+        "fee_inputs_pct": {
+            "bitvavo": float(fee_values["bitvavo"]) if fee_values["bitvavo"] else None,
+            "coinbase": float(fee_values["coinbase"]) if fee_values["coinbase"] else None,
+            "slippage_each_leg": float(fee_values["slippage"]),
+        },
+        "min_net_edge_pct": min_net_edge * 100,
+        "budget_eur": max_budget,
+        "markets": rows,
+        "warning": "Actionable stays false until both venue fee percentages are configured.",
     }
 
 
