@@ -292,18 +292,6 @@ async def _tick_loop(app: FastAPI, agent: AutoTrader) -> None:
             app.state.tick_count += 1
             app.state.last_tick_at = time.time()
             app.state.last_tick_error = None
-    if os.getenv("COINBASE_API_KEY", "").strip() and os.getenv("COINBASE_API_SECRET", "").strip():
-        try:
-            cb_probe = CoinbaseAdvancedMarketData().authenticated_accounts_probe()
-            log.info(
-                "Coinbase startup auth probe: authenticated=%s status=%s format_compatible=%s error_category=%s",
-                cb_probe.get("authenticated"),
-                cb_probe.get("status"),
-                cb_probe.get("format_compatible"),
-                cb_probe.get("error_category"),
-            )
-        except Exception as cb_exc:
-            log.warning("Coinbase startup auth probe failed: %s", type(cb_exc).__name__)
         except Exception as exc:  # pragma: no cover - defensive production guard
             app.state.last_tick_error = str(exc)
             log.exception("Strategy tick failed; the loop will continue.")
@@ -350,6 +338,19 @@ async def _lifespan(app: FastAPI):
     app.state.bitvavo_security_cache_at = 0.0
     app.state.live_preflight_cache = None
     app.state.live_preflight_cache_at = 0.0
+
+    if os.getenv("COINBASE_API_KEY", "").strip() and os.getenv("COINBASE_API_SECRET", "").strip():
+        try:
+            cb_probe = CoinbaseAdvancedMarketData().authenticated_accounts_probe()
+            log.info(
+                "Coinbase startup auth probe: authenticated=%s status=%s format_compatible=%s error_category=%s",
+                cb_probe.get("authenticated"),
+                cb_probe.get("status"),
+                cb_probe.get("format_compatible"),
+                cb_probe.get("error_category"),
+            )
+        except Exception as cb_exc:
+            log.warning("Coinbase startup auth probe failed: %s", type(cb_exc).__name__)
     if app.state.live_mode:
         try:
             startup_preflight = validate_bitvavo_live_strategies(
