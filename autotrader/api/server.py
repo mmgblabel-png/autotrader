@@ -434,7 +434,11 @@ def live_readiness():
         bitvavo_security_passed = bool(bitvavo_security.get("passed"))
     except Exception:
         bitvavo_security_passed = False
-    strategy_state = get_agent().list_strategies().get("market_maker", {})
+    strategy_states = get_agent().list_strategies()
+    approved_live = [
+        state for state in strategy_states.values()
+        if state.get("enabled") and state.get("live_capable")
+    ]
     gates = {
         "execution_mode_live": os.getenv("EXECUTION_MODE", "paper").strip().lower() == "live",
         "live_execution_approved": os.getenv("LIVE_EXECUTION_APPROVED", "false").strip().lower() == "true",
@@ -445,8 +449,12 @@ def live_readiness():
         "bitvavo_dry_run_off": os.getenv("BITVAVO_DRY_RUN", "true").strip().lower() not in {"1", "true", "yes"},
         "bitvavo_credentials_present": credentials,
         "bitvavo_security_passed": bitvavo_security_passed,
-        "market_maker_enabled": bool(strategy_state.get("enabled")),
-        "market_maker_running": bool(strategy_state.get("running")),
+        "live_strategy_configured": bool(approved_live),
+        "live_strategy_running": any(state.get("running") for state in approved_live),
+        "running_strategies_approved": all(
+            (not state.get("running")) or bool(state.get("live_capable"))
+            for state in strategy_states.values()
+        ),
         "control_token_present": bool(os.getenv("AUTOTRADER_CONTROL_TOKEN", "").strip()),
     }
     ready = all(gates.values())
@@ -512,7 +520,14 @@ def strategies():
     strats = get_agent().list_strategies()
     return {
         "strategies": [
-            {"name": key, "running": value["running"]}
+            {
+                "name": key,
+                "running": value["running"],
+                "enabled": value.get("enabled", False),
+                "live_capable": value.get("live_capable", False),
+                "allocation_eur": value.get("allocation_eur", 0),
+                "max_open_orders": value.get("max_open_orders", 0),
+            }
             for key, value in strats.items()
         ]
     }
@@ -612,6 +627,41 @@ def start_strategy(
     """Start a paper strategy. Body: ``{\"name\": \"market_maker\"}``."""
     _validate(name)
     return get_agent().start(name)
+
+
+@app.post("/api/strategies/start-live", tags=["strategies"])
+def start_live_strategies(
+    _: None = Depends(_require_control_token),
+):
+    """Start every enabled strategy that is explicitly approved for live execution."""
+    agent = get_agent()
+    state = agent.list_strategies()
+    names = [
+        name for name, item in state.items()
+        if item.get("enabled") and item.get("live_capable")
+    ]
+    return {
+        "strategies": [agent.start(name) for name in names],
+        "started_count": len(names),
+    }
+
+
+@app.post("/api/strategies/stop-live", tags=["strategies"])
+def stop_live_strategies(
+    _: None = Depends(_require_control_token),
+):
+    """Stop all currently running live-capable strategies without canceling exchange orders."""
+    agent = get_agent()
+    state = agent.list_strategies()
+    names = [
+        name for name, item in state.items()
+        if item.get("running") and item.get("live_capable")
+    ]
+    return {
+        "strategies": [agent.stop(name) for name in names],
+        "stopped_count": len(names),
+        "warning": "Existing exchange orders are not automatically canceled.",
+    }
 
 
 @app.post("/api/strategies/stop", tags=["strategies"])
