@@ -118,6 +118,32 @@ class BitvavoAdapter:
         except Exception as exc:
             raise BitvavoError("Bitvavo private request failed", category="bitvavo_error") from exc
 
+    def ticker_book(self, market: str) -> dict[str, Decimal | str]:
+        """Return public executable top-of-book for one Bitvavo market."""
+        result = self._public_request("/ticker/book", {"market": market.upper()})
+        if isinstance(result, list):
+            if not result:
+                raise BitvavoError("Empty Bitvavo ticker-book response", category="invalid_response")
+            result = result[0]
+        if not isinstance(result, dict):
+            raise BitvavoError("Unexpected Bitvavo ticker-book response", category="invalid_response")
+        try:
+            bid = Decimal(str(result["bid"]))
+            ask = Decimal(str(result["ask"]))
+            bid_size = Decimal(str(result["bidSize"]))
+            ask_size = Decimal(str(result["askSize"]))
+        except (KeyError, TypeError, ValueError) as exc:
+            raise BitvavoError("Unexpected Bitvavo ticker-book fields", category="invalid_response") from exc
+        if min(bid, ask, bid_size, ask_size) <= 0 or ask < bid:
+            raise BitvavoError("Invalid Bitvavo ticker-book values", category="invalid_response")
+        return {
+            "market": str(result.get("market") or market).upper(),
+            "bid": bid,
+            "ask": ask,
+            "bid_size": bid_size,
+            "ask_size": ask_size,
+        }
+
     def ticker_price(self, market: str) -> Decimal:
         query = urllib.parse.urlencode({"market": market.upper()})
         try:
