@@ -1047,6 +1047,12 @@ def bitvavo_live_state() -> dict[str, object]:
     }
 
 
+@app.get("/api/security/coinbase", tags=["security"])
+def coinbase_security_status() -> dict[str, object]:
+    """Verify Coinbase Advanced credentials with a read-only accounts request."""
+    return CoinbaseAdvancedMarketData().authenticated_accounts_probe()
+
+
 @app.get("/api/security/bitvavo", tags=["security"])
 def bitvavo_security_status() -> dict[str, object]:
     """Run the fail-closed Bitvavo security gate inside the Railway container.
