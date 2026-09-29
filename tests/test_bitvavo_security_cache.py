@@ -41,3 +41,26 @@ def test_bitvavo_security_probe_refreshes_after_ttl(monkeypatch):
 
     assert report["passed"] is False
     assert calls["n"] == 1
+
+
+def test_running_bitvavo_markets_are_unique_and_filtered():
+    class Strategy:
+        def __init__(self, running, exchange, symbol):
+            self.is_running = running
+            self._config = {"exchange": exchange, "symbol": symbol}
+
+    agent = type(
+        "Agent",
+        (),
+        {
+            "_strategies": {
+                "a": Strategy(True, "bitvavo", "BTC-EUR"),
+                "b": Strategy(True, "bitvavo", "SOL-EUR"),
+                "c": Strategy(True, "bitvavo", "BTC-EUR"),
+                "d": Strategy(False, "bitvavo", "XRP-EUR"),
+                "e": Strategy(True, "coinbase", "ETH-EUR"),
+            }
+        },
+    )()
+
+    assert server._running_bitvavo_markets(agent) == ["BTC-EUR", "SOL-EUR"]
