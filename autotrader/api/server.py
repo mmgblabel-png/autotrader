@@ -214,10 +214,16 @@ async def _tick_loop(app: FastAPI, agent: AutoTrader) -> None:
                     bool(running_markets)
                     and app.state.tick_count % app.state.live_sync_every_ticks == 0
                 )
-                if sync_due:
-                    # Reconcile first so fills/cancels are reflected in bot-owned
-                    # inventory before any strategy is allowed to create a new intent.
+                journal_reconcile_due = (
+                    bool(agent._bitvavo.journal.inflight())
+                    and app.state.tick_count % app.state.journal_reconcile_every_ticks == 0
+                )
+                if sync_due or journal_reconcile_due:
+                    # Reconcile durable orders even when all strategies are
+                    # stopped, so manual exchange cancels/fills cannot leave a
+                    # stale local NEW/OPEN state indefinitely.
                     agent.live_reconcile()
+                if sync_due:
                     try:
                         balance_rows = agent._bitvavo.balance()
                         app.state.bitvavo_balances = {
@@ -258,6 +264,16 @@ async def _tick_loop(app: FastAPI, agent: AutoTrader) -> None:
                         inventory = agent._bitvavo.journal.inventory_cost_basis(symbol, strategy.name)
                         strategy._config["_bot_base_inventory"] = float(inventory["quantity"])
                         strategy._config["_bot_average_entry_price"] = float(inventory["average_entry_price"])
+                        profit_snapshot = agent.profit_supervisor.strategy_snapshot(
+                            symbol, strategy.name, price
+                        )
+                        strategy._config["_profit_snapshot"] = profit_snapshot
+                        strategy._config["_required_entry_edge_pct"] = float(
+                            profit_snapshot["required_entry_edge_pct"]
+                        )
+                        strategy._config["_min_profit_exit_price"] = float(
+                            profit_snapshot["min_profit_exit_price"]
+                        )
                         strategy._config["_last_bot_sell_fill_at"] = agent._bitvavo.journal.latest_fill_time(
                             symbol, strategy.name, "sell"
                         )
@@ -298,6 +314,16 @@ async def _lifespan(app: FastAPI):
     app.state.live_sync_every_ticks = max(
         1, int(round(live_sync_seconds / app.state.tick_interval_seconds))
     )
+    try:
+        journal_reconcile_seconds = max(
+            app.state.tick_interval_seconds,
+            float(os.getenv("AUTOTRADER_JOURNAL_RECONCILE_SECONDS", str(_DEFAULT_JOURNAL_RECONCILE_SECONDS))),
+        )
+    except ValueError:
+        journal_reconcile_seconds = _DEFAULT_JOURNAL_RECONCILE_SECONDS
+    app.state.journal_reconcile_every_ticks = max(
+        1, int(round(journal_reconcile_seconds / app.state.tick_interval_seconds))
+    )
     app.state.live_mode = os.getenv("EXECUTION_MODE", "paper").strip().lower() == "live"
     app.state.live_armed = False
     if app.state.live_mode:
@@ -328,11 +354,12 @@ async def _lifespan(app: FastAPI):
         _tick_loop(app, agent), name="autotrader-paper-tick-loop"
     )
     log.info(
-        "AutoTrader agent initialised from '%s' (mode=%s tick=%.3fs live_sync=%.3fs).",
+        "AutoTrader agent initialised from '%s' (mode=%s tick=%.3fs live_sync=%.3fs journal_reconcile=%.3fs).",
         _CONFIG_PATH,
         "live" if app.state.live_mode else "paper",
         app.state.tick_interval_seconds,
         app.state.live_sync_every_ticks * app.state.tick_interval_seconds,
+        app.state.journal_reconcile_every_ticks * app.state.tick_interval_seconds,
     )
 
     try:
