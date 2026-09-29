@@ -40,6 +40,12 @@ class OrderJournal:
           status TEXT NOT NULL, observed_at REAL NOT NULL, raw_json TEXT NOT NULL DEFAULT '{}',
           FOREIGN KEY(client_order_id) REFERENCES orders(client_order_id)
         );
+        CREATE TABLE IF NOT EXISTS execution_ledger (
+          client_order_id TEXT PRIMARY KEY,
+          notional_eur TEXT NOT NULL,
+          accepted_at REAL NOT NULL,
+          FOREIGN KEY(client_order_id) REFERENCES orders(client_order_id)
+        );
         """)
         columns = {row["name"] for row in self._db.execute("PRAGMA table_info(orders)").fetchall()}
         if "strategy" not in columns:
@@ -99,6 +105,74 @@ class OrderJournal:
         with self._lock:
             row = self._db.execute("SELECT * FROM orders WHERE client_order_id=?", (client_order_id,)).fetchone()
         return dict(row) if row else None
+
+    def record_execution_acceptance(self, client_order_id: str, notional_eur: str) -> bool:
+        """Persist an accepted execution budget once, before the exchange POST."""
+        with self._lock:
+            cursor = self._db.execute(
+                "INSERT OR IGNORE INTO execution_ledger(client_order_id,notional_eur,accepted_at) VALUES(?,?,?)",
+                (client_order_id, str(notional_eur), time.time()),
+            )
+            self._db.commit()
+            return cursor.rowcount == 1
+
+    def daily_execution_exposure_utc(self, now: float | None = None) -> Decimal:
+        """Return accepted EUR exposure since UTC midnight."""
+        current = time.time() if now is None else float(now)
+        utc = time.gmtime(current)
+        midnight = current - (utc.tm_hour * 3600 + utc.tm_min * 60 + utc.tm_sec)
+        with self._lock:
+            rows = self._db.execute(
+                "SELECT notional_eur FROM execution_ledger WHERE accepted_at>=?",
+                (midnight,),
+            ).fetchall()
+        total = Decimal("0")
+        for row in rows:
+            try:
+                total += Decimal(str(row["notional_eur"]))
+            except Exception:
+                continue
+        return max(total, Decimal("0"))
+
+    def backfill_execution_ledger(self) -> int:
+        """Conservatively seed legacy accepted limit orders into the exposure ledger."""
+        with self._lock:
+            rows = self._db.execute(
+                """
+                SELECT client_order_id, amount, price, created_at
+                FROM orders
+                WHERE price IS NOT NULL
+                  AND status NOT IN ('rejected','error','shadow','blocked')
+                """
+            ).fetchall()
+            inserted = 0
+            for row in rows:
+                try:
+                    notional = Decimal(str(row["amount"])) * Decimal(str(row["price"]))
+                except Exception:
+                    continue
+                cursor = self._db.execute(
+                    "INSERT OR IGNORE INTO execution_ledger(client_order_id,notional_eur,accepted_at) VALUES(?,?,?)",
+                    (row["client_order_id"], str(notional), float(row["created_at"])),
+                )
+                inserted += cursor.rowcount
+            self._db.commit()
+        return inserted
+
+    def all_strategy_fills(self) -> list[dict[str, Any]]:
+        """Return durable fill history with strategy ownership for PnL rebuilds."""
+        with self._lock:
+            rows = self._db.execute(
+                """
+                SELECT f.fill_key, f.amount, f.price, f.fee, f.observed_at, f.raw_json,
+                       o.market, o.side, o.strategy
+                FROM fills AS f
+                JOIN orders AS o ON o.client_order_id=f.client_order_id
+                WHERE o.strategy<>''
+                ORDER BY f.observed_at, f.fill_key
+                """
+            ).fetchall()
+        return [dict(row) for row in rows]
 
     def inflight(self) -> list[dict[str, Any]]:
         with self._lock:
