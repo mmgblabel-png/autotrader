@@ -75,6 +75,7 @@ class AdaptiveLearning:
             "last_change_exit": -10_000,
             "pending_change": None,
             "history": [],
+            "seen_outcome_keys": [],
         }
 
     def _load(self) -> dict[str, Any]:
@@ -143,6 +144,7 @@ class AdaptiveLearning:
         net_pnl_delta_eur: float,
         strategy_config: dict[str, Any],
         symbol: str = "",
+        outcome_key: str = "",
     ) -> dict[str, Any]:
         if not self.enabled or side.upper() != "SELL" or not math.isfinite(net_pnl_delta_eur):
             return {"changed": False, "reason": "not_eligible"}
@@ -153,6 +155,12 @@ class AdaptiveLearning:
 
         states = self._state.setdefault("strategies", {})
         state = states.setdefault(strategy_name, self._blank_strategy())
+        seen = list(state.get("seen_outcome_keys") or [])
+        if outcome_key and outcome_key in seen:
+            return {"changed": False, "reason": "duplicate_outcome"}
+        if outcome_key:
+            seen.append(outcome_key)
+            state["seen_outcome_keys"] = seen[-1000:]
         outcomes = list(state.get("recent_outcomes") or [])
         outcomes.append(float(net_pnl_delta_eur))
         outcomes = outcomes[-self.lookback :]
