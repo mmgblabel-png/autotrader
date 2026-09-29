@@ -357,7 +357,20 @@ class BitvavoAdapter:
         new_intent = self.journal.record_intent(client_order_id=client_order_id, market=market, side=side, order_type=order_type, amount=str(amount), price=str(price) if price else None)
         if not new_intent:
             raise BitvavoError("duplicate client_order_id", category="duplicate_order")
-        decision = self.gateway.evaluate(ExecutionRequest("bitvavo", market, side.upper(), notional_eur, expected, observed, client_order_id, time.time()), armed=bool(self.is_armed()))
+        decision = self.gateway.evaluate(
+            ExecutionRequest(
+                "bitvavo",
+                market,
+                side.upper(),
+                notional_eur,
+                expected,
+                observed,
+                client_order_id,
+                time.time(),
+                risk_reducing=(side == "sell"),
+            ),
+            armed=bool(self.is_armed()),
+        )
         if not decision.accepted:
             self.journal.update(client_order_id, "rejected", {"reason": decision.reason}, error=decision.reason)
             raise BitvavoError(decision.reason)
