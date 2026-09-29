@@ -62,6 +62,9 @@ class BaseStrategy(ABC):
     def on_fill(self, order: "Order", fill: dict) -> None:
         """Receive a confirmed exchange fill owned by this strategy."""
 
+    def observe(self) -> None:
+        """Update local indicators without creating any order intent."""
+
     @abstractmethod
     def tick(self) -> None:
         """Called on every market-data update / loop iteration."""
