@@ -16,6 +16,48 @@ adaptive_learning:
   good_winrate_pct: 62.0
   max_regression_pct: 20.0
 
+shadow_lab:
+  enabled: true
+  path: /data/shadow_strategies.json
+  interval_seconds: 15
+  fee_pct_each_leg: 0.25
+  slippage_pct_each_leg: 0.05
+  promotion_min_completed_trades: 20
+  promotion_min_winrate_pct: 52.0
+  promotion_min_net_pnl_eur: 0.50
+  promotion_max_drawdown_pct: 8.0
+  strategies:
+    mean_reversion:
+      enabled: true
+      kind: mean_reversion
+      symbol: ETH-EUR
+      exchange: bitvavo
+      shadow_order_eur: 6.0
+      lookback: 30
+      entry_z: 1.6
+      exit_z: -0.15
+      take_profit_pct: 1.2
+      stop_loss_pct: 1.0
+    volatility_breakout:
+      enabled: true
+      kind: volatility_breakout
+      symbol: ADA-EUR
+      exchange: bitvavo
+      shadow_order_eur: 6.0
+      lookback: 24
+      breakout_buffer_pct: 0.12
+      min_avg_move_pct: 0.03
+      take_profit_pct: 1.4
+      stop_loss_pct: 0.7
+      trailing_exit_pct: 0.45
+
+allocator_v2:
+  enabled: true
+  apply_live: false
+  min_samples: 12
+  max_shift_pct: 25.0
+  min_allocation_eur: 5.0
+
 profit_policy:
   estimated_entry_fee_pct: 0.25
   estimated_exit_fee_pct: 0.25
