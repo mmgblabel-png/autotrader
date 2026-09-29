@@ -1,9 +1,18 @@
 # AutoTrader – safe Bitvavo defaults
 export_dir: exports
 
+portfolio:
+  global_live_budget_eur: 50
+  max_total_open_orders: 4
+
 strategies:
   market_maker:
     enabled: true
+    live_capable: true
+    allocation_eur: 15
+    max_order_eur: 10
+    max_open_orders: 1
+    exclusive_symbol: true
     symbol: BTC-EUR
     exchange: bitvavo
     order_size: 0.0001
@@ -24,6 +33,11 @@ strategies:
 
   arbitrage:
     enabled: false
+    live_capable: false
+    allocation_eur: 10
+    max_order_eur: 7
+    max_open_orders: 2
+    exclusive_symbol: true
     symbol: ETH-EUR
     exchanges: []
     order_size: 0.01
@@ -37,25 +51,34 @@ strategies:
     max_consecutive_errors: 3
 
   grid:
-    enabled: false
+    enabled: true
+    live_capable: true
+    allocation_eur: 15
+    max_order_eur: 7
+    max_open_orders: 1
+    exclusive_symbol: true
     symbol: SOL-EUR
     exchange: bitvavo
-    upper_price: 110.0
-    lower_price: 90.0
-    grid_levels: 10
-    max_inventory_base: 0.01
-    rebalance_threshold_pct: 1.0
-    order_size: 1.0
+    order_value_eur: 6.0
+    order_size: 0.0
+    entry_offset_pct: 0.60
+    exit_markup_pct: 0.80
     max_daily_loss: 25.0
     max_position_size: 300.0
     max_slippage_pct: 0.5
     max_consecutive_errors: 5
 
   sniper:
-    enabled: false
-    symbol: BTC-EUR
+    enabled: true
+    live_capable: true
+    allocation_eur: 10
+    max_order_eur: 7
+    max_open_orders: 1
+    exclusive_symbol: true
+    symbol: XRP-EUR
     exchange: bitvavo
-    order_size: 0.001
+    order_value_eur: 6.0
+    order_size: 0.0
     momentum_pct: 0.5
     take_profit_pct: 1.0
     stop_loss_pct: 0.3
