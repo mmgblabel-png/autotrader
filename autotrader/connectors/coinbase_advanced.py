@@ -251,9 +251,10 @@ class CoinbaseAdvancedMarketData:
                     "total": format(total, "f"),
                 }
             )
+        preferred_order = {"EUR": 0, "USD": 1, "USDC": 2, "BTC": 3, "ETH": 4, "SOL": 5, "XRP": 6}
         assets.sort(
             key=lambda row: (
-                row["currency"] not in {"EUR", "USD", "USDC", "BTC", "ETH", "SOL", "XRP"},
+                preferred_order.get(row["currency"], 100),
                 row["currency"],
             )
         )
