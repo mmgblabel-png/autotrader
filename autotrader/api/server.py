@@ -71,6 +71,7 @@ _DEFAULT_TICK_INTERVAL: Final[float] = 1.0
 _MIN_TICK_INTERVAL: Final[float] = 0.1
 _DEFAULT_LIVE_SYNC_SECONDS: Final[float] = 5.0
 _DEFAULT_JOURNAL_RECONCILE_SECONDS: Final[float] = 60.0
+_DEFAULT_ARBITRAGE_SHADOW_SECONDS: Final[float] = 15.0
 
 
 def _cors_origins() -> list[str]:
@@ -298,6 +299,27 @@ async def _tick_loop(app: FastAPI, agent: AutoTrader) -> None:
         await asyncio.sleep(app.state.tick_interval_seconds)
 
 
+async def _arbitrage_shadow_loop(app: FastAPI) -> None:
+    """Continuously refresh read-only Coinbase↔Bitvavo shadow opportunities."""
+    while True:
+        try:
+            payload = await asyncio.to_thread(_build_coinbase_bitvavo_shadow_scan)
+            first_success = getattr(app.state, "arbitrage_shadow_cache", None) is None
+            app.state.arbitrage_shadow_cache = payload
+            app.state.arbitrage_shadow_cache_at = time.time()
+            app.state.arbitrage_shadow_error = None
+            if first_success:
+                log.info(
+                    "Arbitrage shadow scanner active: markets=%d live_orders_sent=%s",
+                    len(payload.get("markets", [])),
+                    payload.get("live_orders_sent"),
+                )
+        except Exception as exc:
+            app.state.arbitrage_shadow_error = type(exc).__name__
+            log.warning("Arbitrage shadow refresh failed: %s", type(exc).__name__)
+        await asyncio.sleep(app.state.arbitrage_shadow_interval_seconds)
+
+
 @contextlib.asynccontextmanager
 async def _lifespan(app: FastAPI):
     """Initialise the agent, run its tick task, then stop it cleanly."""
@@ -329,6 +351,16 @@ async def _lifespan(app: FastAPI):
     app.state.live_armed = False
     if app.state.live_mode:
         agent.live_reconcile()
+        state = agent.list_strategies()
+        auto_started = []
+        for name, item in state.items():
+            if item.get("enabled") and item.get("live_capable"):
+                agent.start(name)
+                auto_started.append(name)
+        log.info(
+            "Auto-started approved live-capable runtimes while armed=False: %s",
+            auto_started,
+        )
     app.state.tick_count = 0
     app.state.bitvavo_balances = {}
     app.state.bitvavo_balance_snapshot_ready = False
@@ -338,6 +370,16 @@ async def _lifespan(app: FastAPI):
     app.state.bitvavo_security_cache_at = 0.0
     app.state.live_preflight_cache = None
     app.state.live_preflight_cache_at = 0.0
+    try:
+        app.state.arbitrage_shadow_interval_seconds = max(
+            10.0,
+            float(os.getenv("ARBITRAGE_SHADOW_INTERVAL_SECONDS", str(_DEFAULT_ARBITRAGE_SHADOW_SECONDS))),
+        )
+    except ValueError:
+        app.state.arbitrage_shadow_interval_seconds = _DEFAULT_ARBITRAGE_SHADOW_SECONDS
+    app.state.arbitrage_shadow_cache = None
+    app.state.arbitrage_shadow_cache_at = 0.0
+    app.state.arbitrage_shadow_error = None
 
     if os.getenv("COINBASE_API_KEY", "").strip() and os.getenv("COINBASE_API_SECRET", "").strip():
         try:
@@ -367,6 +409,9 @@ async def _lifespan(app: FastAPI):
     app.state.tick_task = asyncio.create_task(
         _tick_loop(app, agent), name="autotrader-paper-tick-loop"
     )
+    app.state.arbitrage_shadow_task = asyncio.create_task(
+        _arbitrage_shadow_loop(app), name="autotrader-arbitrage-shadow-loop"
+    )
     log.info(
         "AutoTrader agent initialised from '%s' (mode=%s tick=%.3fs live_sync=%.3fs journal_reconcile=%.3fs).",
         _CONFIG_PATH,
@@ -381,8 +426,11 @@ async def _lifespan(app: FastAPI):
     finally:
         log.info("Shutting down AutoTrader paper-mode agent…")
         app.state.tick_task.cancel()
+        app.state.arbitrage_shadow_task.cancel()
         with contextlib.suppress(asyncio.CancelledError):
             await app.state.tick_task
+        with contextlib.suppress(asyncio.CancelledError):
+            await app.state.arbitrage_shadow_task
         agent.stop()
         log.info("AutoTrader agent stopped.")
 
@@ -831,14 +879,13 @@ def strategies():
     }
 
 
-@app.get("/api/arbitrage/coinbase-bitvavo", tags=["arbitrage"])
-def coinbase_bitvavo_shadow_scan():
+def _build_coinbase_bitvavo_shadow_scan() -> dict[str, object]:
     """Compare executable Bitvavo/Coinbase top-of-book prices without placing orders."""
     raw = os.getenv("ARBITRAGE_MARKETS", "BTC-EUR,ETH-EUR,SOL-EUR,XRP-EUR")
     markets = [item.strip().upper() for item in raw.split(",") if item.strip()]
     coinbase = CoinbaseAdvancedMarketData()
     bitvavo = get_agent()._bitvavo
-
+    
     fee_values = {
         "bitvavo": os.getenv("BITVAVO_TAKER_FEE_PCT", "").strip(),
         "coinbase": os.getenv("COINBASE_TAKER_FEE_PCT", "").strip(),
@@ -851,7 +898,7 @@ def coinbase_bitvavo_shadow_scan():
         slippage = float(fee_values["slippage"]) / 100
     except ValueError as exc:
         raise HTTPException(status_code=500, detail="Invalid arbitrage fee configuration") from exc
-
+    
     min_net_edge = float(os.getenv("ARBITRAGE_MIN_NET_EDGE_PCT", "0.20")) / 100
     max_budget = float(os.getenv("ARBITRAGE_SHADOW_BUDGET_EUR", "10"))
     rows = []
@@ -859,7 +906,7 @@ def coinbase_bitvavo_shadow_scan():
         try:
             bv = bitvavo.ticker_book(market)
             cb = coinbase.top_of_book(market)
-
+    
             directions = [
                 {
                     "buy_venue": "bitvavo",
@@ -876,7 +923,7 @@ def coinbase_bitvavo_shadow_scan():
                     "max_base_at_top": min(float(cb.ask_size), float(bv["bid_size"])),
                 },
             ]
-
+    
             best = None
             for candidate in directions:
                 gross = (candidate["sell_price"] - candidate["buy_price"]) / candidate["buy_price"]
@@ -898,7 +945,7 @@ def coinbase_bitvavo_shadow_scan():
                 })
                 if best is None or candidate["gross_edge_pct"] > best["gross_edge_pct"]:
                     best = candidate
-
+    
             rows.append({
                 "market": market,
                 "status": "ok",
@@ -918,7 +965,7 @@ def coinbase_bitvavo_shadow_scan():
             })
         except (CoinbaseMarketDataError, Exception) as exc:
             rows.append({"market": market, "status": "unavailable", "error": type(exc).__name__})
-
+    
     return {
         "mode": "shadow",
         "live_orders_sent": False,
@@ -932,6 +979,29 @@ def coinbase_bitvavo_shadow_scan():
         "budget_eur": max_budget,
         "markets": rows,
         "warning": "Actionable stays false until both venue fee percentages are configured.",
+    }
+    
+
+
+@app.get("/api/arbitrage/coinbase-bitvavo", tags=["arbitrage"])
+def coinbase_bitvavo_shadow_scan():
+    """Return the latest continuously refreshed shadow arbitrage snapshot."""
+    cached = getattr(app.state, "arbitrage_shadow_cache", None)
+    if isinstance(cached, dict):
+        return {
+            **cached,
+            "background_scanner": True,
+            "last_scan_at": getattr(app.state, "arbitrage_shadow_cache_at", None),
+            "scanner_error": getattr(app.state, "arbitrage_shadow_error", None),
+        }
+    payload = _build_coinbase_bitvavo_shadow_scan()
+    app.state.arbitrage_shadow_cache = payload
+    app.state.arbitrage_shadow_cache_at = time.time()
+    return {
+        **payload,
+        "background_scanner": True,
+        "last_scan_at": app.state.arbitrage_shadow_cache_at,
+        "scanner_error": None,
     }
 
 
