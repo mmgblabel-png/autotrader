@@ -70,6 +70,7 @@ _CONFIG_PATH: Final[str] = os.getenv("AUTOTRADER_CONFIG", "config.yaml")
 _DEFAULT_TICK_INTERVAL: Final[float] = 1.0
 _MIN_TICK_INTERVAL: Final[float] = 0.1
 _DEFAULT_LIVE_SYNC_SECONDS: Final[float] = 5.0
+_DEFAULT_JOURNAL_RECONCILE_SECONDS: Final[float] = 60.0
 
 
 def _cors_origins() -> list[str]:
