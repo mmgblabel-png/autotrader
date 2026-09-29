@@ -64,3 +64,31 @@ def test_running_bitvavo_markets_are_unique_and_filtered():
     )()
 
     assert server._running_bitvavo_markets(agent) == ["BTC-EUR", "SOL-EUR"]
+
+
+def test_reconcile_candidates_are_detected_even_with_no_running_strategy():
+    class Journal:
+        def reconcile_candidates(self):
+            return [{"client_order_id": "cid-1", "market": "BTC-EUR"}]
+
+    agent = type(
+        "Agent",
+        (),
+        {"_bitvavo": type("Adapter", (), {"journal": Journal()})()},
+    )()
+
+    assert server._has_reconcile_candidates(agent) is True
+
+
+def test_no_reconcile_candidates_is_false():
+    class Journal:
+        def reconcile_candidates(self):
+            return []
+
+    agent = type(
+        "Agent",
+        (),
+        {"_bitvavo": type("Adapter", (), {"journal": Journal()})()},
+    )()
+
+    assert server._has_reconcile_candidates(agent) is False
