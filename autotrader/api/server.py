@@ -161,6 +161,7 @@ async def _tick_loop(app: FastAPI, agent: AutoTrader) -> None:
                         price = float(agent._bitvavo.ticker_price(symbol))
                         strategy._config["_mid_price"] = price
                         strategy._config["_current_price"] = price
+                        agent.profit_engine.mark_to_market(strategy.name, symbol, price)
                         base, _, quote = symbol.partition("-")
                         balances = getattr(app.state, "bitvavo_balances", {})
                         strategy._config["_live_balance_snapshot_ready"] = bool(
@@ -195,6 +196,8 @@ async def _tick_loop(app: FastAPI, agent: AutoTrader) -> None:
 async def _lifespan(app: FastAPI):
     """Initialise the agent, run its tick task, then stop it cleanly."""
     agent = init_agent(_CONFIG_PATH)
+    # One gateway instance must drive both execution and dashboard risk status.
+    app.state.execution_gateway = agent._bitvavo.gateway
     app.state.tick_interval_seconds = _tick_interval()
     try:
         live_sync_seconds = max(
