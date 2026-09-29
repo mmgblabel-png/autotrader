@@ -271,6 +271,25 @@ class OrderJournal:
         average = cost / quantity if quantity > 0 else Decimal("0")
         return {"quantity": max(quantity, Decimal("0")), "average_entry_price": max(average, Decimal("0"))}
 
+    def latest_fill_time(self, market: str, strategy: str, side: str | None = None) -> float:
+        """Return the latest locally observed fill time for a strategy/market."""
+        params: list[Any] = [market.upper(), strategy]
+        side_clause = ""
+        if side:
+            side_clause = " AND lower(o.side)=?"
+            params.append(side.lower())
+        with self._lock:
+            row = self._db.execute(
+                f"""
+                SELECT MAX(f.observed_at) AS ts
+                FROM fills AS f
+                JOIN orders AS o ON o.client_order_id=f.client_order_id
+                WHERE o.market=? AND o.strategy=?{side_clause}
+                """,
+                tuple(params),
+            ).fetchone()
+        return float((row or {})["ts"] or 0.0) if row else 0.0
+
     def strategy_market_state(self, market: str, strategy: str) -> dict[str, Any]:
         """Return redacted journal diagnostics for one strategy/market."""
         with self._lock:
