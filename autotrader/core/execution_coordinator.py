@@ -11,11 +11,12 @@ log = logging.getLogger(__name__)
 
 
 class ExecutionCoordinator:
-    def __init__(self, order_manager: OrderManager, adapter: BitvavoAdapter | None = None, *, is_armed=None, profit_engine: ProfitEngine | None = None, allocator: StrategyAllocator | None = None, fill_handler=None) -> None:
+    def __init__(self, order_manager: OrderManager, adapter: BitvavoAdapter | None = None, *, is_armed=None, profit_engine: ProfitEngine | None = None, risk_manager=None, allocator: StrategyAllocator | None = None, fill_handler=None) -> None:
         self.om = order_manager
         self.adapter = adapter or BitvavoAdapter()
         self.is_armed = is_armed or (lambda: False)
         self.profit_engine = profit_engine
+        self.risk_manager = risk_manager
         self.allocator = allocator
         self.fill_handler = fill_handler
         self._recorded_fill_keys: set[str] = set()
@@ -55,7 +56,7 @@ class ExecutionCoordinator:
             raw_ts = float(fill.get("timestamp") or 0)
             timestamp = raw_ts / 1000.0 if raw_ts > 10_000_000_000 else (raw_ts or __import__("time").time())
             if self.profit_engine is not None:
-                self.profit_engine.record_trade(
+                realized = self.profit_engine.record_trade(
                     Trade(
                         strategy=order.strategy or "MarketMaker",
                         symbol=order.symbol,
@@ -63,9 +64,17 @@ class ExecutionCoordinator:
                         quantity=quantity,
                         price=price,
                         fee=float(fill.get("fee") or 0),
+                        fee_currency=str(fill.get("feeCurrency") or ""),
+                        fill_key=key,
                         timestamp=timestamp,
                     )
                 )
+                if realized < 0:
+                    loss = -realized
+                    if self.risk_manager is not None:
+                        self.risk_manager.record_loss(order.strategy or "MarketMaker", loss)
+                    if order.symbol.upper().endswith("-EUR"):
+                        self.adapter.gateway.record_loss(Decimal(str(loss)))
             if self.fill_handler is not None:
                 self.fill_handler(order, fill)
             self._recorded_fill_keys.add(key)
