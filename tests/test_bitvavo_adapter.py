@@ -124,3 +124,32 @@ def test_cancel_order_uses_official_query_route(monkeypatch):
             "operatorId": "1",
         },
     }
+
+
+def test_live_rule_normalization_is_side_conservative(monkeypatch, tmp_path):
+    adapter = BitvavoAdapter(journal=OrderJournal(str(tmp_path / "journal.sqlite3")))
+    monkeypatch.setattr(
+        adapter,
+        "markets",
+        lambda market=None: [{
+            "status": "trading",
+            "orderTypes": ["limit"],
+            "quantityDecimals": 4,
+            "tickSize": "0.05",
+            "minOrderInBaseAsset": "0.0001",
+            "minOrderInQuoteAsset": "5",
+        }],
+    )
+    monkeypatch.setattr(adapter, "ticker_price", lambda market: Decimal("74100"))
+
+    amount_buy, price_buy = adapter._validate_order_rules(
+        "BTC-EUR", Decimal("0.00019999"), Decimal("74289.63"), "limit", "buy"
+    )
+    amount_sell, price_sell = adapter._validate_order_rules(
+        "BTC-EUR", Decimal("0.00019999"), Decimal("74289.63"), "limit", "sell"
+    )
+
+    assert amount_buy == Decimal("0.0001")
+    assert amount_sell == Decimal("0.0001")
+    assert price_buy == Decimal("74289.60")
+    assert price_sell == Decimal("74289.65")
