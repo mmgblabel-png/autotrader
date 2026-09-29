@@ -55,6 +55,7 @@ class ExecutionCoordinator:
                 continue
             raw_ts = float(fill.get("timestamp") or 0)
             timestamp = raw_ts / 1000.0 if raw_ts > 10_000_000_000 else (raw_ts or __import__("time").time())
+            realized = 0.0
             if self.profit_engine is not None:
                 realized = self.profit_engine.record_trade(
                     Trade(
@@ -77,7 +78,7 @@ class ExecutionCoordinator:
                     if order.symbol.upper().endswith("-EUR") and gateway is not None:
                         gateway.record_loss(Decimal(str(loss)))
             if self.fill_handler is not None:
-                self.fill_handler(order, fill)
+                self.fill_handler(order, fill, realized)
             self._recorded_fill_keys.add(key)
 
     def _restore_order(self, client_order_id: str) -> Order | None:

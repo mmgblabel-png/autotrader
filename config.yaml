@@ -5,6 +5,17 @@ portfolio:
   global_live_budget_eur: 50
   max_total_open_orders: 4
 
+
+adaptive_learning:
+  enabled: true
+  path: /data/adaptive_learning.json
+  min_samples: 12
+  lookback: 24
+  evaluation_window: 6
+  change_cooldown: 4
+  good_winrate_pct: 62.0
+  max_regression_pct: 20.0
+
 profit_policy:
   estimated_entry_fee_pct: 0.25
   estimated_exit_fee_pct: 0.25

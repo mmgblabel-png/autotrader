@@ -798,6 +798,12 @@ def deactivate_live():
     return {"armed": False, "message": "Live trading disarmed. Existing exchange orders are not automatically canceled."}
 
 
+@app.get("/api/learning/status", tags=["ml"])
+def adaptive_learning_status():
+    """Expose non-secret persistent learning state and bounded parameter overrides."""
+    return get_agent().adaptive_learning.snapshot()
+
+
 @app.post("/api/ml/walk-forward", tags=["ml"])
 def ml_walk_forward(rows: list[dict] = Body(...)):
     """Evaluate the standard-library shadow model; never places an order."""
