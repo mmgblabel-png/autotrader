@@ -63,6 +63,14 @@ class MarketMaker(BaseStrategy):
 
     name = "MarketMaker"
 
+    def observe(self) -> None:
+        """Warm adaptive volatility/momentum state without registering orders."""
+        if not self._running:
+            return
+        mid_price = float(self._config.get("_mid_price", 0.0))
+        if mid_price > 0:
+            self._update_adaptive_state(mid_price)
+
     def tick(self) -> None:  # noqa: C901
         if not self._running:
             return

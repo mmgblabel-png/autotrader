@@ -128,9 +128,12 @@ class AutoTrader:
                 strategy.on_fill(order, fill)
                 return
     def tick_all(self) -> None:
-        """Run strategies; in live mode, do not even create intents until runtime-armed."""
+        """Run strategies, or warm indicators only while live execution is disarmed."""
         live = os.getenv("EXECUTION_MODE", "paper").strip().lower() == "live"
         if live and not self._is_live_armed():
+            for strat in self._strategies.values():
+                if strat.is_running:
+                    strat.observe()
             return
         for strat in self._strategies.values():
             if strat.is_running:

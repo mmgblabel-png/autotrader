@@ -10,11 +10,20 @@ class Strategy:
         self.is_enabled = enabled
 
 
+class Journal:
+    def __init__(self, records=None):
+        self._records = records or {}
+
+    def get(self, client_order_id):
+        return self._records.get(client_order_id)
+
+
 class Adapter:
-    def __init__(self, *, open_orders=None, prices=None, rules=None):
+    def __init__(self, *, open_orders=None, prices=None, rules=None, journal_records=None):
         self._open_orders = open_orders or {}
         self._prices = prices or {}
         self._rules = rules or {}
+        self.journal = Journal(journal_records)
 
     def markets(self, market):
         return [self._rules[market]]
@@ -105,6 +114,9 @@ def test_preflight_fails_when_exchange_order_is_still_open():
     assert report["open_orders_clear"] is False
     assert report["total_open_orders"] == 1
     assert "exchange_open_orders_present" in report["strategies"][0]["errors"]
+    assert "unknown_exchange_open_orders_present" in report["strategies"][0]["errors"]
+    assert report["market_rules_passed"] is True
+    assert report["all_open_orders_bot_owned"] is False
 
 
 def test_preflight_rounds_order_value_amount_down():
@@ -122,3 +134,31 @@ def test_preflight_rounds_order_value_amount_down():
     report = validate_bitvavo_live_strategies(strategies, adapter)
     assert report["strategies"][0]["planned_amount"] == "2.95"
     assert Decimal(report["strategies"][0]["planned_notional_eur"]) <= Decimal("6")
+
+
+def test_preflight_recognizes_bot_owned_runtime_order():
+    strategies = [
+        Strategy("MarketMaker", {
+            "enabled": True, "live_capable": True, "exchange": "bitvavo",
+            "symbol": "BTC-EUR", "order_size": 0.0001,
+            "allocation_eur": 15, "max_order_eur": 10,
+        })
+    ]
+    adapter = Adapter(
+        prices={"BTC-EUR": "74100"},
+        rules={"BTC-EUR": market_rule(base_min="0.00005", quantity_decimals=8)},
+        open_orders={"BTC-EUR": [{"status": "new", "clientOrderId": "bot-1"}]},
+        journal_records={
+            "bot-1": {"market": "BTC-EUR", "strategy": "MarketMaker", "status": "new"}
+        },
+    )
+    report = validate_bitvavo_live_strategies(strategies, adapter)
+    assert report["passed"] is False
+    assert report["prearm_passed"] is False
+    assert report["market_rules_passed"] is True
+    assert report["open_orders_clear"] is False
+    assert report["all_open_orders_bot_owned"] is True
+    assert report["bot_owned_open_orders"] == 1
+    assert report["unknown_open_orders"] == 0
+    assert report["strategies"][0]["bot_owned_open_order_count"] == 1
+    assert report["strategies"][0]["unknown_open_order_count"] == 0

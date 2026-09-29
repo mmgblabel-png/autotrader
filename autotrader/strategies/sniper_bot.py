@@ -31,6 +31,16 @@ class SniperBot(BaseStrategy):
         self._position = inventory
         self._entry_price = entry if inventory > 0 else 0.0
 
+    def observe(self) -> None:
+        """Warm the momentum reference price without creating an entry."""
+        if not self._running:
+            return
+        current_price = float(self._config.get("_current_price", 0.0))
+        if current_price <= 0:
+            return
+        self._prev_price = current_price
+        self._config["_warmup_samples"] = int(self._config.get("_warmup_samples", 0)) + 1
+
     def tick(self) -> None:
         if not self._running or self._rm.is_killed(self.name):
             return

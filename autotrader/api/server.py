@@ -70,6 +70,7 @@ _CONFIG_PATH: Final[str] = os.getenv("AUTOTRADER_CONFIG", "config.yaml")
 _DEFAULT_TICK_INTERVAL: Final[float] = 1.0
 _MIN_TICK_INTERVAL: Final[float] = 0.1
 _DEFAULT_LIVE_SYNC_SECONDS: Final[float] = 5.0
+_DEFAULT_LIVE_RECONCILE_SECONDS: Final[float] = 5.0
 
 
 def _cors_origins() -> list[str]:
@@ -188,6 +189,14 @@ def _require_control_token(
         raise HTTPException(status_code=401, detail="Invalid strategy-control token.")
 
 
+def _has_reconcile_candidates(agent: AutoTrader) -> bool:
+    """Return whether durable Bitvavo order state still needs exchange reconciliation."""
+    try:
+        return bool(agent._bitvavo.journal.reconcile_candidates())
+    except Exception:
+        return False
+
+
 def _running_bitvavo_markets(agent: AutoTrader) -> list[str]:
     """Return unique Bitvavo markets that currently need private live synchronization."""
     return sorted({
@@ -209,15 +218,22 @@ async def _tick_loop(app: FastAPI, agent: AutoTrader) -> None:
     while True:
         try:
             if app.state.live_mode:
+                reconcile_due = (
+                    app.state.tick_count % app.state.live_reconcile_every_ticks == 0
+                )
+                if reconcile_due and _has_reconcile_candidates(agent):
+                    # Reconciliation must continue even while all strategies are
+                    # stopped/disarmed. Exchange orders can fill or be canceled
+                    # after a strategy has stopped, and durable inventory/journal
+                    # state must still converge to the exchange truth.
+                    agent.live_reconcile()
+
                 running_markets = _running_bitvavo_markets(agent)
                 sync_due = (
                     bool(running_markets)
                     and app.state.tick_count % app.state.live_sync_every_ticks == 0
                 )
                 if sync_due:
-                    # Reconcile first so fills/cancels are reflected in bot-owned
-                    # inventory before any strategy is allowed to create a new intent.
-                    agent.live_reconcile()
                     try:
                         balance_rows = agent._bitvavo.balance()
                         app.state.bitvavo_balances = {
@@ -298,6 +314,16 @@ async def _lifespan(app: FastAPI):
     app.state.live_sync_every_ticks = max(
         1, int(round(live_sync_seconds / app.state.tick_interval_seconds))
     )
+    try:
+        live_reconcile_seconds = max(
+            app.state.tick_interval_seconds,
+            float(os.getenv("AUTOTRADER_RECONCILE_SECONDS", str(_DEFAULT_LIVE_RECONCILE_SECONDS))),
+        )
+    except ValueError:
+        live_reconcile_seconds = _DEFAULT_LIVE_RECONCILE_SECONDS
+    app.state.live_reconcile_every_ticks = max(
+        1, int(round(live_reconcile_seconds / app.state.tick_interval_seconds))
+    )
     app.state.live_mode = os.getenv("EXECUTION_MODE", "paper").strip().lower() == "live"
     app.state.live_armed = False
     if app.state.live_mode:
@@ -328,11 +354,12 @@ async def _lifespan(app: FastAPI):
         _tick_loop(app, agent), name="autotrader-paper-tick-loop"
     )
     log.info(
-        "AutoTrader agent initialised from '%s' (mode=%s tick=%.3fs live_sync=%.3fs).",
+        "AutoTrader agent initialised from '%s' (mode=%s tick=%.3fs live_sync=%.3fs reconcile=%.3fs).",
         _CONFIG_PATH,
         "live" if app.state.live_mode else "paper",
         app.state.tick_interval_seconds,
         app.state.live_sync_every_ticks * app.state.tick_interval_seconds,
+        app.state.live_reconcile_every_ticks * app.state.tick_interval_seconds,
     )
 
     try:
@@ -582,14 +609,29 @@ def live_readiness():
         bitvavo_security_passed = bool(bitvavo_security.get("passed"))
     except Exception:
         bitvavo_security_passed = False
+    armed = bool(getattr(app.state, "live_armed", False))
     try:
         live_preflight = _cached_live_preflight()
-        live_preflight_passed = bool(live_preflight.get("passed"))
+        live_preflight_passed = bool(
+            live_preflight.get("market_rules_passed", live_preflight.get("passed"))
+        )
         exchange_open_orders_clear = bool(live_preflight.get("open_orders_clear"))
+        exchange_order_state_safe = (
+            exchange_open_orders_clear
+            if not armed
+            else bool(live_preflight.get("all_open_orders_bot_owned"))
+        )
     except Exception:
-        live_preflight = {"passed": False, "open_orders_clear": False, "strategies": []}
+        live_preflight = {
+            "passed": False,
+            "market_rules_passed": False,
+            "open_orders_clear": False,
+            "all_open_orders_bot_owned": False,
+            "strategies": [],
+        }
         live_preflight_passed = False
         exchange_open_orders_clear = False
+        exchange_order_state_safe = False
     strategy_states = get_agent().list_strategies()
     approved_live = [
         state for state in strategy_states.values()
@@ -606,7 +648,7 @@ def live_readiness():
         "bitvavo_credentials_present": credentials,
         "bitvavo_security_passed": bitvavo_security_passed,
         "live_market_preflight_passed": live_preflight_passed,
-        "exchange_open_orders_clear": exchange_open_orders_clear,
+        "exchange_order_state_safe": exchange_order_state_safe,
         "live_strategy_configured": bool(approved_live),
         "live_strategy_running": any(state.get("running") for state in approved_live),
         "running_strategies_approved": all(
@@ -631,7 +673,7 @@ def live_readiness():
         "Live readiness: ready=%s mode=%s armed=%s gates=%s journal=%s preflight=%s",
         ready,
         app.state.execution_gateway.mode.value,
-        bool(getattr(app.state, "live_armed", False)),
+        armed,
         gates,
         journal_state,
         live_preflight,
@@ -639,11 +681,12 @@ def live_readiness():
     return {
         "ready": ready,
         "ready_to_arm": ready,
-        "armed": bool(getattr(app.state, "live_armed", False)),
+        "armed": armed,
         "mode": app.state.execution_gateway.mode.value,
         "gates": gates,
         "journal": journal_state,
         "preflight": live_preflight,
+        "exchange_open_orders_clear": exchange_open_orders_clear,
         "action": "Resolve failed gates first." if not ready else "Ready for explicit runtime activation.",
         "warning": "Activation is runtime-only and never changes Railway variables.",
     }
