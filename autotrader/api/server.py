@@ -58,6 +58,8 @@ from autotrader.core.execution_gateway import ExecutionGateway
 from autotrader.core.bitvavo_security import validate_bitvavo_security
 from autotrader.core.live_preflight import validate_bitvavo_live_strategies
 from autotrader.core.market_feed import BitpandaFusionMarketFeed
+from autotrader.core.shadow_strategy_engine import ShadowStrategyEngine
+from autotrader.core.strategy_allocator_v2 import StrategyAllocatorV2
 from autotrader.connectors.bitvavo import BitvavoAdapter
 from autotrader.connectors.coinbase_advanced import CoinbaseAdvancedMarketData, CoinbaseMarketDataError
 from autotrader.connectors.bitpanda_fusion import BitpandaFusionAdapter
@@ -299,6 +301,30 @@ async def _tick_loop(app: FastAPI, agent: AutoTrader) -> None:
         await asyncio.sleep(app.state.tick_interval_seconds)
 
 
+async def _shadow_strategy_loop(app: FastAPI, agent: AutoTrader) -> None:
+    """Run candidate strategies continuously with no exchange order capability."""
+    cfg = agent._config.get("shadow_lab", {}) or {}
+    strategies = cfg.get("strategies", {}) or {}
+    while True:
+        try:
+            if bool(cfg.get("enabled", True)):
+                for name, raw in strategies.items():
+                    strat_cfg = raw or {}
+                    if not bool(strat_cfg.get("enabled", True)):
+                        continue
+                    symbol = str(strat_cfg.get("symbol", "")).upper().strip()
+                    if not symbol:
+                        continue
+                    price = float(await asyncio.to_thread(agent._bitvavo.ticker_price, symbol))
+                    app.state.shadow_strategy_engine.update(name, price, strat_cfg)
+                app.state.shadow_strategy_last_at = time.time()
+                app.state.shadow_strategy_error = None
+        except Exception as exc:
+            app.state.shadow_strategy_error = type(exc).__name__
+            log.warning("Shadow strategy loop failed: %s", type(exc).__name__)
+        await asyncio.sleep(app.state.shadow_strategy_interval_seconds)
+
+
 async def _arbitrage_shadow_loop(app: FastAPI) -> None:
     """Continuously refresh read-only Coinbase↔Bitvavo shadow opportunities."""
     while True:
@@ -380,6 +406,18 @@ async def _lifespan(app: FastAPI):
     app.state.arbitrage_shadow_cache = None
     app.state.arbitrage_shadow_cache_at = 0.0
     app.state.arbitrage_shadow_error = None
+    shadow_cfg = agent._config.get("shadow_lab", {}) or {}
+    app.state.shadow_strategy_engine = ShadowStrategyEngine(shadow_cfg)
+    try:
+        app.state.shadow_strategy_interval_seconds = max(
+            10.0,
+            float(shadow_cfg.get("interval_seconds", 15.0)),
+        )
+    except (TypeError, ValueError):
+        app.state.shadow_strategy_interval_seconds = 15.0
+    app.state.shadow_strategy_last_at = 0.0
+    app.state.shadow_strategy_error = None
+    app.state.allocator_v2 = StrategyAllocatorV2(agent._config.get("allocator_v2", {}) or {})
 
     if os.getenv("COINBASE_API_KEY", "").strip() and os.getenv("COINBASE_API_SECRET", "").strip():
         try:
@@ -412,6 +450,9 @@ async def _lifespan(app: FastAPI):
     app.state.arbitrage_shadow_task = asyncio.create_task(
         _arbitrage_shadow_loop(app), name="autotrader-arbitrage-shadow-loop"
     )
+    app.state.shadow_strategy_task = asyncio.create_task(
+        _shadow_strategy_loop(app, agent), name="autotrader-shadow-strategy-loop"
+    )
     log.info(
         "AutoTrader agent initialised from '%s' (mode=%s tick=%.3fs live_sync=%.3fs journal_reconcile=%.3fs).",
         _CONFIG_PATH,
@@ -427,10 +468,13 @@ async def _lifespan(app: FastAPI):
         log.info("Shutting down AutoTrader paper-mode agent…")
         app.state.tick_task.cancel()
         app.state.arbitrage_shadow_task.cancel()
+        app.state.shadow_strategy_task.cancel()
         with contextlib.suppress(asyncio.CancelledError):
             await app.state.tick_task
         with contextlib.suppress(asyncio.CancelledError):
             await app.state.arbitrage_shadow_task
+        with contextlib.suppress(asyncio.CancelledError):
+            await app.state.shadow_strategy_task
         agent.stop()
         log.info("AutoTrader agent stopped.")
 
@@ -1003,6 +1047,38 @@ def coinbase_bitvavo_shadow_scan():
         "last_scan_at": app.state.arbitrage_shadow_cache_at,
         "scanner_error": None,
     }
+
+
+@app.get("/api/shadow/strategies", tags=["shadow"])
+def shadow_strategy_status() -> dict[str, object]:
+    agent = get_agent()
+    cfg = agent._config.get("shadow_lab", {}) or {}
+    strategies = cfg.get("strategies", {}) or {}
+    payload = app.state.shadow_strategy_engine.status(strategies)
+    return {
+        **payload,
+        "last_update_at": getattr(app.state, "shadow_strategy_last_at", None),
+        "runtime_error": getattr(app.state, "shadow_strategy_error", None),
+    }
+
+
+@app.get("/api/allocator/v2", tags=["portfolio"])
+def allocator_v2_status() -> dict[str, object]:
+    agent = get_agent()
+    shadow_cfg = agent._config.get("shadow_lab", {}) or {}
+    shadow_rows = app.state.shadow_strategy_engine.status(
+        shadow_cfg.get("strategies", {}) or {}
+    ).get("strategies", [])
+    merged = dict(agent._config.get("strategies", {}) or {})
+    for key, value in (shadow_cfg.get("strategies", {}) or {}).items():
+        merged[key] = dict(value or {})
+    budget = float((agent._config.get("portfolio", {}) or {}).get("global_live_budget_eur", 50.0))
+    return app.state.allocator_v2.recommendations(
+        merged,
+        agent.profit_engine.summary(),
+        shadow_rows,
+        budget,
+    )
 
 
 @app.get("/api/markets/overview", tags=["markets"])
