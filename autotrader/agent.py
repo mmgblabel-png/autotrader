@@ -11,6 +11,7 @@ from typing import Dict, Optional
 import yaml
 
 from autotrader.core.logger import get_logger
+from autotrader.core.adaptive_learning import AdaptiveLearning
 from autotrader.connectors.bitvavo import BitvavoAdapter
 from autotrader.core.execution_coordinator import ExecutionCoordinator
 from autotrader.core.order_manager import OrderManager
@@ -42,6 +43,7 @@ class AutoTrader:
         self._om = OrderManager()
         self._rm = RiskManager()
         self._pe = ProfitEngine(export_dir=self._config.get("export_dir", "exports"))
+        self._learner = AdaptiveLearning(self._config.get("adaptive_learning", {}))
         self._strategies: Dict[str, BaseStrategy] = {}
         self._allocator = StrategyAllocator(self._config)
         self._rm.set_profit_engine(self._pe)
@@ -79,6 +81,10 @@ class AutoTrader:
     @property
     def profit_supervisor(self) -> "ProfitSupervisor":
         return self._profit_supervisor
+
+    @property
+    def adaptive_learning(self) -> "AdaptiveLearning":
+        return self._learner
 
     # ------------------------------------------------------------------
     # Public API
@@ -131,10 +137,22 @@ class AutoTrader:
             }
         return result
 
-    def _on_fill(self, order, fill: dict) -> None:
+    def _on_fill(self, order, fill: dict, realized_net_pnl_delta: float = 0.0) -> None:
         for strategy in self._strategies.values():
             if strategy.name == order.strategy:
                 strategy.on_fill(order, fill)
+                fill_id = str(fill.get("id") or fill.get("fillId") or "")
+                outcome_key = f"{order.order_id}:{fill_id or repr(sorted(fill.items()))}"
+                result = self._learner.record_realized_outcome(
+                    strategy_name=strategy.name,
+                    side=order.side.value,
+                    net_pnl_delta_eur=float(realized_net_pnl_delta),
+                    strategy_config=strategy._config,
+                    symbol=order.symbol,
+                    outcome_key=outcome_key,
+                )
+                if result.get("changed"):
+                    log.info("[%s] adaptive learning update: %s", strategy.name, result)
                 return
     def tick_all(self) -> None:
         """Run strategies; in live mode, do not even create intents until runtime-armed."""
@@ -254,8 +272,15 @@ class AutoTrader:
 
     def _register_strategies(self) -> None:
         strat_cfgs = self._config.get("strategies", {})
+        name_map = {
+            "market_maker": "MarketMaker",
+            "arbitrage": "ArbitrageHunter",
+            "grid": "GridRunner",
+            "sniper": "SniperBot",
+        }
         for key, cls in _STRATEGY_REGISTRY.items():
-            cfg = strat_cfgs.get(key, {})
+            cfg = dict(strat_cfgs.get(key, {}) or {})
+            self._learner.apply_overrides(name_map.get(key, key), cfg)
             strat = cls(order_manager=self._om, risk_manager=self._rm,
                         profit_engine=self._pe, config=cfg)
             self._strategies[key] = strat
