@@ -3,6 +3,7 @@ from decimal import Decimal
 import pytest
 
 from autotrader.connectors.bitvavo import BitvavoAdapter, BitvavoError
+from autotrader.core.order_journal import OrderJournal
 
 
 def test_bitvavo_defaults_to_shadow(monkeypatch):
