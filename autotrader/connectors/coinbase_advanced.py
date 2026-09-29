@@ -12,12 +12,14 @@ from dataclasses import dataclass
 from decimal import Decimal
 from typing import Any
 import os
+import base64
 import secrets
 import time
 import urllib.error
 
 import jwt
 from cryptography.hazmat.primitives import serialization
+from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
 
 class CoinbaseMarketDataError(RuntimeError):
@@ -84,16 +86,26 @@ class CoinbaseAdvancedMarketData:
     def _credential_format() -> dict[str, object]:
         key_name = os.getenv("COINBASE_API_KEY", "").strip()
         key_secret = os.getenv("COINBASE_API_SECRET", "").replace("\\n", "\n").strip()
-        key_name_ok = key_name.startswith("organizations/") and "/apiKeys/" in key_name
-        key_secret_ok = (
-            "BEGIN EC PRIVATE KEY" in key_secret
-            or "BEGIN PRIVATE KEY" in key_secret
+        key_name_ok = bool(
+            key_name
+            and (
+                (key_name.startswith("organizations/") and "/apiKeys/" in key_name)
+                or (len(key_name) == 36 and key_name.count("-") == 4)
+            )
         )
+        ec_key = "BEGIN " in key_secret and "PRIVATE KEY" in key_secret
+        ed25519_key = False
+        if key_secret and not ec_key:
+            try:
+                ed25519_key = len(base64.b64decode(key_secret, validate=True)) == 64
+            except Exception:
+                ed25519_key = False
         return {
             "credentials_present": bool(key_name and key_secret),
             "key_name_format_ok": key_name_ok,
-            "ecdsa_private_key_format_ok": key_secret_ok,
-            "format_compatible": bool(key_name_ok and key_secret_ok),
+            "ecdsa_private_key_format_ok": ec_key,
+            "ed25519_private_key_format_ok": ed25519_key,
+            "format_compatible": bool(key_name_ok and (ec_key or ed25519_key)),
         }
 
     def _build_rest_jwt(self, method: str, path: str) -> str:
@@ -105,41 +117,54 @@ class CoinbaseAdvancedMarketData:
             )
         if not fmt["format_compatible"]:
             raise CoinbaseAuthenticationError(
-                "Coinbase credentials are not in the expected CDP ECDSA format",
+                "Coinbase credentials are not in a supported CDP format",
                 category="credential_format_invalid",
             )
 
         key_name = os.getenv("COINBASE_API_KEY", "").strip()
-        key_secret = os.getenv("COINBASE_API_SECRET", "").replace("\\n", "\n")
-        try:
-            private_key = serialization.load_pem_private_key(
-                key_secret.encode("utf-8"),
-                password=None,
-            )
-        except Exception as exc:
-            raise CoinbaseAuthenticationError(
-                "Coinbase private key could not be parsed",
-                category="private_key_parse_failed",
-            ) from exc
-
+        key_secret = os.getenv("COINBASE_API_SECRET", "").replace("\\n", "\n").strip()
         now = int(time.time())
         uri = f"{method.upper()} api.coinbase.com{path}"
         payload = {
             "sub": key_name,
             "iss": "cdp",
             "nbf": now,
+            "iat": now,
             "exp": now + 120,
-            "uri": uri,
+            "uris": [uri],
         }
-        return jwt.encode(
-            payload,
-            private_key,
-            algorithm="ES256",
-            headers={
-                "kid": key_name,
-                "nonce": secrets.token_hex(16),
-            },
-        )
+        headers = {
+            "kid": key_name,
+            "nonce": secrets.token_hex(16),
+            "typ": "JWT",
+        }
+
+        try:
+            if fmt["ed25519_private_key_format_ok"]:
+                decoded = base64.b64decode(key_secret, validate=True)
+                private_key = Ed25519PrivateKey.from_private_bytes(decoded[:32])
+                return jwt.encode(
+                    payload,
+                    private_key,
+                    algorithm="EdDSA",
+                    headers=headers,
+                )
+
+            private_key = serialization.load_pem_private_key(
+                key_secret.encode("utf-8"),
+                password=None,
+            )
+            return jwt.encode(
+                payload,
+                private_key,
+                algorithm="ES256",
+                headers=headers,
+            )
+        except Exception as exc:
+            raise CoinbaseAuthenticationError(
+                "Coinbase private key could not be parsed or signed",
+                category="private_key_parse_failed",
+            ) from exc
 
     def _auth_get(self, path: str) -> Any:
         token = self._build_rest_jwt("GET", path)
