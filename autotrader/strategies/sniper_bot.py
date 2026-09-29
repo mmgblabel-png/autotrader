@@ -49,7 +49,8 @@ class SniperBot(BaseStrategy):
             size = order_value / current_price
 
         momentum_pct = float(cfg.get("momentum_pct", 0.5)) / 100
-        tp_pct = float(cfg.get("take_profit_pct", 1.0)) / 100
+        tp_target_value = float(cfg.get("take_profit_pct", 1.0))
+        tp_pct = tp_target_value / 100
         sl_pct = float(cfg.get("stop_loss_pct", 0.3)) / 100
         cooldown = max(0.0, float(cfg.get("cooldown_seconds", 60)))
         now = time.monotonic()
@@ -66,6 +67,15 @@ class SniperBot(BaseStrategy):
             # Spot mode is intentionally long-only: negative momentum never
             # opens an uncovered short.
             if move >= momentum_pct and now - self._last_entry_ts >= cooldown:
+                required_edge = max(0.0, float(cfg.get("_required_entry_edge_pct", 0.0)))
+                if required_edge > 0 and tp_target_value < required_edge:
+                    log.info(
+                        "SNIPE profit guard: entry paused; take-profit %.3f%% < required %.3f%%.",
+                        tp_target_value,
+                        required_edge,
+                    )
+                    self._prev_price = current_price
+                    return
                 notional = size * current_price
                 slippage_pct = abs(move) * 100 * 0.5
                 available_quote = float(cfg.get("_available_quote", 0.0))
@@ -90,7 +100,8 @@ class SniperBot(BaseStrategy):
 
         elif self._position > 0 and self._entry_price > 0:
             pnl_pct = (current_price - self._entry_price) / self._entry_price
-            if pnl_pct >= tp_pct:
+            min_profit_exit_price = max(0.0, float(cfg.get("_min_profit_exit_price", 0.0)))
+            if pnl_pct >= tp_pct and (min_profit_exit_price <= 0 or current_price >= min_profit_exit_price):
                 self._close_position(symbol, exchange, current_price, "TAKE-PROFIT")
             elif pnl_pct <= -sl_pct:
                 self._close_position(symbol, exchange, current_price, "STOP-LOSS")
