@@ -1104,13 +1104,27 @@ def health():
 
 @app.get("/api/bitvavo/live-state", tags=["execution"])
 def bitvavo_live_state() -> dict[str, object]:
-    """Return authenticated, read-only Bitvavo balances and open BTC-EUR orders."""
+    """Return redacted balances and open orders for configured Bitvavo bot markets."""
     agent = get_agent()
-    market = "BTC-EUR"
+    markets = sorted({
+        str(strategy._config.get("symbol", "")).upper()
+        for strategy in agent._strategies.values()
+        if strategy.is_enabled
+        and str(strategy._config.get("exchange", "bitvavo")).lower() == "bitvavo"
+        and str(strategy._config.get("symbol", "")).strip()
+    })
+    if not markets:
+        markets = ["BTC-EUR"]
+    relevant_assets = {"EUR"}
+    relevant_assets.update(market.split("-", 1)[0] for market in markets)
+
     try:
         balances_raw = agent._bitvavo.balance()
-        orders_raw = agent._bitvavo.open_orders(market)
-        ticker = float(agent._bitvavo.ticker_price(market))
+        orders_raw = []
+        ticker_by_market: dict[str, float] = {}
+        for market in markets:
+            orders_raw.extend(agent._bitvavo.open_orders(market))
+            ticker_by_market[market] = float(agent._bitvavo.ticker_price(market))
     except Exception as exc:
         raise HTTPException(status_code=502, detail="Bitvavo live-state read failed") from exc
 
@@ -1119,7 +1133,7 @@ def bitvavo_live_state() -> dict[str, object]:
         if not isinstance(row, dict):
             continue
         symbol = str(row.get("symbol") or "").upper()
-        if symbol not in {"EUR", "BTC"}:
+        if symbol not in relevant_assets:
             continue
         available = float(row.get("available") or 0)
         in_order = float(row.get("inOrder") or row.get("in_order") or 0)
@@ -1133,12 +1147,13 @@ def bitvavo_live_state() -> dict[str, object]:
     for row in orders_raw if isinstance(orders_raw, list) else []:
         if not isinstance(row, dict):
             continue
+        market = str(row.get("market") or "").upper()
         amount = float(row.get("amount") or 0)
         filled = float(row.get("filledAmount") or row.get("amountFilled") or 0)
         price = float(row.get("price") or 0)
         remaining = max(0.0, amount - filled)
         open_orders.append({
-            "market": str(row.get("market") or market).upper(),
+            "market": market,
             "side": str(row.get("side") or "").lower(),
             "order_type": str(row.get("orderType") or row.get("type") or "").lower(),
             "status": str(row.get("status") or "open").lower(),
@@ -1151,18 +1166,23 @@ def bitvavo_live_state() -> dict[str, object]:
         })
 
     eur = balances.get("EUR", {"available": 0.0, "in_order": 0.0, "total": 0.0})
-    btc = balances.get("BTC", {"available": 0.0, "in_order": 0.0, "total": 0.0})
+    configured_assets_value = float(eur["total"])
+    for market, ticker in ticker_by_market.items():
+        base = market.split("-", 1)[0]
+        configured_assets_value += float(balances.get(base, {}).get("total", 0.0)) * ticker
+
     return {
         "venue": "bitvavo",
-        "market": market,
-        "ticker_eur": ticker,
+        "markets": markets,
+        "ticker_by_market_eur": ticker_by_market,
+        "ticker_eur": ticker_by_market.get("BTC-EUR"),
         "armed": bool(getattr(app.state, "live_armed", False)),
-        "balances": {"EUR": eur, "BTC": btc},
-        "bot_assets_value_eur": float(eur["total"]) + float(btc["total"]) * ticker,
+        "balances": balances,
+        "configured_assets_value_eur": configured_assets_value,
+        "bot_assets_value_eur": configured_assets_value,
         "open_orders": open_orders,
         "open_order_count": len(open_orders),
     }
-
 
 @app.get("/api/security/bitvavo", tags=["security"])
 def bitvavo_security_status() -> dict[str, object]:
