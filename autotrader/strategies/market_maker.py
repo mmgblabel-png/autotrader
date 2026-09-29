@@ -109,9 +109,15 @@ class MarketMaker(BaseStrategy):
         bid_price = round(mid_price * (1 - spread_pct / 2), 2)
         ask_price = round(mid_price * (1 + spread_pct / 2), 2)
         entry_price = max(0.0, float(cfg.get("_bot_average_entry_price", 0.0)))
-        exit_markup_pct = float(cfg.get("cycle_exit_markup_pct", cfg.get("target_spread", 0.80))) / 100
+        exit_markup_value = float(cfg.get("cycle_exit_markup_pct", cfg.get("target_spread", 0.80)))
+        exit_markup_pct = exit_markup_value / 100
+        min_profit_exit_price = max(0.0, float(cfg.get("_min_profit_exit_price", 0.0)))
         if bool(cfg.get("inventory_cycle_mode", True)) and entry_price > 0:
-            ask_price = max(ask_price, round(entry_price * (1 + exit_markup_pct), 2))
+            ask_price = max(
+                ask_price,
+                round(entry_price * (1 + exit_markup_pct), 2),
+                min_profit_exit_price,
+            )
         notional = size * mid_price
 
         # Risk gate
@@ -140,6 +146,14 @@ class MarketMaker(BaseStrategy):
                 else:
                     can_bid = available_quote >= (size * bid_price)
                     can_ask = False
+                    required_edge = max(0.0, float(cfg.get("_required_entry_edge_pct", 0.0)))
+                    if required_edge > 0 and exit_markup_value < required_edge:
+                        can_bid = False
+                        log.info(
+                            "MM profit guard: BUY paused; target exit edge %.3f%% < required %.3f%%.",
+                            exit_markup_value,
+                            required_edge,
+                        )
                     cooldown = max(0.0, float(cfg.get("cycle_cooldown_seconds", 60)))
                     last_sell_fill = max(0.0, float(cfg.get("_last_bot_sell_fill_at", 0.0)))
                     import time as _time
