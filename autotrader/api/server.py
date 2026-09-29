@@ -172,6 +172,9 @@ async def _tick_loop(app: FastAPI, agent: AutoTrader) -> None:
                         inventory = agent._bitvavo.journal.inventory_cost_basis(symbol, strategy.name)
                         strategy._config["_bot_base_inventory"] = float(inventory["quantity"])
                         strategy._config["_bot_average_entry_price"] = float(inventory["average_entry_price"])
+                        strategy._config["_last_bot_sell_fill_at"] = agent._bitvavo.journal.latest_fill_time(
+                            symbol, strategy.name, "sell"
+                        )
                         strategy._config["_exchange_open_orders_snapshot_ready"] = bool(
                             getattr(app.state, "bitvavo_open_orders_snapshot_ready", False)
                         )
