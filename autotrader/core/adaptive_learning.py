@@ -220,6 +220,8 @@ class AdaptiveLearning:
                 state["pending_change"] = None
                 self._save()
                 return {"changed": True, "action": state["history"][-1]["action"], "parameter": tunable.parameter}
+            self._save()
+            return {"changed": False, "reason": "evaluating_change", "evaluation_samples": len(post)}
 
         if len(outcomes) < self.min_samples:
             self._save()
