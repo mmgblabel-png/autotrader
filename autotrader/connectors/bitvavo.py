@@ -286,7 +286,7 @@ class BitvavoAdapter:
                 if client_id and self.journal.get(client_id):
                     self.journal.update(client_id, "cancelled", {"reason": "kill_switch_shadow", "orderId": order_id})
                 continue
-            response = self._private_request("DELETE", f"/order/{urllib.parse.quote(market)}/{urllib.parse.quote(order_id)}")
+            response = self.cancel_order(market, order_id)
             report["orders_canceled"].append({"market": market, "orderId": order_id, "status": "canceled", "response": response})
             if client_id and self.journal.get(client_id):
                 self.journal.update(client_id, "canceled", response, exchange_order_id=order_id)
