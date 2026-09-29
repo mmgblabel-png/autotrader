@@ -271,6 +271,129 @@ class OrderJournal:
         average = cost / quantity if quantity > 0 else Decimal("0")
         return {"quantity": max(quantity, Decimal("0")), "average_entry_price": max(average, Decimal("0"))}
 
+    def strategy_performance(
+        self,
+        market: str,
+        strategy: str,
+        *,
+        mark_price: Decimal | None = None,
+        estimated_exit_cost_pct: Decimal = Decimal("0"),
+    ) -> dict[str, Decimal | int]:
+        """Return durable fee-aware performance for one strategy/market.
+
+        Accounting uses average cost and actual recorded fills. BUY quote fees
+        are embedded in inventory cost, base fees reduce received inventory,
+        SELL quote fees reduce proceeds, and base fees increase inventory
+        consumed by the exit. Unrealized net PnL assumes the entire current
+        inventory could be exited at mark_price after configured future exit
+        friction.
+        """
+        base, _, quote = market.upper().partition("-")
+        with self._lock:
+            rows = self._db.execute(
+                """
+                SELECT o.side, f.amount, f.price, f.fee, f.raw_json
+                FROM fills AS f
+                JOIN orders AS o ON o.client_order_id=f.client_order_id
+                WHERE o.market=? AND o.strategy=?
+                ORDER BY f.observed_at, f.fill_key
+                """,
+                (market.upper(), strategy),
+            ).fetchall()
+
+        quantity = Decimal("0")
+        inventory_cost = Decimal("0")
+        realized_net = Decimal("0")
+        fees_quote = Decimal("0")
+        buy_cash_out = Decimal("0")
+        sell_cash_in = Decimal("0")
+        profitable_exits = 0
+        losing_exits = 0
+        unpriced_fee_count = 0
+
+        for row in rows:
+            amount = abs(Decimal(str(row["amount"] or "0")))
+            price = abs(Decimal(str(row["price"] or "0")))
+            fee = abs(Decimal(str(row["fee"] or "0")))
+            if amount <= 0 or price <= 0:
+                continue
+            try:
+                payload = json.loads(row["raw_json"] or "{}")
+            except (TypeError, json.JSONDecodeError):
+                payload = {}
+            fee_currency = str(payload.get("feeCurrency") or quote).upper()
+            if fee_currency == base:
+                fee_quote = fee * price
+            elif fee_currency == quote or not fee_currency:
+                fee_quote = fee
+            else:
+                fee_quote = Decimal("0")
+                if fee > 0:
+                    unpriced_fee_count += 1
+            fees_quote += fee_quote
+
+            side = str(row["side"] or "").lower()
+            if side == "buy":
+                received = amount - (fee if fee_currency == base else Decimal("0"))
+                cash_cost = amount * price + (fee if fee_currency == quote else Decimal("0"))
+                if received > 0:
+                    quantity += received
+                    inventory_cost += cash_cost
+                    buy_cash_out += cash_cost
+            elif side == "sell":
+                base_fee = fee if fee_currency == base else Decimal("0")
+                outgoing = min(quantity, amount + base_fee) if quantity > 0 else Decimal("0")
+                proceeds = amount * price - (fee if fee_currency == quote else Decimal("0"))
+                sell_cash_in += proceeds
+                if outgoing <= 0 or quantity <= 0:
+                    continue
+                avg_cost = inventory_cost / quantity
+                removed_cost = avg_cost * outgoing
+                exit_pnl = proceeds - removed_cost
+                realized_net += exit_pnl
+                if exit_pnl > 0:
+                    profitable_exits += 1
+                elif exit_pnl < 0:
+                    losing_exits += 1
+                quantity -= outgoing
+                inventory_cost -= removed_cost
+                if quantity <= Decimal("0.000000000000000001"):
+                    quantity = Decimal("0")
+                    inventory_cost = Decimal("0")
+
+        avg_entry = inventory_cost / quantity if quantity > 0 else Decimal("0")
+        mark = max(Decimal("0"), Decimal(str(mark_price or "0")))
+        exit_cost_ratio = max(Decimal("0"), Decimal(str(estimated_exit_cost_pct))) / Decimal("100")
+        if exit_cost_ratio >= Decimal("1"):
+            exit_cost_ratio = Decimal("0.999999")
+
+        expected_exit_proceeds = Decimal("0")
+        unrealized_net = Decimal("0")
+        break_even_exit = Decimal("0")
+        if quantity > 0 and mark > 0:
+            expected_exit_proceeds = quantity * mark * (Decimal("1") - exit_cost_ratio)
+            unrealized_net = expected_exit_proceeds - inventory_cost
+        if quantity > 0:
+            break_even_exit = avg_entry / (Decimal("1") - exit_cost_ratio)
+
+        return {
+            "quantity": max(quantity, Decimal("0")),
+            "inventory_cost_eur": max(inventory_cost, Decimal("0")),
+            "average_entry_price": max(avg_entry, Decimal("0")),
+            "realized_net_pnl_eur": realized_net,
+            "fees_quote_equivalent_eur": fees_quote,
+            "buy_cash_out_eur": buy_cash_out,
+            "sell_cash_in_eur": sell_cash_in,
+            "mark_price": mark,
+            "estimated_exit_proceeds_eur": expected_exit_proceeds,
+            "unrealized_net_pnl_eur": unrealized_net,
+            "economic_pnl_eur": realized_net + unrealized_net,
+            "break_even_exit_price": break_even_exit,
+            "profitable_exits": profitable_exits,
+            "losing_exits": losing_exits,
+            "unpriced_fee_count": unpriced_fee_count,
+        }
+
     def latest_fill_time(self, market: str, strategy: str, side: str | None = None) -> float:
         """Return the latest locally observed fill time for a strategy/market."""
         params: list[Any] = [market.upper(), strategy]
