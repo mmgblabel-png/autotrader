@@ -94,9 +94,10 @@ class ProfitEngine:
     # ------------------------------------------------------------------
 
     def record_trade(self, trade: Trade) -> float:
-        """Record a fill and return gross realized PnL created by this fill.
+        """Record a fill and return the fill's risk-PnL delta after its fee.
 
-        BUY fills build average-cost inventory. SELL fills realize PnL only
+        BUY fills build average-cost inventory and return only their fee as a
+        negative risk delta. SELL fills realize PnL only
         against inventory already owned by the same strategy and symbol. Fees
         are converted to quote-currency value and remain separate so net_pnl
         stays realized_pnl minus fees.
@@ -172,12 +173,13 @@ class ProfitEngine:
                         f"Large realized PnL movement: {realized:+.4f} quote units.",
                     )
 
+        risk_pnl_delta = realized - fee_quote
         log.info(
-            "[%s] Trade recorded: %s %s %.8f @ %.4f (fee=%.8f %s realized=%+.4f)",
+            "[%s] Trade recorded: %s %s %.8f @ %.4f (fee=%.8f %s realized=%+.4f risk_delta=%+.4f)",
             trade.strategy, trade.side, trade.symbol, trade.quantity, trade.price,
-            trade.fee, fee_currency, realized,
+            trade.fee, fee_currency, realized, risk_pnl_delta,
         )
-        return realized
+        return risk_pnl_delta
 
     def record_realized_pnl(self, strategy: str, pnl: float) -> None:
         stats = self._ensure(strategy)
