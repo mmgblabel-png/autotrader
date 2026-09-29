@@ -46,8 +46,12 @@ class BitvavoAdapter:
         self.access_window = int(os.getenv("BITVAVO_ACCESS_WINDOW", "10000"))
         self.dry_run = os.getenv("BITVAVO_DRY_RUN", "true").lower() in {"1", "true", "yes"}
         self.timeout = timeout
-        self.gateway = gateway or ExecutionGateway()
         self.journal = journal or OrderJournal()
+        self.journal.backfill_execution_ledger()
+        self.gateway = gateway or ExecutionGateway()
+        self.gateway.restore_daily_state(
+            exposure_eur=self.journal.daily_execution_exposure_utc()
+        )
         self.is_armed = is_armed or (lambda: False)
 
     @staticmethod
@@ -342,16 +346,19 @@ class BitvavoAdapter:
             client_order_id = str(uuid.UUID(client_order_id))
         except ValueError as exc:
             raise BitvavoError("client_order_id must be a UUID", category="invalid_order") from exc
+        if self.journal.get(client_order_id):
+            raise BitvavoError("duplicate client_order_id", category="duplicate_order")
         amount, price = self._validate_order_rules(market, amount, price, order_type)
         observed = self.ticker_price(market)
         expected = price or observed
         notional_eur = amount * expected if side == "buy" else amount * observed
-        decision = self.gateway.evaluate(ExecutionRequest("bitvavo", market, side.upper(), notional_eur, expected, observed, client_order_id, time.time()), armed=bool(self.is_armed()))
         proposal = {"venue": "bitvavo", "market": market, "side": side, "orderType": order_type, "amount": str(amount), "price": str(price) if price else None, "clientOrderId": client_order_id}
         new_intent = self.journal.record_intent(client_order_id=client_order_id, market=market, side=side, order_type=order_type, amount=str(amount), price=str(price) if price else None)
+        if not new_intent:
+            raise BitvavoError("duplicate client_order_id", category="duplicate_order")
+        decision = self.gateway.evaluate(ExecutionRequest("bitvavo", market, side.upper(), notional_eur, expected, observed, client_order_id, time.time()), armed=bool(self.is_armed()))
         if not decision.accepted:
-            if new_intent:
-                self.journal.update(client_order_id, "rejected", {"reason": decision.reason}, error=decision.reason)
+            self.journal.update(client_order_id, "rejected", {"reason": decision.reason}, error=decision.reason)
             raise BitvavoError(decision.reason)
         if self.dry_run or os.getenv("EXECUTION_MODE", "paper") != "live":
             self.journal.update(client_order_id, "shadow", proposal)
@@ -359,6 +366,7 @@ class BitvavoAdapter:
         if os.getenv("LIVE_EXECUTION_APPROVED") != "true" or os.getenv("LIVE_EXECUTION_ADAPTER_INSTALLED") != "true" or os.getenv("EMERGENCY_STOP", "true") == "true" or os.getenv("LIVE_TRADING_CONFIRMATION") != "I_UNDERSTAND_LIVE_ORDERS":
             self.journal.update(client_order_id, "blocked", proposal, error="live_gates_not_satisfied")
             raise BitvavoError("Live gates are not satisfied; no order was sent")
+        self.journal.record_execution_acceptance(client_order_id, str(notional_eur))
         body: dict[str, Any] = {"market": market, "side": side, "orderType": order_type, "operatorId": operator_id if operator_id > 0 else int(os.getenv("BITVAVO_OPERATOR_ID", "1")), "clientOrderId": client_order_id, "amount": str(amount), "responseRequired": True}
         if order_type == "limit":
             body.update({"price": str(price), "timeInForce": "GTC", "postOnly": True})
