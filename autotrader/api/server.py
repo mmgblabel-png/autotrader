@@ -67,6 +67,7 @@ log = get_logger("api.server")
 _CONFIG_PATH: Final[str] = os.getenv("AUTOTRADER_CONFIG", "config.yaml")
 _DEFAULT_TICK_INTERVAL: Final[float] = 1.0
 _MIN_TICK_INTERVAL: Final[float] = 0.1
+_DEFAULT_LIVE_SYNC_SECONDS: Final[float] = 5.0
 
 
 def _cors_origins() -> list[str]:
@@ -132,7 +133,11 @@ async def _tick_loop(app: FastAPI, agent: AutoTrader) -> None:
     while True:
         try:
             if app.state.live_mode:
-                if app.state.tick_count % 30 == 0:
+                sync_due = app.state.tick_count % app.state.live_sync_every_ticks == 0
+                if sync_due:
+                    # Reconcile first so fills/cancels are reflected in bot-owned
+                    # inventory before any strategy is allowed to create a new intent.
+                    agent.live_reconcile()
                     try:
                         balance_rows = agent._bitvavo.balance()
                         app.state.bitvavo_balances = {
@@ -175,8 +180,6 @@ async def _tick_loop(app: FastAPI, agent: AutoTrader) -> None:
                             if str(row.get("market") or "").upper() == symbol
                         )
                 agent.tick_all()
-                if app.state.tick_count % 30 == 0:
-                    agent.live_reconcile()
             else:
                 agent.tick_all()
             app.state.tick_count += 1
@@ -193,6 +196,16 @@ async def _lifespan(app: FastAPI):
     """Initialise the agent, run its tick task, then stop it cleanly."""
     agent = init_agent(_CONFIG_PATH)
     app.state.tick_interval_seconds = _tick_interval()
+    try:
+        live_sync_seconds = max(
+            app.state.tick_interval_seconds,
+            float(os.getenv("AUTOTRADER_LIVE_SYNC_SECONDS", str(_DEFAULT_LIVE_SYNC_SECONDS))),
+        )
+    except ValueError:
+        live_sync_seconds = _DEFAULT_LIVE_SYNC_SECONDS
+    app.state.live_sync_every_ticks = max(
+        1, int(round(live_sync_seconds / app.state.tick_interval_seconds))
+    )
     app.state.live_mode = os.getenv("EXECUTION_MODE", "paper").strip().lower() == "live"
     app.state.live_armed = False
     if app.state.live_mode:
@@ -209,9 +222,11 @@ async def _lifespan(app: FastAPI):
         _tick_loop(app, agent), name="autotrader-paper-tick-loop"
     )
     log.info(
-        "AutoTrader paper-mode agent initialised from '%s' (tick interval %.3fs).",
+        "AutoTrader agent initialised from '%s' (mode=%s tick=%.3fs live_sync=%.3fs).",
         _CONFIG_PATH,
+        "live" if app.state.live_mode else "paper",
         app.state.tick_interval_seconds,
+        app.state.live_sync_every_ticks * app.state.tick_interval_seconds,
     )
 
     try:
