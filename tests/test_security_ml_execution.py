@@ -38,7 +38,11 @@ def test_gateway_rejects_limit_and_live(monkeypatch):
     assert "per-trade" in decision.reason
     decision = gateway.evaluate(req(order_id="live-1234567890123456"))
     assert not decision.accepted
-    assert "adapter" in decision.reason
+    assert "armed" in decision.reason
+
+    decision = gateway.evaluate(req(order_id="gates-1234567890123456"), armed=True)
+    assert not decision.accepted
+    assert "gates" in decision.reason
 
 
 def candles(n=90):
