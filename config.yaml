@@ -5,6 +5,12 @@ portfolio:
   global_live_budget_eur: 50
   max_total_open_orders: 4
 
+profit_policy:
+  estimated_entry_fee_pct: 0.25
+  estimated_exit_fee_pct: 0.25
+  estimated_slippage_each_leg_pct: 0.05
+  min_expected_net_edge_pct: 0.15
+
 strategies:
   market_maker:
     enabled: true
