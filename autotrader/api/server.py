@@ -525,6 +525,54 @@ def pnl_events(limit: int = Query(default=100, ge=1, le=200)):
     return {"events": get_agent().profit_engine.events(limit)}
 
 
+@app.get("/api/pnl/live", tags=["pnl"])
+def live_pnl():
+    """Return durable fee-aware live PnL and break-even state per strategy."""
+    agent = get_agent()
+    rows = []
+    totals = {
+        "realized_net_pnl_eur": 0.0,
+        "unrealized_net_pnl_eur": 0.0,
+        "economic_pnl_eur": 0.0,
+        "fees_quote_equivalent_eur": 0.0,
+    }
+    for strategy in agent._strategies.values():
+        if not strategy.is_enabled:
+            continue
+        if str(strategy._config.get("exchange", "bitvavo")).lower() != "bitvavo":
+            continue
+        symbol = str(strategy._config.get("symbol", "")).upper()
+        if not symbol:
+            continue
+        mark = float(strategy._config.get("_current_price") or 0.0)
+        if mark <= 0:
+            try:
+                mark = float(agent._bitvavo.ticker_price(symbol))
+            except Exception:
+                mark = 0.0
+        snapshot = agent.profit_supervisor.strategy_snapshot(symbol, strategy.name, mark)
+        rows.append(snapshot)
+        for key in totals:
+            totals[key] += float(snapshot.get(key, 0.0) or 0.0)
+    if totals["economic_pnl_eur"] > 0:
+        state = "net_positive"
+    elif totals["economic_pnl_eur"] < 0:
+        state = "net_negative"
+    else:
+        state = "flat"
+    return {
+        "state": state,
+        "totals": {key: round(value, 6) for key, value in totals.items()},
+        "policy": {
+            "required_entry_edge_pct": float(agent.profit_supervisor.policy.required_entry_edge_pct),
+            "future_exit_cost_pct": float(agent.profit_supervisor.policy.future_exit_cost_pct),
+            "min_expected_net_edge_pct": float(agent.profit_supervisor.policy.min_expected_net_edge_pct),
+        },
+        "strategies": rows,
+        "note": "Unrealized values are estimates after configured exit fee/slippage; profit is never guaranteed.",
+    }
+
+
 @app.get("/api/events", tags=["pnl"])
 def events(limit: int = Query(default=100, ge=1, le=200)):
     """Compatibility route returning the event list required by the dashboard."""
@@ -617,11 +665,38 @@ def live_readiness():
         live_preflight = {"passed": False, "open_orders_clear": False, "strategies": []}
         live_preflight_passed = False
         exchange_open_orders_clear = False
-    strategy_states = get_agent().list_strategies()
+    agent = get_agent()
+    strategy_states = agent.list_strategies()
     approved_live = [
         state for state in strategy_states.values()
         if state.get("enabled") and state.get("live_capable")
     ]
+    journal_states: dict[str, dict] = {}
+    target_edges: dict[str, float] = {}
+    for key, strategy in agent._strategies.items():
+        state = strategy_states.get(key, {})
+        if not (state.get("enabled") and state.get("live_capable")):
+            continue
+        symbol = str(strategy._config.get("symbol", "")).upper()
+        if symbol:
+            try:
+                journal_states[key] = agent._bitvavo.journal.strategy_market_state(symbol, strategy.name)
+            except Exception:
+                journal_states[key] = {"nonterminal_count": -1}
+        if strategy.name == "MarketMaker":
+            target_edges[key] = float(strategy._config.get("cycle_exit_markup_pct", 0.0))
+        elif strategy.name == "GridRunner":
+            target_edges[key] = float(strategy._config.get("exit_markup_pct", 0.0))
+        elif strategy.name == "SniperBot":
+            target_edges[key] = float(strategy._config.get("take_profit_pct", 0.0))
+    journal_nonterminal_clear = bool(journal_states) and all(
+        int(state.get("nonterminal_count", -1)) == 0
+        for state in journal_states.values()
+    )
+    required_entry_edge_pct = float(agent.profit_supervisor.policy.required_entry_edge_pct)
+    profit_policy_satisfied = bool(target_edges) and all(
+        edge >= required_entry_edge_pct for edge in target_edges.values()
+    )
     gates = {
         "execution_mode_live": os.getenv("EXECUTION_MODE", "paper").strip().lower() == "live",
         "live_execution_approved": os.getenv("LIVE_EXECUTION_APPROVED", "false").strip().lower() == "true",
@@ -634,6 +709,8 @@ def live_readiness():
         "bitvavo_security_passed": bitvavo_security_passed,
         "live_market_preflight_passed": live_preflight_passed,
         "exchange_open_orders_clear": exchange_open_orders_clear,
+        "journal_nonterminal_clear": journal_nonterminal_clear,
+        "profit_policy_satisfied": profit_policy_satisfied,
         "live_strategy_configured": bool(approved_live),
         "live_strategy_running": any(state.get("running") for state in approved_live),
         "running_strategies_approved": all(
@@ -643,25 +720,24 @@ def live_readiness():
         "control_token_present": bool(os.getenv("AUTOTRADER_CONTROL_TOKEN", "").strip()),
     }
     ready = all(gates.values())
-    try:
-        journal_state = get_agent()._bitvavo.journal.strategy_market_state("BTC-EUR", "MarketMaker")
-    except Exception:
-        journal_state = {
-            "latest_side": None,
-            "latest_status": None,
-            "latest_amount": None,
-            "fill_count": 0,
-            "nonterminal_count": -1,
-            "net_base_inventory": "0",
-        }
+    journal_state = journal_states.get("market_maker", {
+        "latest_side": None,
+        "latest_status": None,
+        "latest_amount": None,
+        "fill_count": 0,
+        "nonterminal_count": -1,
+        "net_base_inventory": "0",
+    })
     log.info(
-        "Live readiness: ready=%s mode=%s armed=%s gates=%s journal=%s preflight=%s",
+        "Live readiness: ready=%s mode=%s armed=%s gates=%s journal=%s journals=%s preflight=%s profit_required_edge_pct=%.4f",
         ready,
         app.state.execution_gateway.mode.value,
         bool(getattr(app.state, "live_armed", False)),
         gates,
         journal_state,
+        journal_states,
         live_preflight,
+        required_entry_edge_pct,
     )
     return {
         "ready": ready,
@@ -670,7 +746,12 @@ def live_readiness():
         "mode": app.state.execution_gateway.mode.value,
         "gates": gates,
         "journal": journal_state,
+        "journals": journal_states,
         "preflight": live_preflight,
+        "profit_policy": {
+            "required_entry_edge_pct": required_entry_edge_pct,
+            "target_edges_pct": target_edges,
+        },
         "action": "Resolve failed gates first." if not ready else "Ready for explicit runtime activation.",
         "warning": "Activation is runtime-only and never changes Railway variables.",
     }
@@ -696,6 +777,10 @@ def activate_live(payload: dict = Body(...)):
 @app.post("/api/live/deactivate", tags=["execution"])
 def deactivate_live():
     app.state.live_armed = False
+    try:
+        get_agent().live_reconcile()
+    except Exception as exc:
+        log.warning("Post-deactivation order reconciliation failed: %s", exc)
     return {"armed": False, "message": "Live trading disarmed. Existing exchange orders are not automatically canceled."}
 
 
@@ -954,8 +1039,13 @@ def stop_live_strategies(
         name for name, item in state.items()
         if item.get("running") and item.get("live_capable")
     ]
+    stopped = [agent.stop(name) for name in names]
+    try:
+        agent.live_reconcile()
+    except Exception as exc:
+        log.warning("Post-stop order reconciliation failed: %s", exc)
     return {
-        "strategies": [agent.stop(name) for name in names],
+        "strategies": stopped,
         "stopped_count": len(names),
         "warning": "Existing exchange orders are not automatically canceled.",
     }
