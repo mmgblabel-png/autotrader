@@ -56,6 +56,7 @@ from autotrader.core.notifications import notify_paper_report
 from autotrader.core.paper_reporting import build_paper_report, export_paper_report
 from autotrader.core.execution_gateway import ExecutionGateway
 from autotrader.core.bitvavo_security import validate_bitvavo_security
+from autotrader.core.live_preflight import validate_bitvavo_live_strategies
 from autotrader.core.market_feed import BitpandaFusionMarketFeed
 from autotrader.connectors.bitvavo import BitvavoAdapter
 from autotrader.connectors.coinbase_advanced import CoinbaseAdvancedMarketData, CoinbaseMarketDataError
@@ -102,6 +103,7 @@ def _tick_interval() -> float:
 
 
 _bitvavo_security_lock = threading.Lock()
+_live_preflight_lock = threading.Lock()
 
 
 def _bitvavo_security_ttl_seconds() -> float:
@@ -130,6 +132,36 @@ def _cached_bitvavo_security(*, force: bool = False) -> dict[str, object]:
         report = validate_bitvavo_security(get_agent()._bitvavo)
         app.state.bitvavo_security_cache = dict(report)
         app.state.bitvavo_security_cache_at = now
+        return dict(report)
+
+
+def _live_preflight_ttl_seconds() -> float:
+    try:
+        return max(15.0, float(os.getenv("LIVE_PREFLIGHT_CACHE_SECONDS", "60")))
+    except ValueError:
+        return 60.0
+
+
+def _cached_live_preflight(*, force: bool = False) -> dict[str, object]:
+    """Cache read-only market/open-order preflight to protect exchange rate limits."""
+    now = time.monotonic()
+    cached = getattr(app.state, "live_preflight_cache", None)
+    cached_at = float(getattr(app.state, "live_preflight_cache_at", 0.0))
+    ttl = _live_preflight_ttl_seconds()
+    if not force and isinstance(cached, dict) and now - cached_at < ttl:
+        return dict(cached)
+
+    with _live_preflight_lock:
+        now = time.monotonic()
+        cached = getattr(app.state, "live_preflight_cache", None)
+        cached_at = float(getattr(app.state, "live_preflight_cache_at", 0.0))
+        if not force and isinstance(cached, dict) and now - cached_at < ttl:
+            return dict(cached)
+
+        agent = get_agent()
+        report = validate_bitvavo_live_strategies(agent._strategies.values(), agent._bitvavo)
+        app.state.live_preflight_cache = dict(report)
+        app.state.live_preflight_cache_at = now
         return dict(report)
 
 
@@ -277,6 +309,8 @@ async def _lifespan(app: FastAPI):
     app.state.bitvavo_open_orders_snapshot_ready = False
     app.state.bitvavo_security_cache = None
     app.state.bitvavo_security_cache_at = 0.0
+    app.state.live_preflight_cache = None
+    app.state.live_preflight_cache_at = 0.0
     app.state.last_tick_at = None
     app.state.last_tick_error = None
     app.state.peak_equity_usd = float(os.getenv("PAPER_STARTING_BALANCE_USD", "1000"))
@@ -538,6 +572,14 @@ def live_readiness():
         bitvavo_security_passed = bool(bitvavo_security.get("passed"))
     except Exception:
         bitvavo_security_passed = False
+    try:
+        live_preflight = _cached_live_preflight()
+        live_preflight_passed = bool(live_preflight.get("passed"))
+        exchange_open_orders_clear = bool(live_preflight.get("open_orders_clear"))
+    except Exception:
+        live_preflight = {"passed": False, "open_orders_clear": False, "strategies": []}
+        live_preflight_passed = False
+        exchange_open_orders_clear = False
     strategy_states = get_agent().list_strategies()
     approved_live = [
         state for state in strategy_states.values()
@@ -553,6 +595,8 @@ def live_readiness():
         "bitvavo_dry_run_off": os.getenv("BITVAVO_DRY_RUN", "true").strip().lower() not in {"1", "true", "yes"},
         "bitvavo_credentials_present": credentials,
         "bitvavo_security_passed": bitvavo_security_passed,
+        "live_market_preflight_passed": live_preflight_passed,
+        "exchange_open_orders_clear": exchange_open_orders_clear,
         "live_strategy_configured": bool(approved_live),
         "live_strategy_running": any(state.get("running") for state in approved_live),
         "running_strategies_approved": all(
@@ -574,12 +618,13 @@ def live_readiness():
             "net_base_inventory": "0",
         }
     log.info(
-        "Live readiness: ready=%s mode=%s armed=%s gates=%s journal=%s",
+        "Live readiness: ready=%s mode=%s armed=%s gates=%s journal=%s preflight=%s",
         ready,
         app.state.execution_gateway.mode.value,
         bool(getattr(app.state, "live_armed", False)),
         gates,
         journal_state,
+        live_preflight,
     )
     return {
         "ready": ready,
@@ -588,9 +633,16 @@ def live_readiness():
         "mode": app.state.execution_gateway.mode.value,
         "gates": gates,
         "journal": journal_state,
+        "preflight": live_preflight,
         "action": "Resolve failed gates first." if not ready else "Ready for explicit runtime activation.",
         "warning": "Activation is runtime-only and never changes Railway variables.",
     }
+
+
+@app.get("/api/live/preflight", tags=["execution"])
+def live_preflight():
+    """Return cached read-only market-rule and open-order safety checks."""
+    return _cached_live_preflight()
 
 
 @app.post("/api/live/activate", tags=["execution"])
