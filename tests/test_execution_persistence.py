@@ -61,3 +61,16 @@ def test_duplicate_client_order_id_never_reposts(monkeypatch, tmp_path):
             "BTC-EUR", "buy", Decimal("0.0001"), Decimal("70000"), cid
         )
     journal.close()
+
+
+def test_error_without_exchange_id_remains_reconcilable(tmp_path):
+    journal = OrderJournal(str(tmp_path / "orders.sqlite3"))
+    cid = "44444444-4444-4444-4444-444444444444"
+    journal.record_intent(
+        client_order_id=cid, market="BTC-EUR", side="buy",
+        order_type="limit", amount="0.0001", price="70000",
+    )
+    journal.update(cid, "error", {"category": "network_error"}, error="network_error")
+    rows = journal.reconcile_candidates()
+    assert any(row["client_order_id"] == cid for row in rows)
+    journal.close()
