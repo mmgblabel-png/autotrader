@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+import json
 import os
+import time
+from decimal import Decimal
 from typing import Dict, Optional
 
 import yaml
@@ -11,7 +14,7 @@ from autotrader.core.logger import get_logger
 from autotrader.connectors.bitvavo import BitvavoAdapter
 from autotrader.core.execution_coordinator import ExecutionCoordinator
 from autotrader.core.order_manager import OrderManager
-from autotrader.core.profit_engine import ProfitEngine
+from autotrader.core.profit_engine import ProfitEngine, Trade
 from autotrader.core.risk_manager import RiskManager, StrategyRiskConfig
 from autotrader.core.strategy_allocator import StrategyAllocator
 from autotrader.strategies.arbitrage_hunter import ArbitrageHunter
@@ -40,18 +43,20 @@ class AutoTrader:
         self._pe = ProfitEngine(export_dir=self._config.get("export_dir", "exports"))
         self._strategies: Dict[str, BaseStrategy] = {}
         self._allocator = StrategyAllocator(self._config)
+        self._rm.set_profit_engine(self._pe)
+        self._setup_risk()
         self._is_live_armed = lambda: bool(getattr(__import__('autotrader.api.server', fromlist=['app']).app.state, 'live_armed', False))
         self._bitvavo = BitvavoAdapter(is_armed=self._is_live_armed)
+        self._restore_profit_from_journal()
         self._executor = ExecutionCoordinator(
             self._om,
             self._bitvavo,
             is_armed=self._is_live_armed,
             profit_engine=self._pe,
+            risk_manager=self._rm,
             allocator=self._allocator,
             fill_handler=self._on_fill,
         )
-        self._rm.set_profit_engine(self._pe)   # forward risk events to event log
-        self._setup_risk()
         self._register_strategies()
 
     # ------------------------------------------------------------------
@@ -172,6 +177,53 @@ class AutoTrader:
     # ------------------------------------------------------------------
     # Setup helpers
     # ------------------------------------------------------------------
+
+    def _restore_profit_from_journal(self) -> None:
+        """Rebuild fill-based PnL and today's realized loss after a restart."""
+        now_utc = time.gmtime()
+        for row in self._bitvavo.journal.all_strategy_fills():
+            try:
+                raw = json.loads(row.get("raw_json") or "{}")
+            except (TypeError, json.JSONDecodeError):
+                raw = {}
+            try:
+                amount = float(row.get("amount") or 0)
+                price = float(row.get("price") or 0)
+                fee = float(row.get("fee") or 0)
+            except (TypeError, ValueError):
+                continue
+            if amount <= 0 or price <= 0:
+                continue
+            raw_ts = float(raw.get("timestamp") or row.get("observed_at") or 0)
+            timestamp = raw_ts / 1000.0 if raw_ts > 10_000_000_000 else raw_ts
+            if timestamp <= 0:
+                timestamp = float(row.get("observed_at") or time.time())
+            strategy = str(row.get("strategy") or "")
+            if not strategy:
+                continue
+            realized = self._pe.record_trade(
+                Trade(
+                    strategy=strategy,
+                    symbol=str(row.get("market") or ""),
+                    side=str(row.get("side") or "").upper(),
+                    quantity=amount,
+                    price=price,
+                    fee=fee,
+                    fee_currency=str(raw.get("feeCurrency") or ""),
+                    fill_key=str(row.get("fill_key") or ""),
+                    timestamp=timestamp,
+                )
+            )
+            fill_utc = time.gmtime(timestamp)
+            if (
+                realized < 0
+                and fill_utc.tm_year == now_utc.tm_year
+                and fill_utc.tm_yday == now_utc.tm_yday
+            ):
+                loss = -realized
+                self._rm.record_loss(strategy, loss)
+                if str(row.get("market") or "").upper().endswith("-EUR"):
+                    self._bitvavo.gateway.record_loss(Decimal(str(loss)))
 
     def _setup_risk(self) -> None:
         for key, strat_cfg in self._config.get("strategies", {}).items():
