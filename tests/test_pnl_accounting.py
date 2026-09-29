@@ -71,3 +71,21 @@ def test_unmatched_sell_does_not_fabricate_profit(tmp_path):
     assert delta == -0.01
     assert pe.summary()["SniperBot"]["realized_pnl"] == 0.0
     assert any(e["kind"] == "accounting" for e in pe.events())
+
+
+def test_base_currency_sell_fee_is_not_double_counted(tmp_path):
+    pe = ProfitEngine(export_dir=str(tmp_path))
+    pe.record_trade(Trade(
+        strategy="MarketMaker", symbol="BTC-EUR", side="BUY",
+        quantity=1.0, price=100.0, fill_key="buy-before-base-sell-fee",
+    ))
+    delta = pe.record_trade(Trade(
+        strategy="MarketMaker", symbol="BTC-EUR", side="SELL",
+        quantity=0.99, price=110.0, fee=0.01, fee_currency="BTC",
+        fill_key="sell-base-fee",
+    ))
+    assert round(pe.summary()["MarketMaker"]["realized_pnl"], 8) == 10.0
+    assert round(pe.summary()["MarketMaker"]["total_fees"], 8) == 1.1
+    assert round(pe.summary()["MarketMaker"]["net_pnl"], 8) == 8.9
+    assert round(delta, 8) == 8.9
+    assert pe.position_state("MarketMaker", "BTC-EUR")["quantity"] == 0.0
