@@ -1,6 +1,7 @@
-"""SniperBot – captures rapid price moves with strict risk limits."""
-
+"""SniperBot – momentum entries with exchange-confirmed position tracking."""
 from __future__ import annotations
+
+import time
 
 from autotrader.core.logger import get_logger
 from autotrader.core.order_manager import Order, OrderSide, OrderType
@@ -10,69 +11,85 @@ log = get_logger("SniperBot")
 
 
 class SniperBot(BaseStrategy):
-    """
-    Enters a position when a momentum signal fires; exits at take-profit or stop-loss.
-
-    Config keys (under ``strategies.sniper``):
-        symbol            : trading pair, e.g. "BTC/USDT"
-        exchange          : exchange name
-        order_size        : order quantity (base asset)
-        momentum_pct      : minimum % move to trigger entry
-        take_profit_pct   : target profit in %
-        stop_loss_pct     : maximum loss in %
-        max_slippage_pct  : forwarded to RiskManager
-        max_daily_loss    : forwarded to RiskManager
-    """
+    """Long-only spot momentum bot with confirmed-fill position state."""
 
     name = "SniperBot"
 
     def __init__(self, *args, **kwargs) -> None:
         super().__init__(*args, **kwargs)
-        self._position: float = 0.0
-        self._entry_price: float = 0.0
-        self._prev_price: float = 0.0
+        self._position = 0.0
+        self._entry_price = 0.0
+        self._prev_price = 0.0
+        self._last_entry_ts = 0.0
+
+    def _sync_live_inventory(self) -> None:
+        cfg = self._config
+        if not bool(cfg.get("_live_balance_snapshot_ready", False)):
+            return
+        inventory = max(0.0, float(cfg.get("_bot_base_inventory", 0.0)))
+        entry = max(0.0, float(cfg.get("_bot_average_entry_price", 0.0)))
+        self._position = inventory
+        self._entry_price = entry if inventory > 0 else 0.0
 
     def tick(self) -> None:
         if not self._running or self._rm.is_killed(self.name):
             return
 
         cfg = self._config
-        current_price: float = cfg.get("_current_price", 0.0)
+        self._sync_live_inventory()
+        current_price = float(cfg.get("_current_price", 0.0))
         if current_price <= 0:
             return
 
-        symbol: str = cfg.get("symbol", "BTC/USDT")
-        exchange: str = cfg.get("exchange", "binance")
-        size: float = cfg.get("order_size", 0.001)
-        momentum_pct: float = cfg.get("momentum_pct", 0.5) / 100
-        tp_pct: float = cfg.get("take_profit_pct", 1.0) / 100
-        sl_pct: float = cfg.get("stop_loss_pct", 0.3) / 100
+        symbol = str(cfg.get("symbol", "XRP-EUR")).upper()
+        exchange = str(cfg.get("exchange", "bitvavo")).lower()
+        size = float(cfg.get("order_size", 1.0))
+        order_value = float(cfg.get("order_value_eur", 0.0))
+        if order_value > 0:
+            size = order_value / current_price
 
-        if self._position == 0 and self._prev_price > 0:
+        momentum_pct = float(cfg.get("momentum_pct", 0.5)) / 100
+        tp_pct = float(cfg.get("take_profit_pct", 1.0)) / 100
+        sl_pct = float(cfg.get("stop_loss_pct", 0.3)) / 100
+        cooldown = max(0.0, float(cfg.get("cooldown_seconds", 60)))
+        now = time.monotonic()
+
+        if self._om.open_orders(self.name):
+            self._prev_price = current_price
+            return
+        if bool(cfg.get("_exchange_open_orders_snapshot_ready", False)) and int(cfg.get("_exchange_open_order_count", 0)) > 0:
+            self._prev_price = current_price
+            return
+
+        if self._position <= 0 and self._prev_price > 0:
             move = (current_price - self._prev_price) / self._prev_price
-            if abs(move) >= momentum_pct:
-                side = OrderSide.BUY if move > 0 else OrderSide.SELL
+            # Spot mode is intentionally long-only: negative momentum never
+            # opens an uncovered short.
+            if move >= momentum_pct and now - self._last_entry_ts >= cooldown:
                 notional = size * current_price
-                # Slippage estimate: assume slippage equals 50% of the observed move
                 slippage_pct = abs(move) * 100 * 0.5
+                available_quote = float(cfg.get("_available_quote", 0.0))
+                if bool(cfg.get("_live_balance_snapshot_ready", False)) and available_quote < notional:
+                    self._prev_price = current_price
+                    return
                 if not self._rm.check_order(self.name, notional, slippage_pct=slippage_pct):
                     self._prev_price = current_price
                     return
-
-                order = Order(exchange=exchange, symbol=symbol, side=side,
-                              order_type=OrderType.MARKET, quantity=size, strategy=self.name)
+                order = Order(
+                    exchange=exchange,
+                    symbol=symbol,
+                    side=OrderSide.BUY,
+                    order_type=OrderType.MARKET,
+                    quantity=size,
+                    price=current_price,
+                    strategy=self.name,
+                )
                 self._om.register(order)
-                # Order registration is not a fill. Position state changes only
-                # after the execution layer confirms a fill.
-                log.info("SNIPE ENTER %s %s %.4f @ %.2f (move=%.3f%%)",
-                         side.value, symbol, size, current_price, move * 100)
+                self._last_entry_ts = now
+                log.info("SNIPE ENTER BUY %s %.8f @ %.4f (move=%.3f%%)", symbol, size, current_price, move * 100)
 
-        elif self._position != 0:
-            entry = self._entry_price
-            move_from_entry = (current_price - entry) / entry
-            direction = 1 if self._position > 0 else -1
-            pnl_pct = move_from_entry * direction
-
+        elif self._position > 0 and self._entry_price > 0:
+            pnl_pct = (current_price - self._entry_price) / self._entry_price
             if pnl_pct >= tp_pct:
                 self._close_position(symbol, exchange, current_price, "TAKE-PROFIT")
             elif pnl_pct <= -sl_pct:
@@ -80,18 +97,36 @@ class SniperBot(BaseStrategy):
 
         self._prev_price = current_price
 
-    # ------------------------------------------------------------------
-    # Private helpers
-    # ------------------------------------------------------------------
-
-    def _close_position(self, symbol: str, exchange: str,
-                        price: float, reason: str) -> None:
-        side = OrderSide.SELL if self._position > 0 else OrderSide.BUY
-        size = abs(self._position)
-        order = Order(exchange=exchange, symbol=symbol, side=side,
-                      order_type=OrderType.MARKET, quantity=size, strategy=self.name)
+    def _close_position(self, symbol: str, exchange: str, price: float, reason: str) -> None:
+        available_base = float(self._config.get("_available_base", self._position))
+        size = min(self._position, available_base)
+        if size <= 0:
+            return
+        notional = size * price
+        if not self._rm.check_order(self.name, notional):
+            return
+        order = Order(
+            exchange=exchange,
+            symbol=symbol,
+            side=OrderSide.SELL,
+            order_type=OrderType.MARKET,
+            quantity=size,
+            price=price,
+            strategy=self.name,
+        )
         self._om.register(order)
+        log.info("SNIPE EXIT %s %s %.8f @ %.4f", reason, symbol, size, price)
 
-        # No synthetic fill, fee, position reset or PnL. These are applied by
-        # the execution/fill reconciliation path.
-        log.info("SNIPE EXIT (%s) %s %.4f @ %.2f — awaiting fill", reason, symbol, size, price)
+    def on_fill(self, order: Order, fill: dict) -> None:
+        amount = float(fill.get("amount") or 0)
+        price = float(fill.get("price") or 0)
+        if amount <= 0 or price <= 0:
+            return
+        if order.side is OrderSide.BUY:
+            previous_cost = self._position * self._entry_price
+            self._position += amount
+            self._entry_price = (previous_cost + amount * price) / self._position
+        else:
+            self._position = max(0.0, self._position - amount)
+            if self._position == 0:
+                self._entry_price = 0.0
