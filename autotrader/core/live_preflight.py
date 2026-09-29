@@ -34,6 +34,8 @@ def validate_bitvavo_live_strategies(
     """
     rows: list[dict[str, Any]] = []
     total_open_orders = 0
+    total_bot_owned_open_orders = 0
+    total_unknown_open_orders = 0
 
     for strategy in strategies:
         config = getattr(strategy, "_config", {}) or {}
@@ -53,6 +55,8 @@ def validate_bitvavo_live_strategies(
             "market": market,
             "order_type": order_type,
             "passed": False,
+            "market_rules_passed": False,
+            "prearm_passed": False,
             "errors": [],
         }
 
@@ -100,10 +104,32 @@ def validate_bitvavo_live_strategies(
             if allocation_eur > 0 and notional > allocation_eur:
                 row["errors"].append("above_strategy_allocation")
 
-            open_count = len(adapter.open_orders(market))
+            market_rule_errors = list(row["errors"])
+            open_rows = list(adapter.open_orders(market))
+            open_count = len(open_rows)
             total_open_orders += open_count
+
+            bot_owned_open = 0
+            unknown_open = 0
+            journal = getattr(adapter, "journal", None)
+            for open_order in open_rows:
+                client_id = str((open_order or {}).get("clientOrderId") or "")
+                record = journal.get(client_id) if journal is not None and client_id else None
+                if (
+                    record
+                    and str(record.get("market") or "").upper() == market
+                    and str(record.get("strategy") or "") == strategy_name
+                ):
+                    bot_owned_open += 1
+                else:
+                    unknown_open += 1
+
+            total_bot_owned_open_orders += bot_owned_open
+            total_unknown_open_orders += unknown_open
             if open_count:
                 row["errors"].append("exchange_open_orders_present")
+            if unknown_open:
+                row["errors"].append("unknown_exchange_open_orders_present")
 
             row.update({
                 "status": status,
@@ -114,15 +140,30 @@ def validate_bitvavo_live_strategies(
                 "planned_amount": str(amount),
                 "planned_notional_eur": str(notional.quantize(Decimal("0.0001"))),
                 "open_order_count": open_count,
+                "bot_owned_open_order_count": bot_owned_open,
+                "unknown_open_order_count": unknown_open,
             })
-            row["passed"] = not row["errors"]
+            row["market_rules_passed"] = not market_rule_errors
+            row["prearm_passed"] = row["market_rules_passed"] and open_count == 0
+            row["passed"] = row["prearm_passed"]
         except Exception as exc:
             row["errors"].append(getattr(exc, "category", type(exc).__name__))
         rows.append(row)
 
+    market_rules_passed = bool(rows) and all(row.get("market_rules_passed") for row in rows)
+    open_orders_clear = total_open_orders == 0
+    all_open_orders_bot_owned = (
+        total_unknown_open_orders == 0
+        and total_bot_owned_open_orders == total_open_orders
+    )
     return {
-        "passed": bool(rows) and all(row.get("passed") for row in rows),
-        "open_orders_clear": total_open_orders == 0,
+        "passed": market_rules_passed and open_orders_clear,
+        "market_rules_passed": market_rules_passed,
+        "prearm_passed": market_rules_passed and open_orders_clear,
+        "open_orders_clear": open_orders_clear,
+        "all_open_orders_bot_owned": all_open_orders_bot_owned,
         "total_open_orders": total_open_orders,
+        "bot_owned_open_orders": total_bot_owned_open_orders,
+        "unknown_open_orders": total_unknown_open_orders,
         "strategies": rows,
     }
