@@ -186,7 +186,7 @@ class OrderJournal:
                 """
                 SELECT * FROM orders
                 WHERE status NOT IN ('filled','canceled','cancelled','rejected','expired','shadow','blocked')
-                   OR (status='error' AND exchange_order_id IS NOT NULL AND exchange_order_id<>'')
+                   OR status='error'
                 ORDER BY created_at
                 """
             ).fetchall()
