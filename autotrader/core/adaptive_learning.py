@@ -32,9 +32,9 @@ class Tunable:
 
 
 _TUNABLES: dict[str, Tunable] = {
-    "MarketMaker": Tunable("target_spread", 0.65, 1.50, 1.05, 0.98),
-    "GridRunner": Tunable("entry_offset_pct", 0.30, 1.50, 1.05, 0.99),
-    "SniperBot": Tunable("momentum_pct", 0.20, 1.50, 1.05, 0.98),
+    "MarketMaker": Tunable("target_spread", 0.80, 1.50, 1.05, 0.98),
+    "GridRunner": Tunable("entry_offset_pct", 0.60, 1.50, 1.05, 0.99),
+    "SniperBot": Tunable("momentum_pct", 0.50, 1.50, 1.05, 0.98),
 }
 
 
