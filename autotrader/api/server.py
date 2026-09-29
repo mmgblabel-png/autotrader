@@ -156,6 +156,17 @@ def _require_control_token(
         raise HTTPException(status_code=401, detail="Invalid strategy-control token.")
 
 
+def _running_bitvavo_markets(agent: AutoTrader) -> list[str]:
+    """Return unique Bitvavo markets that currently need private live synchronization."""
+    return sorted({
+        str(strategy._config.get("symbol", "")).upper()
+        for strategy in agent._strategies.values()
+        if strategy.is_running
+        and str(strategy._config.get("exchange", "bitvavo")).lower() == "bitvavo"
+        and str(strategy._config.get("symbol", "")).strip()
+    })
+
+
 async def _tick_loop(app: FastAPI, agent: AutoTrader) -> None:
     """Drive all active strategies for the lifetime of the API process.
 
@@ -166,7 +177,11 @@ async def _tick_loop(app: FastAPI, agent: AutoTrader) -> None:
     while True:
         try:
             if app.state.live_mode:
-                sync_due = app.state.tick_count % app.state.live_sync_every_ticks == 0
+                running_markets = _running_bitvavo_markets(agent)
+                sync_due = (
+                    bool(running_markets)
+                    and app.state.tick_count % app.state.live_sync_every_ticks == 0
+                )
                 if sync_due:
                     # Reconcile first so fills/cancels are reflected in bot-owned
                     # inventory before any strategy is allowed to create a new intent.
@@ -183,7 +198,13 @@ async def _tick_loop(app: FastAPI, agent: AutoTrader) -> None:
                         app.state.bitvavo_balance_snapshot_ready = False
                         log.warning("Bitvavo balance refresh failed: %s", balance_exc)
                     try:
-                        app.state.bitvavo_open_orders = agent._bitvavo.open_orders()
+                        # Bitvavo charges 100 weight points for /ordersOpen without
+                        # a market, but only 5 with a market. Query each active
+                        # strategy market explicitly to stay well below rate limits.
+                        open_orders = []
+                        for market in running_markets:
+                            open_orders.extend(agent._bitvavo.open_orders(market))
+                        app.state.bitvavo_open_orders = open_orders
                         app.state.bitvavo_open_orders_snapshot_ready = True
                     except Exception as orders_exc:
                         app.state.bitvavo_open_orders_snapshot_ready = False
