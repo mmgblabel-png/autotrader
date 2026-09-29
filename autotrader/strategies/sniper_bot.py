@@ -130,3 +130,5 @@ class SniperBot(BaseStrategy):
             self._position = max(0.0, self._position - amount)
             if self._position == 0:
                 self._entry_price = 0.0
+        self._config["_bot_base_inventory"] = self._position
+        self._config["_bot_average_entry_price"] = self._entry_price
