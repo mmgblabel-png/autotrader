@@ -130,11 +130,20 @@ class AdaptiveLearning:
 
     def apply_overrides(self, strategy_name: str, strategy_config: dict[str, Any]) -> dict[str, Any]:
         state = self._state.setdefault("strategies", {}).setdefault(strategy_name, self._blank_strategy())
-        overrides = state.get("current_overrides") or {}
-        for key, value in overrides.items():
-            if key in strategy_config:
-                strategy_config[key] = value
-        return dict(overrides)
+        tunable = _TUNABLES.get(strategy_name)
+        if tunable is None:
+            return {}
+        raw = state.get("current_overrides") or {}
+        overrides: dict[str, float] = {}
+        if tunable.parameter in raw and tunable.parameter in strategy_config:
+            try:
+                value = self._bounded(float(raw[tunable.parameter]), tunable.minimum, tunable.maximum)
+            except (TypeError, ValueError):
+                value = self._bounded(float(strategy_config[tunable.parameter]), tunable.minimum, tunable.maximum)
+            strategy_config[tunable.parameter] = value
+            overrides[tunable.parameter] = value
+            state["current_overrides"] = dict(overrides)
+        return overrides
 
     def record_realized_outcome(
         self,
