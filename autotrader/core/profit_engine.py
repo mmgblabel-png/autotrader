@@ -25,6 +25,8 @@ class Trade:
     quantity: float
     price: float
     fee: float = 0.0
+    fee_currency: str = ""
+    fill_key: str = ""
     timestamp: float = field(default_factory=time.time)
     _recorded_order: int = field(default=-1, init=False, repr=False, compare=False)
 
@@ -41,8 +43,19 @@ class Trade:
             "price": self.price,
             "notional": self.notional,
             "fee": self.fee,
+            "fee_currency": self.fee_currency,
             "timestamp": self.timestamp,
         }
+
+
+@dataclass
+class PositionCost:
+    quantity: float = 0.0
+    cost: float = 0.0
+
+    @property
+    def average_price(self) -> float:
+        return self.cost / self.quantity if self.quantity > 0 else 0.0
 
 
 @dataclass
@@ -72,20 +85,99 @@ class ProfitEngine:
         self._export_dir = export_dir
         self._events: List[dict] = []          # event log (risk + large PnL)
         self._trade_sequence = 0
+        self._positions: Dict[tuple[str, str], PositionCost] = {}
+        self._seen_trade_keys: set[str] = set()
         os.makedirs(export_dir, exist_ok=True)
 
     # ------------------------------------------------------------------
     # Recording
     # ------------------------------------------------------------------
 
-    def record_trade(self, trade: Trade) -> None:
+    def record_trade(self, trade: Trade) -> float:
+        """Record a fill and return gross realized PnL created by this fill.
+
+        BUY fills build average-cost inventory. SELL fills realize PnL only
+        against inventory already owned by the same strategy and symbol. Fees
+        are converted to quote-currency value and remain separate so net_pnl
+        stays realized_pnl minus fees.
+        """
+        if trade.fill_key and trade.fill_key in self._seen_trade_keys:
+            return 0.0
         stats = self._ensure(trade.strategy)
+        if trade.fill_key:
+            self._seen_trade_keys.add(trade.fill_key)
         trade._recorded_order = self._trade_sequence
         self._trade_sequence += 1
         stats.trades.append(trade)
-        stats.total_fees += trade.fee
-        log.info("[%s] Trade recorded: %s %s %.4f @ %.4f (fee=%.4f)",
-                 trade.strategy, trade.side, trade.symbol, trade.quantity, trade.price, trade.fee)
+
+        symbol = trade.symbol.upper().replace("/", "-")
+        parts = symbol.split("-", 1)
+        base = parts[0]
+        quote = parts[1] if len(parts) == 2 else ""
+        fee_currency = (trade.fee_currency or quote).upper()
+        fee = abs(float(trade.fee or 0.0))
+        if fee_currency == base:
+            fee_quote = fee * trade.price
+        elif not fee_currency or fee_currency == quote:
+            fee_quote = fee
+        else:
+            fee_quote = 0.0
+            if fee > 0:
+                self._add_event(
+                    "accounting",
+                    trade.strategy,
+                    f"Fee currency {fee_currency} for {symbol} could not be converted to quote currency.",
+                )
+        stats.total_fees += fee_quote
+
+        key = (trade.strategy, symbol)
+        position = self._positions.setdefault(key, PositionCost())
+        realized = 0.0
+        side = trade.side.upper()
+        amount = max(0.0, float(trade.quantity))
+        price = max(0.0, float(trade.price))
+
+        if side == "BUY" and amount > 0 and price > 0:
+            base_fee = fee if fee_currency == base else 0.0
+            received = max(0.0, amount - base_fee)
+            position.quantity += received
+            position.cost += received * price
+        elif side == "SELL" and amount > 0 and price > 0:
+            if position.quantity <= 0:
+                self._add_event(
+                    "accounting",
+                    trade.strategy,
+                    f"Unmatched SELL fill for {symbol}; realized PnL was not fabricated.",
+                )
+            else:
+                avg = position.average_price
+                sold = min(amount, position.quantity)
+                realized = sold * (price - avg)
+                base_fee = fee if fee_currency == base else 0.0
+                outgoing = min(position.quantity, amount + base_fee)
+                position.quantity -= outgoing
+                position.cost = max(0.0, position.cost - avg * outgoing)
+                if position.quantity <= 1e-15:
+                    position.quantity = 0.0
+                    position.cost = 0.0
+                stats.realized_pnl += realized
+                if realized > 0:
+                    stats.wins += 1
+                elif realized < 0:
+                    stats.losses += 1
+                if abs(realized) >= _LARGE_PNL_THRESHOLD:
+                    self._add_event(
+                        "large_pnl",
+                        trade.strategy,
+                        f"Large realized PnL movement: {realized:+.4f} quote units.",
+                    )
+
+        log.info(
+            "[%s] Trade recorded: %s %s %.8f @ %.4f (fee=%.8f %s realized=%+.4f)",
+            trade.strategy, trade.side, trade.symbol, trade.quantity, trade.price,
+            trade.fee, fee_currency, realized,
+        )
+        return realized
 
     def record_realized_pnl(self, strategy: str, pnl: float) -> None:
         stats = self._ensure(strategy)
@@ -102,6 +194,25 @@ class ProfitEngine:
 
     def update_unrealized_pnl(self, strategy: str, pnl: float) -> None:
         self._ensure(strategy).unrealized_pnl = pnl
+
+    def mark_to_market(self, strategy: str, symbol: str, price: float) -> float:
+        """Update unrealized PnL for one strategy/symbol from a live mark."""
+        key = (strategy, symbol.upper().replace("/", "-"))
+        position = self._positions.get(key)
+        if position is None or position.quantity <= 0 or price <= 0:
+            self._ensure(strategy).unrealized_pnl = 0.0
+            return 0.0
+        pnl = position.quantity * (float(price) - position.average_price)
+        self._ensure(strategy).unrealized_pnl = pnl
+        return pnl
+
+    def position_state(self, strategy: str, symbol: str) -> dict[str, float]:
+        position = self._positions.get((strategy, symbol.upper().replace("/", "-")), PositionCost())
+        return {
+            "quantity": position.quantity,
+            "average_price": position.average_price,
+            "cost": position.cost,
+        }
 
     def add_risk_event(self, strategy: str, message: str) -> None:
         """Called by RiskManager to surface risk events in the event log."""
