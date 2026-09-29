@@ -76,3 +76,37 @@ def test_allocator_blocks_non_live_capable_strategy():
     decision = allocator.evaluate(order, [], observed_price=Decimal("3000"))
     assert not decision.accepted
     assert "not approved" in decision.reason
+
+
+def test_allocator_values_each_active_asset_at_its_own_price():
+    cfg = config()
+    cfg["portfolio"]["global_live_budget_eur"] = 12
+    allocator = StrategyAllocator(cfg)
+    active_btc = Order(
+        "bitvavo", "BTC-EUR", OrderSide.BUY, OrderType.LIMIT,
+        0.0001, 70000, strategy="MarketMaker",
+    )
+    candidate_sol = Order(
+        "bitvavo", "SOL-EUR", OrderSide.BUY, OrderType.LIMIT,
+        0.06, 100, strategy="GridRunner",
+    )
+    decision = allocator.evaluate(
+        candidate_sol, [active_btc], observed_price=Decimal("100")
+    )
+    assert not decision.accepted
+    assert "global live budget" in decision.reason
+
+
+def test_allocator_fails_closed_for_unknown_active_market_notional():
+    allocator = StrategyAllocator(config())
+    active = Order(
+        "bitvavo", "SOL-EUR", OrderSide.BUY, OrderType.MARKET,
+        0.05, None, strategy="GridRunner",
+    )
+    candidate = Order(
+        "bitvavo", "XRP-EUR", OrderSide.BUY, OrderType.MARKET,
+        3.0, 2.0, strategy="SniperBot",
+    )
+    decision = allocator.evaluate(candidate, [active], observed_price=Decimal("2"))
+    assert not decision.accepted
+    assert "notional is unknown" in decision.reason
