@@ -35,6 +35,7 @@ import asyncio
 import contextlib
 import hmac
 import os
+import threading
 import time
 from typing import Final
 
@@ -98,6 +99,38 @@ def _tick_interval() -> float:
         )
         return _MIN_TICK_INTERVAL
     return value
+
+
+_bitvavo_security_lock = threading.Lock()
+
+
+def _bitvavo_security_ttl_seconds() -> float:
+    try:
+        return max(15.0, float(os.getenv("BITVAVO_SECURITY_CACHE_SECONDS", "60")))
+    except ValueError:
+        return 60.0
+
+
+def _cached_bitvavo_security(*, force: bool = False) -> dict[str, object]:
+    """Cache expensive private security probes so dashboard polling cannot exhaust Bitvavo limits."""
+    now = time.monotonic()
+    cached = getattr(app.state, "bitvavo_security_cache", None)
+    cached_at = float(getattr(app.state, "bitvavo_security_cache_at", 0.0))
+    ttl = _bitvavo_security_ttl_seconds()
+    if not force and isinstance(cached, dict) and now - cached_at < ttl:
+        return dict(cached)
+
+    with _bitvavo_security_lock:
+        now = time.monotonic()
+        cached = getattr(app.state, "bitvavo_security_cache", None)
+        cached_at = float(getattr(app.state, "bitvavo_security_cache_at", 0.0))
+        if not force and isinstance(cached, dict) and now - cached_at < ttl:
+            return dict(cached)
+
+        report = validate_bitvavo_security(get_agent()._bitvavo)
+        app.state.bitvavo_security_cache = dict(report)
+        app.state.bitvavo_security_cache_at = now
+        return dict(report)
 
 
 def _paper_report(agent: AutoTrader) -> dict:
@@ -221,6 +254,8 @@ async def _lifespan(app: FastAPI):
     app.state.bitvavo_balance_snapshot_ready = False
     app.state.bitvavo_open_orders = []
     app.state.bitvavo_open_orders_snapshot_ready = False
+    app.state.bitvavo_security_cache = None
+    app.state.bitvavo_security_cache_at = 0.0
     app.state.last_tick_at = None
     app.state.last_tick_error = None
     app.state.peak_equity_usd = float(os.getenv("PAPER_STARTING_BALANCE_USD", "1000"))
@@ -478,7 +513,7 @@ def live_readiness():
         and os.getenv("BITVAVO_API_SECRET", "").strip()
     )
     try:
-        bitvavo_security = validate_bitvavo_security(get_agent()._bitvavo)
+        bitvavo_security = _cached_bitvavo_security()
         bitvavo_security_passed = bool(bitvavo_security.get("passed"))
     except Exception:
         bitvavo_security_passed = False
@@ -938,7 +973,7 @@ def bitvavo_security_status() -> dict[str, object]:
     or logged. It exists because Railway's interactive console may suppress
     child-process stdout.
     """
-    report = validate_bitvavo_security(BitvavoAdapter())
+    report = _cached_bitvavo_security()
     log.info(
         "Bitvavo security probe: passed=%s authenticated=%s withdrawals_disabled=%s ip_whitelist_confirmed=%s errors=%s error_code=%s",
         report.get("passed"),
