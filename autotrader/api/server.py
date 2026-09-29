@@ -304,9 +304,16 @@ async def _arbitrage_shadow_loop(app: FastAPI) -> None:
     while True:
         try:
             payload = await asyncio.to_thread(_build_coinbase_bitvavo_shadow_scan)
+            first_success = getattr(app.state, "arbitrage_shadow_cache", None) is None
             app.state.arbitrage_shadow_cache = payload
             app.state.arbitrage_shadow_cache_at = time.time()
             app.state.arbitrage_shadow_error = None
+            if first_success:
+                log.info(
+                    "Arbitrage shadow scanner active: markets=%d live_orders_sent=%s",
+                    len(payload.get("markets", [])),
+                    payload.get("live_orders_sent"),
+                )
         except Exception as exc:
             app.state.arbitrage_shadow_error = type(exc).__name__
             log.warning("Arbitrage shadow refresh failed: %s", type(exc).__name__)
