@@ -76,3 +76,21 @@ class GridRunner(BaseStrategy):
             strategy=self.name,
         ))
         log.info("GRID BUY %s %.8f @ %.8f", symbol, buy_size, buy_price)
+
+    def on_fill(self, order: Order, fill: dict) -> None:
+        amount = float(fill.get("amount") or 0)
+        price = float(fill.get("price") or 0)
+        if amount <= 0 or price <= 0:
+            return
+        inventory = max(0.0, float(self._config.get("_bot_base_inventory", 0.0)))
+        entry = max(0.0, float(self._config.get("_bot_average_entry_price", 0.0)))
+        if order.side is OrderSide.BUY:
+            total_cost = inventory * entry + amount * price
+            inventory += amount
+            entry = total_cost / inventory
+        else:
+            inventory = max(0.0, inventory - amount)
+            if inventory == 0:
+                entry = 0.0
+        self._config["_bot_base_inventory"] = inventory
+        self._config["_bot_average_entry_price"] = entry
