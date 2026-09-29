@@ -17,7 +17,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 import uuid
-from decimal import Decimal
+from decimal import Decimal, ROUND_DOWN, ROUND_UP
 from typing import Any
 
 from autotrader.core.execution_gateway import ExecutionGateway, ExecutionRequest
@@ -194,24 +194,25 @@ class BitvavoAdapter:
         return rules
 
     @staticmethod
-    def _quantize_step(value: Decimal, step: Decimal) -> Decimal:
+    def _quantize_step(value: Decimal, step: Decimal, *, round_up: bool = False) -> Decimal:
         if step <= 0:
             return value
-        return (value / step).to_integral_value() * step
+        rounding = ROUND_UP if round_up else ROUND_DOWN
+        return (value / step).to_integral_value(rounding=rounding) * step
 
-    def _validate_order_rules(self, market: str, amount: Decimal, price: Decimal | None, order_type: str) -> tuple[Decimal, Decimal | None]:
+    def _validate_order_rules(self, market: str, amount: Decimal, price: Decimal | None, order_type: str, side: str) -> tuple[Decimal, Decimal | None]:
         rules = self._market_rules(market)
         supported = set(rules.get("orderTypes") or [])
         if order_type not in supported:
             raise BitvavoError(f"Order type {order_type} is not supported for {market}", category="invalid_order_type")
         qty_decimals = int(rules.get("quantityDecimals", 18))
-        amount = amount.quantize(Decimal(1).scaleb(-qty_decimals))
+        amount = amount.quantize(Decimal(1).scaleb(-qty_decimals), rounding=ROUND_DOWN)
         minimum = Decimal(str(rules.get("minOrderInBaseAsset", "0")))
         if amount < minimum:
             raise BitvavoError(f"Order amount {amount} is below Bitvavo minimum {minimum}", category="trading_rule")
         if price is not None:
             tick = Decimal(str(rules.get("tickSize", "0")))
-            price = self._quantize_step(price, tick)
+            price = self._quantize_step(price, tick, round_up=side.lower() == "sell")
             if price <= 0:
                 raise BitvavoError("Price becomes non-positive after tick-size normalization", category="trading_rule")
         notional = amount * (price or self.ticker_price(market))
@@ -348,7 +349,7 @@ class BitvavoAdapter:
             raise BitvavoError("client_order_id must be a UUID", category="invalid_order") from exc
         if self.journal.get(client_order_id):
             raise BitvavoError("duplicate client_order_id", category="duplicate_order")
-        amount, price = self._validate_order_rules(market, amount, price, order_type)
+        amount, price = self._validate_order_rules(market, amount, price, order_type, side)
         observed = self.ticker_price(market)
         expected = price or observed
         notional_eur = amount * expected if side == "buy" else amount * observed
