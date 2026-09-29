@@ -1,19 +1,23 @@
 """Execution coordinator: turns strategy intents into exchange orders only in live mode."""
 from __future__ import annotations
 import logging
+from decimal import Decimal
 from autotrader.connectors.bitvavo import BitvavoAdapter, BitvavoError
 from autotrader.core.order_manager import Order, OrderManager, OrderSide, OrderStatus, OrderType
 from autotrader.core.profit_engine import ProfitEngine, Trade
+from autotrader.core.strategy_allocator import StrategyAllocator
 
 log = logging.getLogger(__name__)
 
 
 class ExecutionCoordinator:
-    def __init__(self, order_manager: OrderManager, adapter: BitvavoAdapter | None = None, *, is_armed=None, profit_engine: ProfitEngine | None = None) -> None:
+    def __init__(self, order_manager: OrderManager, adapter: BitvavoAdapter | None = None, *, is_armed=None, profit_engine: ProfitEngine | None = None, allocator: StrategyAllocator | None = None, fill_handler=None) -> None:
         self.om = order_manager
         self.adapter = adapter or BitvavoAdapter()
         self.is_armed = is_armed or (lambda: False)
         self.profit_engine = profit_engine
+        self.allocator = allocator
+        self.fill_handler = fill_handler
         self._recorded_fill_keys: set[str] = set()
 
     @staticmethod
@@ -37,8 +41,6 @@ class ExecutionCoordinator:
         return float(payload.get("averagePrice") or payload.get("price") or fallback or 0)
 
     def _record_fills(self, order: Order, payload: dict) -> None:
-        if self.profit_engine is None:
-            return
         for fill in payload.get("fills") or []:
             if not isinstance(fill, dict):
                 continue
@@ -52,17 +54,20 @@ class ExecutionCoordinator:
                 continue
             raw_ts = float(fill.get("timestamp") or 0)
             timestamp = raw_ts / 1000.0 if raw_ts > 10_000_000_000 else (raw_ts or __import__("time").time())
-            self.profit_engine.record_trade(
-                Trade(
-                    strategy=order.strategy or "MarketMaker",
-                    symbol=order.symbol,
-                    side=order.side.value,
-                    quantity=quantity,
-                    price=price,
-                    fee=float(fill.get("fee") or 0),
-                    timestamp=timestamp,
+            if self.profit_engine is not None:
+                self.profit_engine.record_trade(
+                    Trade(
+                        strategy=order.strategy or "MarketMaker",
+                        symbol=order.symbol,
+                        side=order.side.value,
+                        quantity=quantity,
+                        price=price,
+                        fee=float(fill.get("fee") or 0),
+                        timestamp=timestamp,
+                    )
                 )
-            )
+            if self.fill_handler is not None:
+                self.fill_handler(order, fill)
             self._recorded_fill_keys.add(key)
 
     def _restore_order(self, client_order_id: str) -> Order | None:
@@ -95,6 +100,25 @@ class ExecutionCoordinator:
             if order.status is not OrderStatus.PENDING:
                 continue
             try:
+                if order.exchange.strip().lower() != "bitvavo":
+                    self.om.update(order.order_id, OrderStatus.FAILED)
+                    log.error("Order %s blocked: no live adapter for exchange %s", order.order_id, order.exchange)
+                    results.append({"client_order_id": order.order_id, "status": "failed", "category": "unsupported_exchange"})
+                    continue
+
+                observed_price = Decimal(str(order.price)) if order.price is not None else self.adapter.ticker_price(order.symbol)
+                if self.allocator is not None:
+                    allocation = self.allocator.evaluate(
+                        order,
+                        self.om.open_orders(),
+                        observed_price=observed_price,
+                    )
+                    if not allocation.accepted:
+                        self.om.update(order.order_id, OrderStatus.FAILED)
+                        log.warning("Order %s blocked by allocation guard: %s", order.order_id, allocation.reason)
+                        results.append({"client_order_id": order.order_id, "status": "failed", "category": "allocation", "reason": allocation.reason})
+                        continue
+
                 if order.order_type is OrderType.LIMIT:
                     response = self.adapter.place_limit_order(
                         order.symbol,
