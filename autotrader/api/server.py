@@ -347,7 +347,7 @@ def pnl_summary():
         "paper_report": _paper_report(agent),
         "pnl_by_strategy": summary["pnl_per_strategy"],
         "pnl_per_strategy": rows,
-        "mode": "paper",
+        "mode": "live" if getattr(app.state, "live_mode", False) else "paper",
     }
 
 
@@ -424,10 +424,36 @@ def wallet_credits():
 
 @app.get("/api/risk/status", tags=["risk"])
 def risk_status():
-    """Risk status: daily PnL, limits, kill-switches, and open positions."""
-    status = get_agent().risk_manager.status()
+    """Risk status with bot-owned live inventory, never inferred manual holdings."""
+    agent = get_agent()
+    status = agent.risk_manager.status()
+    positions = []
+    if getattr(app.state, "live_mode", False):
+        for strategy in agent._strategies.values():
+            if str(strategy._config.get("exchange", "bitvavo")).lower() != "bitvavo":
+                continue
+            symbol = str(strategy._config.get("symbol", "")).upper()
+            if not symbol:
+                continue
+            inventory = agent._bitvavo.journal.inventory_cost_basis(symbol, strategy.name)
+            quantity = float(inventory["quantity"])
+            if quantity <= 0:
+                continue
+            entry = float(inventory["average_entry_price"])
+            mark = float(strategy._config.get("_current_price") or entry or 0)
+            positions.append({
+                "symbol": symbol,
+                "strategy": strategy.name,
+                "side": "LONG",
+                "quantity": quantity,
+                "entry_price": entry,
+                "mark_price": mark if mark > 0 else None,
+                "notional_eur": quantity * mark if mark > 0 else None,
+                "pnl_eur": quantity * (mark - entry) if mark > 0 and entry > 0 else None,
+            })
+    status["open_positions"] = positions
     status["slippage_alerts"] = []
-    status["mode"] = "paper"
+    status["mode"] = "live" if getattr(app.state, "live_mode", False) else "paper"
     return status
 
 
