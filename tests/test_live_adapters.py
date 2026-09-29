@@ -23,7 +23,7 @@ def test_binance_live_gate_rejects(monkeypatch):
     monkeypatch.setenv("EMERGENCY_STOP", "true")
     adapter = BinanceSpotAdapter()
     monkeypatch.setattr(adapter, "ticker_price", lambda symbol: Decimal("100"))
-    with pytest.raises(BinanceSpotError, match="adapter|gates"):
+    with pytest.raises(BinanceSpotError, match="armed|adapter|gates"):
         adapter.place_market_order("BTCUSDT", "BUY", Decimal("0.01"), "live-order-1234567890123456")
 
 
@@ -40,5 +40,5 @@ def test_polymarket_live_gate_rejects(monkeypatch):
     monkeypatch.setenv("POLYMARKET_DRY_RUN", "false")
     monkeypatch.setenv("EMERGENCY_STOP", "true")
     adapter = PolymarketAdapter()
-    with pytest.raises(PolymarketError, match="adapter|gates"):
+    with pytest.raises(PolymarketError, match="armed|adapter|gates"):
         asyncio.run(adapter.place_market_order("token-123", "BUY", Decimal("5"), Decimal("0.50"), "poly-live-1234567890123456"))
