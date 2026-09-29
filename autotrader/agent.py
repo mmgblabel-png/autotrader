@@ -105,8 +105,9 @@ class AutoTrader:
     def list_strategies(self) -> dict:
         """Return runtime and live-allocation state for every strategy."""
         result = {}
+        allocator = getattr(self, "_allocator", None)
         for name, strat in self._strategies.items():
-            allocation = self._allocator.allocation_for(strat.name)
+            allocation = allocator.allocation_for(strat.name) if allocator is not None else None
             result[name] = {
                 "running": strat.is_running,
                 "enabled": strat.is_enabled,
