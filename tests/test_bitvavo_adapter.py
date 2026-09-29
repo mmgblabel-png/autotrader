@@ -23,7 +23,7 @@ def test_bitvavo_live_gate_rejects(monkeypatch):
     adapter = BitvavoAdapter()
     monkeypatch.setattr(adapter, "ticker_price", lambda market: Decimal("60000"))
     monkeypatch.setattr(adapter, "markets", lambda market=None: [{"status": "trading", "orderTypes": ["limit", "market"], "quantityDecimals": 6, "tickSize": "0.01", "minOrderInBaseAsset": "0.00001", "minOrderInQuoteAsset": "5"}])
-    with pytest.raises(BitvavoError, match="adapter|gates"):
+    with pytest.raises(BitvavoError, match="armed|adapter|gates"):
         adapter.place_market_order("BTC-EUR", "buy", Decimal("0.0001"), "2be7d0df-d8dc-7b93-a550-6f3b3f3b393e")
 
 
