@@ -311,6 +311,16 @@ async def _lifespan(app: FastAPI):
     app.state.bitvavo_security_cache_at = 0.0
     app.state.live_preflight_cache = None
     app.state.live_preflight_cache_at = 0.0
+    if app.state.live_mode:
+        try:
+            startup_preflight = validate_bitvavo_live_strategies(
+                agent._strategies.values(), agent._bitvavo
+            )
+            app.state.live_preflight_cache = dict(startup_preflight)
+            app.state.live_preflight_cache_at = time.monotonic()
+            log.info("Startup live preflight: %s", startup_preflight)
+        except Exception as preflight_exc:
+            log.warning("Startup live preflight failed: %s", preflight_exc)
     app.state.last_tick_at = None
     app.state.last_tick_error = None
     app.state.peak_equity_usd = float(os.getenv("PAPER_STARTING_BALANCE_USD", "1000"))
