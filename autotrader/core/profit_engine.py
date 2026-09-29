@@ -152,10 +152,12 @@ class ProfitEngine:
                 )
             else:
                 avg = position.average_price
-                sold = min(amount, position.quantity)
-                realized = sold * (price - avg)
                 base_fee = fee if fee_currency == base else 0.0
                 outgoing = min(position.quantity, amount + base_fee)
+                # For a base-asset fee, model the fee unit as inventory that
+                # exits at the current mark, then subtract its quote value
+                # through total_fees. This avoids double-counting its cost.
+                realized = outgoing * (price - avg)
                 position.quantity -= outgoing
                 position.cost = max(0.0, position.cost - avg * outgoing)
                 if position.quantity <= 1e-15:
