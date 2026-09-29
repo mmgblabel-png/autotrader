@@ -43,7 +43,12 @@ class GridRunner(BaseStrategy):
             sell_size = min(size, bot_inventory, available_base if live_snapshot else bot_inventory)
             if sell_size <= 0:
                 return
-            price = max(current_price * (1 + entry_offset), entry_price * (1 + exit_markup))
+            min_profit_exit_price = max(0.0, float(cfg.get("_min_profit_exit_price", 0.0)))
+            price = max(
+                current_price * (1 + entry_offset),
+                entry_price * (1 + exit_markup),
+                min_profit_exit_price,
+            )
             notional = sell_size * current_price
             if not self._rm.check_order(self.name, notional):
                 return
@@ -59,6 +64,15 @@ class GridRunner(BaseStrategy):
             log.info("GRID SELL %s %.8f @ %.8f", symbol, sell_size, price)
             return
 
+        required_edge = max(0.0, float(cfg.get("_required_entry_edge_pct", 0.0)))
+        target_edge = exit_markup * 100
+        if required_edge > 0 and target_edge < required_edge:
+            log.info(
+                "GRID profit guard: BUY paused; target edge %.3f%% < required %.3f%%.",
+                target_edge,
+                required_edge,
+            )
+            return
         buy_price = current_price * (1 - entry_offset)
         buy_size = order_value / buy_price if order_value > 0 else size
         notional = buy_size * buy_price

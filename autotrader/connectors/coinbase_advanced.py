@@ -11,10 +11,28 @@ import urllib.request
 from dataclasses import dataclass
 from decimal import Decimal
 from typing import Any
+import os
+import base64
+import secrets
+import time
+import urllib.error
+
+import jwt
+from cryptography.hazmat.primitives import serialization
+from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
 
 class CoinbaseMarketDataError(RuntimeError):
     pass
+
+
+class CoinbaseAuthenticationError(RuntimeError):
+    """Raised when authenticated Coinbase access cannot be established."""
+
+    def __init__(self, message: str, *, status: int | None = None, category: str = "authentication_failed") -> None:
+        super().__init__(message)
+        self.status = status
+        self.category = category
 
 
 @dataclass(frozen=True)
@@ -41,6 +59,7 @@ class CoinbaseAdvancedMarketData:
 
     BASE_URL = "https://api.coinbase.com"
     BOOK_PATH = "/api/v3/brokerage/market/product_book"
+    ACCOUNTS_PATH = "/api/v3/brokerage/accounts"
 
     def __init__(self, *, timeout: float = 5.0) -> None:
         self.timeout = timeout
@@ -62,6 +81,154 @@ class CoinbaseAdvancedMarketData:
                 return json.loads(response.read().decode("utf-8"))
         except Exception as exc:
             raise CoinbaseMarketDataError("Coinbase public market-data request failed") from exc
+
+    @staticmethod
+    def _credential_format() -> dict[str, object]:
+        key_name = os.getenv("COINBASE_API_KEY", "").strip()
+        key_secret = os.getenv("COINBASE_API_SECRET", "").replace("\\n", "\n").strip()
+        key_name_ok = bool(
+            key_name
+            and (
+                (key_name.startswith("organizations/") and "/apiKeys/" in key_name)
+                or (len(key_name) == 36 and key_name.count("-") == 4)
+            )
+        )
+        ec_key = "BEGIN " in key_secret and "PRIVATE KEY" in key_secret
+        ed25519_key = False
+        if key_secret and not ec_key:
+            try:
+                ed25519_key = len(base64.b64decode(key_secret, validate=True)) == 64
+            except Exception:
+                ed25519_key = False
+        return {
+            "credentials_present": bool(key_name and key_secret),
+            "key_name_format_ok": key_name_ok,
+            "ecdsa_private_key_format_ok": ec_key,
+            "ed25519_private_key_format_ok": ed25519_key,
+            "format_compatible": bool(key_name_ok and (ec_key or ed25519_key)),
+        }
+
+    def _build_rest_jwt(self, method: str, path: str) -> str:
+        fmt = self._credential_format()
+        if not fmt["credentials_present"]:
+            raise CoinbaseAuthenticationError(
+                "Coinbase credentials are missing",
+                category="credentials_missing",
+            )
+        if not fmt["format_compatible"]:
+            raise CoinbaseAuthenticationError(
+                "Coinbase credentials are not in a supported CDP format",
+                category="credential_format_invalid",
+            )
+
+        key_name = os.getenv("COINBASE_API_KEY", "").strip()
+        key_secret = os.getenv("COINBASE_API_SECRET", "").replace("\\n", "\n").strip()
+        now = int(time.time())
+        uri = f"{method.upper()} api.coinbase.com{path}"
+        payload = {
+            "sub": key_name,
+            "iss": "cdp",
+            "nbf": now,
+            "iat": now,
+            "exp": now + 120,
+            "uris": [uri],
+        }
+        headers = {
+            "kid": key_name,
+            "nonce": secrets.token_hex(16),
+            "typ": "JWT",
+        }
+
+        try:
+            if fmt["ed25519_private_key_format_ok"]:
+                decoded = base64.b64decode(key_secret, validate=True)
+                private_key = Ed25519PrivateKey.from_private_bytes(decoded[:32])
+                return jwt.encode(
+                    payload,
+                    private_key,
+                    algorithm="EdDSA",
+                    headers=headers,
+                )
+
+            private_key = serialization.load_pem_private_key(
+                key_secret.encode("utf-8"),
+                password=None,
+            )
+            return jwt.encode(
+                payload,
+                private_key,
+                algorithm="ES256",
+                headers=headers,
+            )
+        except Exception as exc:
+            raise CoinbaseAuthenticationError(
+                "Coinbase private key could not be parsed or signed",
+                category="private_key_parse_failed",
+            ) from exc
+
+    def _auth_get(self, path: str) -> Any:
+        token = self._build_rest_jwt("GET", path)
+        request = urllib.request.Request(
+            self.BASE_URL + path,
+            method="GET",
+            headers={
+                "Accept": "application/json",
+                "Authorization": f"Bearer {token}",
+                "User-Agent": "autotrader-coinbase-auth/1.0",
+            },
+        )
+        try:
+            with urllib.request.urlopen(request, timeout=self.timeout) as response:
+                return json.loads(response.read().decode("utf-8"))
+        except urllib.error.HTTPError as exc:
+            if exc.code in {401, 403}:
+                category = "unauthorized_or_ip_restricted"
+            elif exc.code == 429:
+                category = "rate_limited"
+            else:
+                category = "http_error"
+            raise CoinbaseAuthenticationError(
+                "Coinbase authenticated request failed",
+                status=exc.code,
+                category=category,
+            ) from exc
+        except Exception as exc:
+            raise CoinbaseAuthenticationError(
+                "Coinbase authenticated request failed",
+                category="network_error",
+            ) from exc
+
+    def authenticated_accounts_probe(self) -> dict[str, object]:
+        fmt = self._credential_format()
+        result: dict[str, object] = {
+            "venue": "coinbase_advanced",
+            "read_only": True,
+            **fmt,
+            "authenticated": False,
+            "status": None,
+            "account_count": None,
+            "error_category": None,
+        }
+        if not fmt["credentials_present"] or not fmt["format_compatible"]:
+            result["error_category"] = (
+                "credentials_missing"
+                if not fmt["credentials_present"]
+                else "credential_format_invalid"
+            )
+            return result
+        try:
+            payload = self._auth_get(self.ACCOUNTS_PATH)
+            accounts = payload.get("accounts") if isinstance(payload, dict) else None
+            result["authenticated"] = isinstance(accounts, list)
+            result["status"] = 200 if result["authenticated"] else None
+            result["account_count"] = len(accounts) if isinstance(accounts, list) else None
+            if not result["authenticated"]:
+                result["error_category"] = "unexpected_response"
+            return result
+        except CoinbaseAuthenticationError as exc:
+            result["status"] = exc.status
+            result["error_category"] = exc.category
+            return result
 
     @staticmethod
     def normalize_product_id(symbol: str) -> str:

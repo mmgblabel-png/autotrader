@@ -70,6 +70,7 @@ _CONFIG_PATH: Final[str] = os.getenv("AUTOTRADER_CONFIG", "config.yaml")
 _DEFAULT_TICK_INTERVAL: Final[float] = 1.0
 _MIN_TICK_INTERVAL: Final[float] = 0.1
 _DEFAULT_LIVE_SYNC_SECONDS: Final[float] = 5.0
+_DEFAULT_JOURNAL_RECONCILE_SECONDS: Final[float] = 60.0
 
 
 def _cors_origins() -> list[str]:
@@ -214,10 +215,16 @@ async def _tick_loop(app: FastAPI, agent: AutoTrader) -> None:
                     bool(running_markets)
                     and app.state.tick_count % app.state.live_sync_every_ticks == 0
                 )
-                if sync_due:
-                    # Reconcile first so fills/cancels are reflected in bot-owned
-                    # inventory before any strategy is allowed to create a new intent.
+                journal_reconcile_due = (
+                    bool(agent._bitvavo.journal.inflight())
+                    and app.state.tick_count % app.state.journal_reconcile_every_ticks == 0
+                )
+                if sync_due or journal_reconcile_due:
+                    # Reconcile durable orders even when all strategies are
+                    # stopped, so manual exchange cancels/fills cannot leave a
+                    # stale local NEW/OPEN state indefinitely.
                     agent.live_reconcile()
+                if sync_due:
                     try:
                         balance_rows = agent._bitvavo.balance()
                         app.state.bitvavo_balances = {
@@ -258,6 +265,16 @@ async def _tick_loop(app: FastAPI, agent: AutoTrader) -> None:
                         inventory = agent._bitvavo.journal.inventory_cost_basis(symbol, strategy.name)
                         strategy._config["_bot_base_inventory"] = float(inventory["quantity"])
                         strategy._config["_bot_average_entry_price"] = float(inventory["average_entry_price"])
+                        profit_snapshot = agent.profit_supervisor.strategy_snapshot(
+                            symbol, strategy.name, price
+                        )
+                        strategy._config["_profit_snapshot"] = profit_snapshot
+                        strategy._config["_required_entry_edge_pct"] = float(
+                            profit_snapshot["required_entry_edge_pct"]
+                        )
+                        strategy._config["_min_profit_exit_price"] = float(
+                            profit_snapshot["min_profit_exit_price"]
+                        )
                         strategy._config["_last_bot_sell_fill_at"] = agent._bitvavo.journal.latest_fill_time(
                             symbol, strategy.name, "sell"
                         )
@@ -298,6 +315,16 @@ async def _lifespan(app: FastAPI):
     app.state.live_sync_every_ticks = max(
         1, int(round(live_sync_seconds / app.state.tick_interval_seconds))
     )
+    try:
+        journal_reconcile_seconds = max(
+            app.state.tick_interval_seconds,
+            float(os.getenv("AUTOTRADER_JOURNAL_RECONCILE_SECONDS", str(_DEFAULT_JOURNAL_RECONCILE_SECONDS))),
+        )
+    except ValueError:
+        journal_reconcile_seconds = _DEFAULT_JOURNAL_RECONCILE_SECONDS
+    app.state.journal_reconcile_every_ticks = max(
+        1, int(round(journal_reconcile_seconds / app.state.tick_interval_seconds))
+    )
     app.state.live_mode = os.getenv("EXECUTION_MODE", "paper").strip().lower() == "live"
     app.state.live_armed = False
     if app.state.live_mode:
@@ -311,6 +338,19 @@ async def _lifespan(app: FastAPI):
     app.state.bitvavo_security_cache_at = 0.0
     app.state.live_preflight_cache = None
     app.state.live_preflight_cache_at = 0.0
+
+    if os.getenv("COINBASE_API_KEY", "").strip() and os.getenv("COINBASE_API_SECRET", "").strip():
+        try:
+            cb_probe = CoinbaseAdvancedMarketData().authenticated_accounts_probe()
+            log.info(
+                "Coinbase startup auth probe: authenticated=%s status=%s format_compatible=%s error_category=%s",
+                cb_probe.get("authenticated"),
+                cb_probe.get("status"),
+                cb_probe.get("format_compatible"),
+                cb_probe.get("error_category"),
+            )
+        except Exception as cb_exc:
+            log.warning("Coinbase startup auth probe failed: %s", type(cb_exc).__name__)
     if app.state.live_mode:
         try:
             startup_preflight = validate_bitvavo_live_strategies(
@@ -328,11 +368,12 @@ async def _lifespan(app: FastAPI):
         _tick_loop(app, agent), name="autotrader-paper-tick-loop"
     )
     log.info(
-        "AutoTrader agent initialised from '%s' (mode=%s tick=%.3fs live_sync=%.3fs).",
+        "AutoTrader agent initialised from '%s' (mode=%s tick=%.3fs live_sync=%.3fs journal_reconcile=%.3fs).",
         _CONFIG_PATH,
         "live" if app.state.live_mode else "paper",
         app.state.tick_interval_seconds,
         app.state.live_sync_every_ticks * app.state.tick_interval_seconds,
+        app.state.journal_reconcile_every_ticks * app.state.tick_interval_seconds,
     )
 
     try:
@@ -498,6 +539,54 @@ def pnl_events(limit: int = Query(default=100, ge=1, le=200)):
     return {"events": get_agent().profit_engine.events(limit)}
 
 
+@app.get("/api/pnl/live", tags=["pnl"])
+def live_pnl():
+    """Return durable fee-aware live PnL and break-even state per strategy."""
+    agent = get_agent()
+    rows = []
+    totals = {
+        "realized_net_pnl_eur": 0.0,
+        "unrealized_net_pnl_eur": 0.0,
+        "economic_pnl_eur": 0.0,
+        "fees_quote_equivalent_eur": 0.0,
+    }
+    for strategy in agent._strategies.values():
+        if not strategy.is_enabled:
+            continue
+        if str(strategy._config.get("exchange", "bitvavo")).lower() != "bitvavo":
+            continue
+        symbol = str(strategy._config.get("symbol", "")).upper()
+        if not symbol:
+            continue
+        mark = float(strategy._config.get("_current_price") or 0.0)
+        if mark <= 0:
+            try:
+                mark = float(agent._bitvavo.ticker_price(symbol))
+            except Exception:
+                mark = 0.0
+        snapshot = agent.profit_supervisor.strategy_snapshot(symbol, strategy.name, mark)
+        rows.append(snapshot)
+        for key in totals:
+            totals[key] += float(snapshot.get(key, 0.0) or 0.0)
+    if totals["economic_pnl_eur"] > 0:
+        state = "net_positive"
+    elif totals["economic_pnl_eur"] < 0:
+        state = "net_negative"
+    else:
+        state = "flat"
+    return {
+        "state": state,
+        "totals": {key: round(value, 6) for key, value in totals.items()},
+        "policy": {
+            "required_entry_edge_pct": float(agent.profit_supervisor.policy.required_entry_edge_pct),
+            "future_exit_cost_pct": float(agent.profit_supervisor.policy.future_exit_cost_pct),
+            "min_expected_net_edge_pct": float(agent.profit_supervisor.policy.min_expected_net_edge_pct),
+        },
+        "strategies": rows,
+        "note": "Unrealized values are estimates after configured exit fee/slippage; profit is never guaranteed.",
+    }
+
+
 @app.get("/api/events", tags=["pnl"])
 def events(limit: int = Query(default=100, ge=1, le=200)):
     """Compatibility route returning the event list required by the dashboard."""
@@ -590,11 +679,38 @@ def live_readiness():
         live_preflight = {"passed": False, "open_orders_clear": False, "strategies": []}
         live_preflight_passed = False
         exchange_open_orders_clear = False
-    strategy_states = get_agent().list_strategies()
+    agent = get_agent()
+    strategy_states = agent.list_strategies()
     approved_live = [
         state for state in strategy_states.values()
         if state.get("enabled") and state.get("live_capable")
     ]
+    journal_states: dict[str, dict] = {}
+    target_edges: dict[str, float] = {}
+    for key, strategy in agent._strategies.items():
+        state = strategy_states.get(key, {})
+        if not (state.get("enabled") and state.get("live_capable")):
+            continue
+        symbol = str(strategy._config.get("symbol", "")).upper()
+        if symbol:
+            try:
+                journal_states[key] = agent._bitvavo.journal.strategy_market_state(symbol, strategy.name)
+            except Exception:
+                journal_states[key] = {"nonterminal_count": -1}
+        if strategy.name == "MarketMaker":
+            target_edges[key] = float(strategy._config.get("cycle_exit_markup_pct", 0.0))
+        elif strategy.name == "GridRunner":
+            target_edges[key] = float(strategy._config.get("exit_markup_pct", 0.0))
+        elif strategy.name == "SniperBot":
+            target_edges[key] = float(strategy._config.get("take_profit_pct", 0.0))
+    journal_nonterminal_clear = bool(journal_states) and all(
+        int(state.get("nonterminal_count", -1)) == 0
+        for state in journal_states.values()
+    )
+    required_entry_edge_pct = float(agent.profit_supervisor.policy.required_entry_edge_pct)
+    profit_policy_satisfied = bool(target_edges) and all(
+        edge >= required_entry_edge_pct for edge in target_edges.values()
+    )
     gates = {
         "execution_mode_live": os.getenv("EXECUTION_MODE", "paper").strip().lower() == "live",
         "live_execution_approved": os.getenv("LIVE_EXECUTION_APPROVED", "false").strip().lower() == "true",
@@ -607,6 +723,8 @@ def live_readiness():
         "bitvavo_security_passed": bitvavo_security_passed,
         "live_market_preflight_passed": live_preflight_passed,
         "exchange_open_orders_clear": exchange_open_orders_clear,
+        "journal_nonterminal_clear": journal_nonterminal_clear,
+        "profit_policy_satisfied": profit_policy_satisfied,
         "live_strategy_configured": bool(approved_live),
         "live_strategy_running": any(state.get("running") for state in approved_live),
         "running_strategies_approved": all(
@@ -616,25 +734,24 @@ def live_readiness():
         "control_token_present": bool(os.getenv("AUTOTRADER_CONTROL_TOKEN", "").strip()),
     }
     ready = all(gates.values())
-    try:
-        journal_state = get_agent()._bitvavo.journal.strategy_market_state("BTC-EUR", "MarketMaker")
-    except Exception:
-        journal_state = {
-            "latest_side": None,
-            "latest_status": None,
-            "latest_amount": None,
-            "fill_count": 0,
-            "nonterminal_count": -1,
-            "net_base_inventory": "0",
-        }
+    journal_state = journal_states.get("market_maker", {
+        "latest_side": None,
+        "latest_status": None,
+        "latest_amount": None,
+        "fill_count": 0,
+        "nonterminal_count": -1,
+        "net_base_inventory": "0",
+    })
     log.info(
-        "Live readiness: ready=%s mode=%s armed=%s gates=%s journal=%s preflight=%s",
+        "Live readiness: ready=%s mode=%s armed=%s gates=%s journal=%s journals=%s preflight=%s profit_required_edge_pct=%.4f",
         ready,
         app.state.execution_gateway.mode.value,
         bool(getattr(app.state, "live_armed", False)),
         gates,
         journal_state,
+        journal_states,
         live_preflight,
+        required_entry_edge_pct,
     )
     return {
         "ready": ready,
@@ -643,7 +760,12 @@ def live_readiness():
         "mode": app.state.execution_gateway.mode.value,
         "gates": gates,
         "journal": journal_state,
+        "journals": journal_states,
         "preflight": live_preflight,
+        "profit_policy": {
+            "required_entry_edge_pct": required_entry_edge_pct,
+            "target_edges_pct": target_edges,
+        },
         "action": "Resolve failed gates first." if not ready else "Ready for explicit runtime activation.",
         "warning": "Activation is runtime-only and never changes Railway variables.",
     }
@@ -669,6 +791,10 @@ def activate_live(payload: dict = Body(...)):
 @app.post("/api/live/deactivate", tags=["execution"])
 def deactivate_live():
     app.state.live_armed = False
+    try:
+        get_agent().live_reconcile()
+    except Exception as exc:
+        log.warning("Post-deactivation order reconciliation failed: %s", exc)
     return {"armed": False, "message": "Live trading disarmed. Existing exchange orders are not automatically canceled."}
 
 
@@ -927,8 +1053,13 @@ def stop_live_strategies(
         name for name, item in state.items()
         if item.get("running") and item.get("live_capable")
     ]
+    stopped = [agent.stop(name) for name in names]
+    try:
+        agent.live_reconcile()
+    except Exception as exc:
+        log.warning("Post-stop order reconciliation failed: %s", exc)
     return {
-        "strategies": [agent.stop(name) for name in names],
+        "strategies": stopped,
         "stopped_count": len(names),
         "warning": "Existing exchange orders are not automatically canceled.",
     }
@@ -987,13 +1118,27 @@ def health():
 
 @app.get("/api/bitvavo/live-state", tags=["execution"])
 def bitvavo_live_state() -> dict[str, object]:
-    """Return authenticated, read-only Bitvavo balances and open BTC-EUR orders."""
+    """Return redacted balances and open orders for configured Bitvavo bot markets."""
     agent = get_agent()
-    market = "BTC-EUR"
+    markets = sorted({
+        str(strategy._config.get("symbol", "")).upper()
+        for strategy in agent._strategies.values()
+        if strategy.is_enabled
+        and str(strategy._config.get("exchange", "bitvavo")).lower() == "bitvavo"
+        and str(strategy._config.get("symbol", "")).strip()
+    })
+    if not markets:
+        markets = ["BTC-EUR"]
+    relevant_assets = {"EUR"}
+    relevant_assets.update(market.split("-", 1)[0] for market in markets)
+
     try:
         balances_raw = agent._bitvavo.balance()
-        orders_raw = agent._bitvavo.open_orders(market)
-        ticker = float(agent._bitvavo.ticker_price(market))
+        orders_raw = []
+        ticker_by_market: dict[str, float] = {}
+        for market in markets:
+            orders_raw.extend(agent._bitvavo.open_orders(market))
+            ticker_by_market[market] = float(agent._bitvavo.ticker_price(market))
     except Exception as exc:
         raise HTTPException(status_code=502, detail="Bitvavo live-state read failed") from exc
 
@@ -1002,7 +1147,7 @@ def bitvavo_live_state() -> dict[str, object]:
         if not isinstance(row, dict):
             continue
         symbol = str(row.get("symbol") or "").upper()
-        if symbol not in {"EUR", "BTC"}:
+        if symbol not in relevant_assets:
             continue
         available = float(row.get("available") or 0)
         in_order = float(row.get("inOrder") or row.get("in_order") or 0)
@@ -1016,12 +1161,13 @@ def bitvavo_live_state() -> dict[str, object]:
     for row in orders_raw if isinstance(orders_raw, list) else []:
         if not isinstance(row, dict):
             continue
+        market = str(row.get("market") or "").upper()
         amount = float(row.get("amount") or 0)
         filled = float(row.get("filledAmount") or row.get("amountFilled") or 0)
         price = float(row.get("price") or 0)
         remaining = max(0.0, amount - filled)
         open_orders.append({
-            "market": str(row.get("market") or market).upper(),
+            "market": market,
             "side": str(row.get("side") or "").lower(),
             "order_type": str(row.get("orderType") or row.get("type") or "").lower(),
             "status": str(row.get("status") or "open").lower(),
@@ -1034,17 +1180,28 @@ def bitvavo_live_state() -> dict[str, object]:
         })
 
     eur = balances.get("EUR", {"available": 0.0, "in_order": 0.0, "total": 0.0})
-    btc = balances.get("BTC", {"available": 0.0, "in_order": 0.0, "total": 0.0})
+    configured_assets_value = float(eur["total"])
+    for market, ticker in ticker_by_market.items():
+        base = market.split("-", 1)[0]
+        configured_assets_value += float(balances.get(base, {}).get("total", 0.0)) * ticker
+
     return {
         "venue": "bitvavo",
-        "market": market,
-        "ticker_eur": ticker,
+        "markets": markets,
+        "ticker_by_market_eur": ticker_by_market,
+        "ticker_eur": ticker_by_market.get("BTC-EUR"),
         "armed": bool(getattr(app.state, "live_armed", False)),
-        "balances": {"EUR": eur, "BTC": btc},
-        "bot_assets_value_eur": float(eur["total"]) + float(btc["total"]) * ticker,
+        "balances": balances,
+        "configured_assets_value_eur": configured_assets_value,
+        "bot_assets_value_eur": configured_assets_value,
         "open_orders": open_orders,
         "open_order_count": len(open_orders),
     }
+
+@app.get("/api/security/coinbase", tags=["security"])
+def coinbase_security_status() -> dict[str, object]:
+    """Verify Coinbase Advanced credentials with a read-only accounts request."""
+    return CoinbaseAdvancedMarketData().authenticated_accounts_probe()
 
 
 @app.get("/api/security/bitvavo", tags=["security"])

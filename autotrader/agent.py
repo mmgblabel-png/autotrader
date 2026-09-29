@@ -15,6 +15,7 @@ from autotrader.connectors.bitvavo import BitvavoAdapter
 from autotrader.core.execution_coordinator import ExecutionCoordinator
 from autotrader.core.order_manager import OrderManager
 from autotrader.core.profit_engine import ProfitEngine, Trade
+from autotrader.core.profit_supervisor import ProfitSupervisor
 from autotrader.core.risk_manager import RiskManager, StrategyRiskConfig
 from autotrader.core.strategy_allocator import StrategyAllocator
 from autotrader.strategies.arbitrage_hunter import ArbitrageHunter
@@ -47,6 +48,10 @@ class AutoTrader:
         self._setup_risk()
         self._is_live_armed = lambda: bool(getattr(__import__('autotrader.api.server', fromlist=['app']).app.state, 'live_armed', False))
         self._bitvavo = BitvavoAdapter(is_armed=self._is_live_armed)
+        self._profit_supervisor = ProfitSupervisor(
+            self._bitvavo.journal,
+            self._config.get("profit_policy", {}),
+        )
         self._restore_profit_from_journal()
         self._executor = ExecutionCoordinator(
             self._om,
@@ -70,6 +75,10 @@ class AutoTrader:
     @property
     def risk_manager(self) -> "RiskManager":
         return self._rm
+
+    @property
+    def profit_supervisor(self) -> "ProfitSupervisor":
+        return self._profit_supervisor
 
     # ------------------------------------------------------------------
     # Public API
