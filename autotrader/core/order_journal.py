@@ -1,5 +1,6 @@
 """Durable, append-aware order journal for execution reconciliation."""
 from __future__ import annotations
+import hashlib
 
 import json
 import os
@@ -90,7 +91,9 @@ class OrderJournal:
 
     def record_fill(self, client_order_id: str, fill: dict[str, Any]) -> None:
         fill_id = str(fill.get("fillId") or fill.get("id") or "")
-        fill_key = f"{client_order_id}:{fill_id or hash(json.dumps(fill, sort_keys=True, default=str))}"
+        stable_payload = json.dumps(fill, sort_keys=True, separators=(",", ":"), default=str)
+        fingerprint = hashlib.sha256(stable_payload.encode("utf-8")).hexdigest()
+        fill_key = f"{client_order_id}:{fill_id or fingerprint}"
         with self._lock:
             self._db.execute(
                 "INSERT OR IGNORE INTO fills(fill_key,client_order_id,exchange_fill_id,amount,price,fee,observed_at,raw_json) VALUES(?,?,?,?,?,?,?,?)",
