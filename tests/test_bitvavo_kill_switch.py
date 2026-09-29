@@ -58,3 +58,29 @@ def test_kill_switch_live_path_is_allowlisted_and_capped(monkeypatch, tmp_path):
     assert report["positions_closed"][0]["amount"] == "0.0002"
     assert len(calls) == 1
     adapter.journal.close()
+
+
+def test_kill_switch_cancel_uses_official_order_query(monkeypatch, tmp_path):
+    monkeypatch.setenv("EXECUTION_MODE", "live")
+    monkeypatch.setenv("BITVAVO_DRY_RUN", "false")
+    monkeypatch.setenv("BITVAVO_OPERATOR_ID", "1")
+    monkeypatch.delenv("KILL_SWITCH_CLOSE_POSITIONS", raising=False)
+    adapter = BitvavoAdapter(journal=OrderJournal(str(tmp_path / "orders.sqlite3")))
+    monkeypatch.setattr(
+        adapter,
+        "open_orders",
+        lambda: [{"market": "BTC-EUR", "orderId": "exchange-order-1"}],
+    )
+    calls = []
+    def fake(method, endpoint, body=None, query=None):
+        calls.append((method, endpoint, query))
+        return {"orderId": "exchange-order-1"}
+    monkeypatch.setattr(adapter, "_private_request", fake)
+    report = adapter.kill_switch_close_all()
+    assert report["orders_canceled"][0]["status"] == "canceled"
+    assert calls[0] == (
+        "DELETE",
+        "/order",
+        {"market": "BTC-EUR", "orderId": "exchange-order-1", "operatorId": "1"},
+    )
+    adapter.journal.close()
