@@ -19,6 +19,7 @@ class ExecutionLimits:
 class ExecutionRequest:
     venue:str; symbol:str; side:str; notional_eur:Decimal
     expected_price:Decimal; observed_price:Decimal; client_order_id:str; timestamp:float
+    risk_reducing: bool=False
 
 @dataclass(frozen=True)
 class ExecutionDecision:
@@ -85,7 +86,8 @@ class ExecutionGateway:
         if request.venue not in {"binance_spot","bitvavo","polymarket"}: return self._reject(request,"venue is not allowlisted")
         if request.side not in {"BUY","SELL"}: return self._reject(request,"side is invalid")
         if request.notional_eur<=0 or request.notional_eur>self.limits.max_trade_eur: return self._reject(request,"per-trade EUR limit exceeded")
-        if self.daily_exposure_eur+request.notional_eur>self.limits.max_daily_exposure_eur: return self._reject(request,"daily exposure limit exceeded")
+        if (not request.risk_reducing) and self.daily_exposure_eur+request.notional_eur>self.limits.max_daily_exposure_eur:
+            return self._reject(request,"daily exposure limit exceeded")
         if self.daily_loss_eur>=self.limits.max_daily_loss_eur: return self._reject(request,"daily loss stop is active")
         if request.expected_price<=0 or request.observed_price<=0: return self._reject(request,"price must be positive")
         if request.side=="BUY":
@@ -100,7 +102,8 @@ class ExecutionGateway:
             if not live_activation_is_allowed():
                 return self._reject(request,"live activation gates are not satisfied")
         self._seen_order_ids.add(request.client_order_id)
-        self.daily_exposure_eur+=request.notional_eur
+        if not request.risk_reducing:
+            self.daily_exposure_eur+=request.notional_eur
         return ExecutionDecision(True,self.mode,"validated for execution" if self.mode is ExecutionMode.LIVE else "validated without sending an order",request.client_order_id,request.venue,str(request.notional_eur))
 
     def record_loss(self,amount_eur:Decimal)->None:

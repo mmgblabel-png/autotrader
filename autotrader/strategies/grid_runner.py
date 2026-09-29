@@ -1,6 +1,8 @@
 """GridRunner – conservative inventory-aware spot grid."""
 from __future__ import annotations
 
+import time
+
 from autotrader.core.logger import get_logger
 from autotrader.core.order_manager import Order, OrderSide, OrderType
 from autotrader.strategies.base import BaseStrategy
@@ -18,6 +20,9 @@ class GridRunner(BaseStrategy):
             return
 
         cfg = self._config
+        cooldown_until = float(cfg.get("_failure_cooldown_until", 0.0))
+        if cooldown_until > time.time():
+            return
         current_price = float(cfg.get("_current_price", 0.0))
         if current_price <= 0:
             return
@@ -90,6 +95,18 @@ class GridRunner(BaseStrategy):
             strategy=self.name,
         ))
         log.info("GRID BUY %s %.8f @ %.8f", symbol, buy_size, buy_price)
+
+    def on_order_failure(self, order: Order, category: str, reason: str) -> None:
+        cooldown = max(5.0, float(self._config.get("failure_cooldown_seconds", 60.0)))
+        if "daily exposure limit exceeded" in reason.lower():
+            cooldown = max(cooldown, float(self._config.get("exposure_reject_cooldown_seconds", 300.0)))
+        self._config["_failure_cooldown_until"] = time.time() + cooldown
+        self._config["_last_failure_category"] = category
+        log.warning(
+            "GRID order failure: cooldown %.0fs category=%s",
+            cooldown,
+            category,
+        )
 
     def on_fill(self, order: Order, fill: dict) -> None:
         amount = float(fill.get("amount") or 0)

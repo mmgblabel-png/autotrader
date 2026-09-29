@@ -62,6 +62,9 @@ class BaseStrategy(ABC):
     def on_fill(self, order: "Order", fill: dict) -> None:
         """Receive a confirmed exchange fill owned by this strategy."""
 
+    def on_order_failure(self, order: "Order", category: str, reason: str) -> None:
+        """Receive a rejected/failed live order without retrying immediately."""
+
     @abstractmethod
     def tick(self) -> None:
         """Called on every market-data update / loop iteration."""

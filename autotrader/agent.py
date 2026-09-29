@@ -63,6 +63,7 @@ class AutoTrader:
             risk_manager=self._rm,
             allocator=self._allocator,
             fill_handler=self._on_fill,
+            failure_handler=self._on_order_failure,
         )
         self._register_strategies()
 
@@ -136,6 +137,12 @@ class AutoTrader:
                 "max_open_orders": allocation.max_open_orders if allocation else 0,
             }
         return result
+
+    def _on_order_failure(self, order, category: str, reason: str) -> None:
+        for strategy in self._strategies.values():
+            if strategy.name == order.strategy:
+                strategy.on_order_failure(order, category, reason)
+                return
 
     def _on_fill(self, order, fill: dict, realized_net_pnl_delta: float = 0.0) -> None:
         for strategy in self._strategies.values():
