@@ -59,9 +59,16 @@ class StrategyAllocator:
             )
 
     @staticmethod
-    def _notional(order: Order, fallback_price: Decimal) -> Decimal:
-        price = Decimal(str(order.price)) if order.price is not None else fallback_price
-        return Decimal(str(order.quantity)) * price
+    def _notional(order: Order, fallback_price: Decimal | None = None) -> Decimal | None:
+        """Value an order only with its own price, except for the new candidate."""
+        if order.price is not None:
+            price = Decimal(str(order.price))
+        elif fallback_price is not None:
+            price = fallback_price
+        else:
+            return None
+        notional = Decimal(str(order.quantity)) * price
+        return notional if notional.is_finite() and notional > 0 else None
 
     def allocation_for(self, strategy: str) -> StrategyAllocation | None:
         return self._allocations.get(strategy)
@@ -92,22 +99,22 @@ class StrategyAllocator:
             return AllocationDecision(False, "strategy open-order limit reached")
 
         new_notional = self._notional(order, observed_price)
-        if new_notional <= 0:
+        if new_notional is None:
             return AllocationDecision(False, "order notional must be positive")
         if new_notional > allocation.max_order_eur:
             return AllocationDecision(False, "strategy per-order allocation exceeded")
 
-        own_notional = sum(
-            (self._notional(o, observed_price) for o in own),
-            Decimal("0"),
-        )
+        own_values = [self._notional(o) for o in own]
+        if any(value is None for value in own_values):
+            return AllocationDecision(False, "active strategy order notional is unknown")
+        own_notional = sum((value for value in own_values if value is not None), Decimal("0"))
         if own_notional + new_notional > allocation.allocation_eur:
             return AllocationDecision(False, "strategy allocation exceeded")
 
-        total_notional = sum(
-            (self._notional(o, observed_price) for o in active),
-            Decimal("0"),
-        )
+        active_values = [self._notional(o) for o in active]
+        if any(value is None for value in active_values):
+            return AllocationDecision(False, "active portfolio order notional is unknown")
+        total_notional = sum((value for value in active_values if value is not None), Decimal("0"))
         if total_notional + new_notional > self.global_budget_eur:
             return AllocationDecision(False, "global live budget exceeded")
 
