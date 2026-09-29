@@ -198,6 +198,76 @@ class CoinbaseAdvancedMarketData:
                 category="network_error",
             ) from exc
 
+    def account_balances(self) -> dict[str, object]:
+        """Return a privacy-safe balance summary from Coinbase Advanced.
+
+        Account UUIDs, names, API credentials and other identifiers are never
+        returned. Balances are aggregated by currency across active accounts.
+        """
+        payload = self._auth_get(self.ACCOUNTS_PATH)
+        accounts = payload.get("accounts") if isinstance(payload, dict) else None
+        if not isinstance(accounts, list):
+            raise CoinbaseAuthenticationError(
+                "Coinbase accounts response was not understood",
+                category="unexpected_response",
+            )
+
+        aggregated: dict[str, dict[str, Decimal]] = {}
+        active_accounts = 0
+        for account in accounts:
+            if not isinstance(account, dict):
+                continue
+            currency = str(account.get("currency") or "").upper().strip()
+            if not currency:
+                continue
+            if account.get("active", True):
+                active_accounts += 1
+
+            available_obj = account.get("available_balance") or {}
+            hold_obj = account.get("hold") or {}
+            try:
+                available = Decimal(str(available_obj.get("value") or "0"))
+                hold = Decimal(str(hold_obj.get("value") or "0"))
+            except (ValueError, TypeError):
+                continue
+
+            bucket = aggregated.setdefault(
+                currency,
+                {"available": Decimal("0"), "hold": Decimal("0")},
+            )
+            bucket["available"] += max(available, Decimal("0"))
+            bucket["hold"] += max(hold, Decimal("0"))
+
+        assets = []
+        for currency, amounts in aggregated.items():
+            total = amounts["available"] + amounts["hold"]
+            if total == 0:
+                continue
+            assets.append(
+                {
+                    "currency": currency,
+                    "available": format(amounts["available"], "f"),
+                    "hold": format(amounts["hold"], "f"),
+                    "total": format(total, "f"),
+                }
+            )
+        preferred_order = {"EUR": 0, "USD": 1, "USDC": 2, "BTC": 3, "ETH": 4, "SOL": 5, "XRP": 6}
+        assets.sort(
+            key=lambda row: (
+                preferred_order.get(row["currency"], 100),
+                row["currency"],
+            )
+        )
+        return {
+            "venue": "coinbase_advanced",
+            "authenticated": True,
+            "read_only": True,
+            "account_count": len(accounts),
+            "active_account_count": active_accounts,
+            "asset_count": len(assets),
+            "assets": assets,
+        }
+
     def authenticated_accounts_probe(self) -> dict[str, object]:
         fmt = self._credential_format()
         result: dict[str, object] = {
