@@ -1210,6 +1210,18 @@ def coinbase_security_status() -> dict[str, object]:
     return CoinbaseAdvancedMarketData().authenticated_accounts_probe()
 
 
+@app.get("/api/coinbase/live-state", tags=["coinbase"])
+def coinbase_live_state() -> dict[str, object]:
+    """Return privacy-safe Coinbase Advanced account balances for the dashboard."""
+    try:
+        return CoinbaseAdvancedMarketData().account_balances()
+    except CoinbaseAuthenticationError as exc:
+        raise HTTPException(
+            status_code=exc.status or 503,
+            detail={"message": "Coinbase balance request failed", "category": exc.category},
+        ) from exc
+
+
 @app.get("/api/security/bitvavo", tags=["security"])
 def bitvavo_security_status() -> dict[str, object]:
     """Run the fail-closed Bitvavo security gate inside the Railway container.
