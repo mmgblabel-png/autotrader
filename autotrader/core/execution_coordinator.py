@@ -11,7 +11,7 @@ log = logging.getLogger(__name__)
 
 
 class ExecutionCoordinator:
-    def __init__(self, order_manager: OrderManager, adapter: BitvavoAdapter | None = None, *, is_armed=None, profit_engine: ProfitEngine | None = None, risk_manager=None, allocator: StrategyAllocator | None = None, fill_handler=None) -> None:
+    def __init__(self, order_manager: OrderManager, adapter: BitvavoAdapter | None = None, *, is_armed=None, profit_engine: ProfitEngine | None = None, risk_manager=None, allocator: StrategyAllocator | None = None, fill_handler=None, failure_handler=None) -> None:
         self.om = order_manager
         self.adapter = adapter or BitvavoAdapter()
         self.is_armed = is_armed or (lambda: False)
@@ -19,6 +19,7 @@ class ExecutionCoordinator:
         self.risk_manager = risk_manager
         self.allocator = allocator
         self.fill_handler = fill_handler
+        self.failure_handler = failure_handler
         self._recorded_fill_keys: set[str] = set()
 
     @staticmethod
@@ -156,6 +157,8 @@ class ExecutionCoordinator:
                 results.append({"client_order_id": order.order_id, "status": status.lower()})
             except BitvavoError as exc:
                 self.om.update(order.order_id, OrderStatus.FAILED)
+                if self.failure_handler is not None:
+                    self.failure_handler(order, exc.category, str(exc))
                 log.error("Bitvavo order %s failed: %s", order.order_id, exc)
                 results.append({"client_order_id": order.order_id, "status": "failed", "category": exc.category})
         return results
