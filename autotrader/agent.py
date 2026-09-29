@@ -13,6 +13,7 @@ from autotrader.core.execution_coordinator import ExecutionCoordinator
 from autotrader.core.order_manager import OrderManager
 from autotrader.core.profit_engine import ProfitEngine
 from autotrader.core.risk_manager import RiskManager, StrategyRiskConfig
+from autotrader.core.strategy_allocator import StrategyAllocator
 from autotrader.strategies.arbitrage_hunter import ArbitrageHunter
 from autotrader.strategies.base import BaseStrategy
 from autotrader.strategies.grid_runner import GridRunner
@@ -37,6 +38,8 @@ class AutoTrader:
         self._om = OrderManager()
         self._rm = RiskManager()
         self._pe = ProfitEngine(export_dir=self._config.get("export_dir", "exports"))
+        self._strategies: Dict[str, BaseStrategy] = {}
+        self._allocator = StrategyAllocator(self._config)
         self._is_live_armed = lambda: bool(getattr(__import__('autotrader.api.server', fromlist=['app']).app.state, 'live_armed', False))
         self._bitvavo = BitvavoAdapter(is_armed=self._is_live_armed)
         self._executor = ExecutionCoordinator(
@@ -44,9 +47,10 @@ class AutoTrader:
             self._bitvavo,
             is_armed=self._is_live_armed,
             profit_engine=self._pe,
+            allocator=self._allocator,
+            fill_handler=self._on_fill,
         )
         self._rm.set_profit_engine(self._pe)   # forward risk events to event log
-        self._strategies: Dict[str, BaseStrategy] = {}
         self._setup_risk()
         self._register_strategies()
 
@@ -99,11 +103,24 @@ class AutoTrader:
         return results[0] if name else {"stopped": [r["strategy"] for r in results if "status" in r]}
 
     def list_strategies(self) -> dict:
-        """Return {name: {running: bool}} — used by api/server.py."""
-        return {
-            name: {"running": strat.is_running, "enabled": strat.is_enabled}
-            for name, strat in self._strategies.items()
-        }
+        """Return runtime and live-allocation state for every strategy."""
+        result = {}
+        for name, strat in self._strategies.items():
+            allocation = self._allocator.allocation_for(strat.name)
+            result[name] = {
+                "running": strat.is_running,
+                "enabled": strat.is_enabled,
+                "live_capable": bool(allocation.live_capable) if allocation else False,
+                "allocation_eur": float(allocation.allocation_eur) if allocation else 0.0,
+                "max_open_orders": allocation.max_open_orders if allocation else 0,
+            }
+        return result
+
+    def _on_fill(self, order, fill: dict) -> None:
+        for strategy in self._strategies.values():
+            if strategy.name == order.strategy:
+                strategy.on_fill(order, fill)
+                return
     def tick_all(self) -> None:
         """Run strategies; in live mode, do not even create intents until runtime-armed."""
         live = os.getenv("EXECUTION_MODE", "paper").strip().lower() == "live"
