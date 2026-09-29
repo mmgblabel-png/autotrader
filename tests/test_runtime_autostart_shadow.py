@@ -24,6 +24,7 @@ class _FakeAgent:
 
 def test_shadow_scan_never_reports_live_orders(monkeypatch):
     monkeypatch.setenv("ARBITRAGE_MARKETS", "")
+    monkeypatch.setattr(server, "get_agent", lambda: SimpleNamespace(_bitvavo=SimpleNamespace()))
     payload = server._build_coinbase_bitvavo_shadow_scan()
     assert payload["mode"] == "shadow"
     assert payload["live_orders_sent"] is False
@@ -43,8 +44,7 @@ def test_approved_runtime_selection_excludes_arbitrage():
     assert "arbitrage" not in agent.started
 
 
-@pytest.mark.asyncio
-async def test_shadow_loop_updates_cache_without_arming(monkeypatch):
+def test_shadow_loop_updates_cache_without_arming(monkeypatch):
     app = SimpleNamespace(
         state=SimpleNamespace(
             arbitrage_shadow_interval_seconds=0.001,
@@ -56,10 +56,14 @@ async def test_shadow_loop_updates_cache_without_arming(monkeypatch):
         "_build_coinbase_bitvavo_shadow_scan",
         lambda: {"mode": "shadow", "live_orders_sent": False, "markets": []},
     )
-    task = asyncio.create_task(server._arbitrage_shadow_loop(app))
-    await asyncio.sleep(0.01)
-    task.cancel()
-    with pytest.raises(asyncio.CancelledError):
-        await task
+
+    async def scenario():
+        task = asyncio.create_task(server._arbitrage_shadow_loop(app))
+        await asyncio.sleep(0.01)
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+
+    asyncio.run(scenario())
     assert app.state.arbitrage_shadow_cache["live_orders_sent"] is False
     assert app.state.live_armed is False
