@@ -58,7 +58,9 @@ class StrategyAllocatorV2:
         }
 
         for key, cfg in strategy_config.items():
-            base = max(0.0, float((cfg or {}).get("allocation_eur", (cfg or {}).get("shadow_order_eur", 0.0))))
+            cfg = cfg or {}
+            enabled = bool(cfg.get("enabled", True))
+            base = max(0.0, float(cfg.get("allocation_eur", cfg.get("shadow_order_eur", 0.0)))) if enabled else 0.0
             display = name_map.get(key, key)
             shadow = shadow_by_name.get(key)
             if shadow is not None:
@@ -73,7 +75,7 @@ class StrategyAllocatorV2:
                 net = float(stats.get("net_pnl", 0.0))
                 win = float(stats.get("winrate_pct", 0.0))
                 dd = 0.0
-                mode = "live" if bool((cfg or {}).get("live_capable", False)) else "disabled"
+                mode = "live" if enabled and bool(cfg.get("live_capable", False)) else "disabled"
 
             score, confidence = self._score(net, win, trades, dd)
             if trades < self.min_samples:
@@ -98,7 +100,7 @@ class StrategyAllocatorV2:
                 "winrate_pct": round(win, 2),
                 "reason": reason,
             })
-            if base > 0:
+            if enabled and base > 0:
                 raw_weights[key] = recommended
 
         total_raw = sum(raw_weights.values())
