@@ -144,7 +144,7 @@ async def _tick_loop(app: FastAPI, agent: AutoTrader) -> None:
                         app.state.bitvavo_balance_snapshot_ready = False
                         log.warning("Bitvavo balance refresh failed: %s", balance_exc)
                     try:
-                        app.state.bitvavo_open_orders = agent._bitvavo.open_orders("BTC-EUR")
+                        app.state.bitvavo_open_orders = agent._bitvavo.open_orders()
                         app.state.bitvavo_open_orders_snapshot_ready = True
                     except Exception as orders_exc:
                         app.state.bitvavo_open_orders_snapshot_ready = False
@@ -155,23 +155,24 @@ async def _tick_loop(app: FastAPI, agent: AutoTrader) -> None:
                         price = float(agent._bitvavo.ticker_price(symbol))
                         strategy._config["_mid_price"] = price
                         strategy._config["_current_price"] = price
-                        if strategy.name == "MarketMaker":
-                            base, _, quote = symbol.partition("-")
-                            balances = getattr(app.state, "bitvavo_balances", {})
-                            strategy._config["_live_balance_snapshot_ready"] = bool(
-                                getattr(app.state, "bitvavo_balance_snapshot_ready", False)
-                            )
-                            strategy._config["_available_base"] = float(balances.get(base, 0.0))
-                            strategy._config["_available_quote"] = float(balances.get(quote, 0.0))
-                            inventory = agent._bitvavo.journal.inventory_cost_basis(symbol, strategy.name)
-                            strategy._config["_bot_base_inventory"] = float(inventory["quantity"])
-                            strategy._config["_bot_average_entry_price"] = float(inventory["average_entry_price"])
-                            strategy._config["_exchange_open_orders_snapshot_ready"] = bool(
-                                getattr(app.state, "bitvavo_open_orders_snapshot_ready", False)
-                            )
-                            strategy._config["_exchange_open_order_count"] = len(
-                                getattr(app.state, "bitvavo_open_orders", []) or []
-                            )
+                        base, _, quote = symbol.partition("-")
+                        balances = getattr(app.state, "bitvavo_balances", {})
+                        strategy._config["_live_balance_snapshot_ready"] = bool(
+                            getattr(app.state, "bitvavo_balance_snapshot_ready", False)
+                        )
+                        strategy._config["_available_base"] = float(balances.get(base, 0.0))
+                        strategy._config["_available_quote"] = float(balances.get(quote, 0.0))
+                        inventory = agent._bitvavo.journal.inventory_cost_basis(symbol, strategy.name)
+                        strategy._config["_bot_base_inventory"] = float(inventory["quantity"])
+                        strategy._config["_bot_average_entry_price"] = float(inventory["average_entry_price"])
+                        strategy._config["_exchange_open_orders_snapshot_ready"] = bool(
+                            getattr(app.state, "bitvavo_open_orders_snapshot_ready", False)
+                        )
+                        strategy._config["_exchange_open_order_count"] = sum(
+                            1
+                            for row in (getattr(app.state, "bitvavo_open_orders", []) or [])
+                            if str(row.get("market") or "").upper() == symbol
+                        )
                 agent.tick_all()
                 if app.state.tick_count % 30 == 0:
                     agent.live_reconcile()
