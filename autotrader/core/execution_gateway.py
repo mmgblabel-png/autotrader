@@ -71,6 +71,13 @@ class ExecutionGateway:
     def reset_daily(self)->None:
         self.daily_exposure_eur=Decimal("0"); self.daily_loss_eur=Decimal("0"); self._seen_order_ids.clear()
 
+    def restore_daily_state(self, *, exposure_eur: Decimal | None = None, loss_eur: Decimal | None = None)->None:
+        """Restore durable daily counters after a process restart."""
+        if exposure_eur is not None and exposure_eur.is_finite() and exposure_eur >= 0:
+            self.daily_exposure_eur = exposure_eur
+        if loss_eur is not None and loss_eur.is_finite() and loss_eur >= 0:
+            self.daily_loss_eur = loss_eur
+
     def evaluate(self, request:ExecutionRequest, *, armed: bool = False)->ExecutionDecision:
         now=time.time()
         if not request.client_order_id or request.client_order_id in self._seen_order_ids: return self._reject(request,"missing or duplicate client_order_id")
@@ -99,9 +106,8 @@ class ExecutionGateway:
     def record_loss(self,amount_eur:Decimal)->None:
         if amount_eur>0: self.daily_loss_eur+=amount_eur
 
-    @staticmethod
-    def _reject(request:ExecutionRequest,reason:str)->ExecutionDecision:
-        return ExecutionDecision(False,ExecutionMode.PAPER,reason,request.client_order_id,request.venue,str(request.notional_eur))
+    def _reject(self,request:ExecutionRequest,reason:str)->ExecutionDecision:
+        return ExecutionDecision(False,self.mode,reason,request.client_order_id,request.venue,str(request.notional_eur))
 
     def status(self)->dict:
         return {
