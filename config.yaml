@@ -158,11 +158,27 @@ autonomous_execution:
       - ETH-EUR
       - ADA-EUR
       - LINK-EUR
+      - DOGE-EUR
     sniper:
       - XRP-EUR
       - SOL-EUR
       - ADA-EUR
       - LINK-EUR
+      - ETH-EUR
+      - DOGE-EUR
+      - PEPE-EUR
+      - NEX-EUR
+      - BILL-EUR
+  market_thresholds:
+    PEPE-EUR:
+      min_score: 74.0
+      min_confidence: 0.66
+    NEX-EUR:
+      min_score: 78.0
+      min_confidence: 0.70
+    BILL-EUR:
+      min_score: 78.0
+      min_confidence: 0.70
   can_arm_itself: false
   can_raise_global_budget: false
   can_raise_hard_risk_limits: false
@@ -185,6 +201,10 @@ opportunity_router:
     - XRP-EUR
     - ADA-EUR
     - LINK-EUR
+    - DOGE-EUR
+    - PEPE-EUR
+    - NEX-EUR
+    - BILL-EUR
 
 profit_policy:
   estimated_entry_fee_pct: 0.25
