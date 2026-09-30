@@ -178,3 +178,34 @@ def test_autonomous_engine_ignores_unapproved_market():
     plan = engine.plan(agent=agent, router_payload=payload, risk_payload=_risk(), armed=True)
     row = next(x for x in plan["rows"] if x["strategy"] == "GridRunner")
     assert row["desired_market"] == "ETH-EUR"
+
+
+def test_max_size_requires_profit_gate_and_high_confidence():
+    agent = _agent()
+    engine = AutonomousDecisionEngine({
+        "enabled": True,
+        "apply_live": True,
+        "min_score": 68,
+        "min_confidence": 0.62,
+        "max_size_score": 82,
+        "max_size_confidence": 0.75,
+        "strategy_markets": {
+            "grid": ["SOL-EUR", "ETH-EUR"],
+            "sniper": ["XRP-EUR", "ADA-EUR"],
+            "market_maker": ["BTC-EUR"],
+        },
+    })
+    agent._strategies["grid"]._config["_required_entry_edge_pct"] = 0.75
+    agent._strategies["grid"]._config["exit_markup_pct"] = 0.80
+    plan = engine.plan(agent=agent, router_payload=_router(), risk_payload=_risk(), armed=True)
+    row = next(x for x in plan["rows"] if x["strategy"] == "GridRunner")
+    assert row["profit_gate"] is True
+    assert row["max_size_signal"] is True
+    assert row["recommended_order_eur"] == 7.0
+
+    agent._strategies["grid"]._config["_required_entry_edge_pct"] = 0.95
+    plan = engine.plan(agent=agent, router_payload=_router(), risk_payload=_risk(), armed=True)
+    row = next(x for x in plan["rows"] if x["strategy"] == "GridRunner")
+    assert row["profit_gate"] is False
+    assert row["quality_ok"] is False
+    assert row["max_size_signal"] is False
