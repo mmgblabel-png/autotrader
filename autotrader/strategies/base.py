@@ -83,6 +83,7 @@ class BaseStrategy(ABC):
         self._config["_prices"] = {}
         self._config["_market_switch_from"] = old_market
         self._config["_market_switch_to"] = new_market
+        self._config["_market_switch_pending"] = True
 
     @abstractmethod
     def tick(self) -> None:
