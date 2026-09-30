@@ -149,6 +149,7 @@ autonomous_execution:
   min_confidence: 0.62
   max_size_score: 82.0
   max_size_confidence: 0.75
+  exposure_safety_buffer_eur: 0.25
   switch_cooldown_seconds: 300
   strategy_markets:
     market_maker:
