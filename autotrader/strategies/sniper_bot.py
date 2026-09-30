@@ -22,6 +22,13 @@ class SniperBot(BaseStrategy):
         self._prev_price = 0.0
         self._last_entry_ts = 0.0
 
+    def on_market_switch(self, old_market: str, new_market: str) -> None:
+        super().on_market_switch(old_market, new_market)
+        self._position = 0.0
+        self._entry_price = 0.0
+        self._prev_price = 0.0
+        self._last_entry_ts = time.monotonic()
+
     def _sync_live_inventory(self) -> None:
         cfg = self._config
         if not bool(cfg.get("_live_balance_snapshot_ready", False)):

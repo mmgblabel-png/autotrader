@@ -27,7 +27,17 @@ class AutonomousDecisionEngine:
         self.max_size_confidence = max(
             self.min_confidence, min(1.0, float(self.config.get("max_size_confidence", 0.75)))
         )
+        self.market_thresholds = self.config.get("market_thresholds", {}) or {}
         self._last_switch: dict[str, float] = {}
+
+    def _thresholds_for_market(self, market: str) -> tuple[float, float]:
+        raw = self.market_thresholds.get(str(market).upper(), {}) or {}
+        score = max(self.min_score, min(100.0, float(raw.get("min_score", self.min_score))))
+        confidence = max(
+            self.min_confidence,
+            min(1.0, float(raw.get("min_confidence", self.min_confidence))),
+        )
+        return score, confidence
 
     def _allowed_markets(self, key: str, current: str) -> list[str]:
         cfg = self.config.get("strategy_markets", {}) or {}
@@ -67,9 +77,18 @@ class AutonomousDecisionEngine:
                 row for row in rankings.get(router_key, [])
                 if bool(row.get("eligible")) and str(row.get("market", "")).upper() in allowed
             ]
-            best = candidates[0] if candidates else None
             risk = risk_rows.get(display, {})
             confidence = float(risk.get("confidence") or 0.0)
+            passing = []
+            for candidate in candidates:
+                candidate_market = str(candidate.get("market", "")).upper()
+                candidate_score_min, candidate_conf_min = self._thresholds_for_market(candidate_market)
+                if (
+                    float(candidate.get("score") or 0.0) >= candidate_score_min
+                    and confidence >= candidate_conf_min
+                ):
+                    passing.append(candidate)
+            best = passing[0] if passing else (candidates[0] if candidates else None)
             suggested_eur = max(0.0, float(risk.get("recommended_order_eur") or 0.0))
             base_allocation = max(0.0, float(cfg.get("allocation_eur", 0.0)))
             max_order = max(0.0, float(cfg.get("max_order_eur", 0.0)))
@@ -97,10 +116,12 @@ class AutonomousDecisionEngine:
             else:
                 target_edge = float(cfg.get("take_profit_pct", 0.0))
             profit_gate = target_edge >= required_entry_edge if required_entry_edge > 0 else target_edge > 0
+            market_score_min, market_conf_min = self._thresholds_for_market(desired)
             quality_ok = (
                 bool(best)
-                and score >= self.min_score
-                and confidence >= self.min_confidence
+                and bool(passing)
+                and score >= market_score_min
+                and confidence >= market_conf_min
                 and profit_gate
             )
             use_max_size = (
@@ -136,6 +157,9 @@ class AutonomousDecisionEngine:
                 "market_score": round(score, 2),
                 "confidence": round(confidence, 4),
                 "recommended_order_eur": round(suggested_eur, 2),
+                "allowed_markets": sorted(allowed),
+                "market_min_score": round(market_score_min, 2),
+                "market_min_confidence": round(market_conf_min, 4),
                 "profit_gate": profit_gate,
                 "target_edge_pct": round(target_edge, 4),
                 "required_entry_edge_pct": round(required_entry_edge, 4),
@@ -189,9 +213,27 @@ class AutonomousDecisionEngine:
             if desired != current:
                 if not bool(row.get("may_switch")):
                     continue
-                cfg["symbol"] = desired
-                cfg["_current_price"] = 0.0
-                cfg["_mid_price"] = 0.0
+                try:
+                    rules_rows = agent._bitvavo.markets(desired)
+                    rules = rules_rows[0] if rules_rows else {}
+                    required_type = "limit" if key == "grid" else "market"
+                    supported = {str(x).lower() for x in (rules.get("orderTypes") or [])}
+                    min_quote = float(rules.get("minOrderInQuoteAsset") or 0.0)
+                    if (
+                        str(rules.get("status") or "").lower() != "trading"
+                        or required_type not in supported
+                        or (order_eur > 0 and min_quote > order_eur)
+                    ):
+                        continue
+                except Exception:
+                    continue
+                previous = current
+                try:
+                    cfg["symbol"] = desired
+                    strategy.on_market_switch(previous, desired)
+                except Exception:
+                    cfg["symbol"] = previous
+                    continue
                 self._last_switch[strategy.name] = time.time()
 
             if key in {"grid", "sniper"} and order_eur > 0:
