@@ -13,7 +13,10 @@ import tempfile
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import Any, TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from autotrader.core.adaptive_learning import AdaptiveLearning
 
 
 @dataclass
@@ -31,6 +34,7 @@ class ShadowStats:
     last_signal: str = "warming_up"
     last_trade_at: float = 0.0
     outcomes: list[float] = field(default_factory=list)
+    strategy_version: str = "v1"
 
     def as_dict(self) -> dict[str, Any]:
         return {
@@ -47,14 +51,20 @@ class ShadowStats:
             "last_signal": self.last_signal,
             "last_trade_at": self.last_trade_at,
             "outcomes": self.outcomes[-100:],
+            "strategy_version": self.strategy_version,
         }
 
 
 class ShadowStrategyEngine:
     """Run candidate strategies in a persistent no-order shadow account."""
 
-    def __init__(self, config: dict[str, Any] | None = None) -> None:
+    def __init__(
+        self,
+        config: dict[str, Any] | None = None,
+        learner: "AdaptiveLearning | None" = None,
+    ) -> None:
         self.config = config or {}
+        self.learner = learner
         self.path = Path(str(self.config.get("path", "/data/shadow_strategies.json")))
         self.fee_pct = float(self.config.get("fee_pct_each_leg", 0.25))
         self.slippage_pct = float(self.config.get("slippage_pct_each_leg", 0.05))
@@ -90,6 +100,25 @@ class ShadowStrategyEngine:
 
     def _state(self, name: str) -> ShadowStats:
         return self._states.setdefault(name, ShadowStats())
+
+    @staticmethod
+    def _learner_name(name: str) -> str:
+        return {
+            "mean_reversion": "MeanReversionShadow",
+            "volatility_breakout": "VolatilityBreakoutShadow",
+        }.get(name, name)
+
+    def _ensure_version(self, name: str, cfg: dict[str, Any]) -> ShadowStats:
+        state = self._state(name)
+        version = str(cfg.get("strategy_version", "v1"))
+        if state.strategy_version == version:
+            return state
+        self._states[name] = ShadowStats(
+            prices=state.prices[-240:],
+            strategy_version=version,
+            last_signal=f"version_reset_{version}",
+        )
+        return self._states[name]
 
     @property
     def round_trip_cost_pct(self) -> float:
