@@ -239,7 +239,7 @@ class ShadowStrategyEngine:
         else:
             state.last_signal = f"hold_{move:.2f}%_z_{z:.2f}"
     def _volatility_breakout(self, state: ShadowStats, price: float, cfg: dict[str, Any]) -> None:
-        lookback = max(12, int(cfg.get("lookback", 30)))
+        lookback = max(10, int(cfg.get("lookback", 30)))
         if len(state.prices) <= lookback:
             state.last_signal = "warming_up"
             return
