@@ -320,6 +320,107 @@ class PortfolioGoalTracker:
         }
 
 
+class CalculatedRiskSizer:
+    """Risk-adjusted sizing recommendations within existing hard caps.
+
+    This class never mutates budgets, risk limits, leverage, or armed state.
+    """
+
+    def __init__(self, config: dict[str, Any] | None = None) -> None:
+        self.config = config or {}
+        self.enabled = bool(self.config.get("enabled", True))
+        self.profile = str(self.config.get("profile", "balanced_aggressive"))
+        self.max_size_multiplier = max(
+            1.0, min(2.0, float(self.config.get("max_size_multiplier", 1.35)))
+        )
+        self.min_confidence = max(
+            0.0, min(1.0, float(self.config.get("min_confidence", 0.62)))
+        )
+        self.max_drawdown_pct = max(
+            0.1, float(self.config.get("max_drawdown_pct", 8.0))
+        )
+        self.max_fee_drag_pct = max(
+            1.0, float(self.config.get("max_fee_drag_pct", 55.0))
+        )
+
+    def recommend(
+        self,
+        opportunities: list[dict[str, Any]],
+        fee_rows: list[dict[str, Any]],
+        strategy_snapshots: list[dict[str, Any]],
+        base_allocations: dict[str, float],
+        max_order_eur: dict[str, float],
+    ) -> dict[str, Any]:
+        fee_by = {str(x.get("strategy")): x for x in fee_rows}
+        snap_by = {str(x.get("strategy")): x for x in strategy_snapshots}
+        rows = []
+        for opp in opportunities:
+            strategy = str(opp.get("strategy") or "")
+            score = max(0.0, min(100.0, float(opp.get("score") or 0.0)))
+            eligible = bool(opp.get("eligible", False))
+            snap = snap_by.get(strategy, {})
+            fee = fee_by.get(strategy, {})
+            dd = abs(float(snap.get("max_drawdown_pct") or 0.0))
+            fee_drag = fee.get("fee_drag_pct")
+            fee_drag = float(fee_drag) if fee_drag is not None else 0.0
+            samples = int(
+                snap.get("profitable_exits") or 0
+            ) + int(snap.get("losing_exits") or 0)
+            sample_conf = min(1.0, samples / 20.0)
+            quality_conf = score / 100.0
+            confidence = 0.65 * quality_conf + 0.35 * sample_conf
+            risk_penalty = 1.0
+            if dd > self.max_drawdown_pct:
+                risk_penalty *= 0.45
+            elif dd > self.max_drawdown_pct * 0.65:
+                risk_penalty *= 0.75
+            if fee_drag > self.max_fee_drag_pct:
+                risk_penalty *= 0.65
+            if not eligible:
+                risk_penalty *= 0.0
+
+            multiplier = 1.0
+            if confidence >= self.min_confidence:
+                upside = (confidence - self.min_confidence) / max(0.01, 1.0 - self.min_confidence)
+                multiplier = 1.0 + upside * (self.max_size_multiplier - 1.0)
+            multiplier *= risk_penalty
+            if confidence < self.min_confidence:
+                multiplier = min(multiplier, 0.85)
+
+            base = max(0.0, float(base_allocations.get(strategy, 0.0)))
+            order_cap = max(0.0, float(max_order_eur.get(strategy, 0.0)))
+            recommended = min(order_cap, base * multiplier) if order_cap > 0 else base * multiplier
+
+            rows.append({
+                "strategy": strategy,
+                "market": opp.get("market"),
+                "opportunity_score": round(score, 2),
+                "confidence": round(confidence, 4),
+                "drawdown_pct": round(dd, 3),
+                "fee_drag_pct": round(fee_drag, 2),
+                "size_multiplier": round(multiplier, 3),
+                "recommended_order_eur": round(max(0.0, recommended), 2),
+                "eligible": eligible,
+                "reason": (
+                    "calculated_risk_upsize"
+                    if multiplier > 1.0
+                    else "risk_reduced"
+                    if multiplier < 1.0
+                    else "base_size"
+                ),
+            })
+        return {
+            "enabled": self.enabled,
+            "mode": "advisory",
+            "profile": self.profile,
+            "max_size_multiplier": self.max_size_multiplier,
+            "live_budget_changed": False,
+            "hard_risk_limits_changed": False,
+            "leverage_changed": False,
+            "rows": rows,
+        }
+
+
 class ExecutionV2Advisor:
     """Recommend maker-first repricing for stale orders without executing it."""
 
