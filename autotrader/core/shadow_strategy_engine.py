@@ -190,7 +190,7 @@ class ShadowStrategyEngine:
         state.last_trade_at = time.time()
 
     def _mean_reversion(self, state: ShadowStats, price: float, cfg: dict[str, Any]) -> None:
-        lookback = max(8, int(cfg.get("lookback", 30)))
+        lookback = max(12, int(cfg.get("lookback", 40)))
         if len(state.prices) < lookback:
             state.last_signal = "warming_up"
             return
@@ -198,24 +198,43 @@ class ShadowStrategyEngine:
         mean = statistics.fmean(window)
         stdev = statistics.pstdev(window)
         z = (price - mean) / stdev if stdev > 1e-12 else 0.0
-        entry_z = -abs(float(cfg.get("entry_z", 1.6)))
-        exit_z = float(cfg.get("exit_z", -0.15))
-        take_profit = float(cfg.get("take_profit_pct", 1.2))
-        stop_loss = float(cfg.get("stop_loss_pct", 1.0))
+        entry_z = -abs(float(cfg.get("entry_z", 2.0)))
+        exit_z = float(cfg.get("exit_z", -0.05))
+        take_profit = float(cfg.get("take_profit_pct", 1.35))
+        stop_loss = float(cfg.get("stop_loss_pct", 1.20))
+        rebound_pct = max(0.0, float(cfg.get("entry_rebound_pct", 0.08)))
+        max_downtrend_pct = max(0.0, float(cfg.get("max_downtrend_pct", 1.20)))
+        min_exit_net_pct = max(
+            self.round_trip_cost_pct + 0.15,
+            float(cfg.get("min_exit_net_pct", 0.75)),
+        )
+        previous = state.prices[-2] if len(state.prices) >= 2 else price
+        rebound = (price / previous - 1) * 100 if previous > 0 else 0.0
+        segment = max(4, min(8, lookback // 4))
+        early_mean = statistics.fmean(window[:segment])
+        late_mean = statistics.fmean(window[-segment:])
+        trend_pct = (late_mean / early_mean - 1) * 100 if early_mean > 0 else 0.0
+
         if state.position_qty <= 0:
-            if z <= entry_z:
-                self._buy(state, price, cfg, f"buy_z_{z:.2f}")
+            if z <= entry_z and rebound >= rebound_pct and trend_pct >= -max_downtrend_pct:
+                self._buy(state, price, cfg, f"buy_z_{z:.2f}_rebound_{rebound:.2f}")
+            elif z <= entry_z and trend_pct < -max_downtrend_pct:
+                state.last_signal = f"skip_downtrend_{trend_pct:.2f}%"
+            elif z <= entry_z:
+                state.last_signal = f"wait_rebound_{rebound:.2f}%"
             else:
                 state.last_signal = f"wait_z_{z:.2f}"
             return
+
         move = (price / state.entry_price - 1) * 100
-        if z >= exit_z or move >= take_profit:
+        if move >= take_profit:
+            self._sell(state, price, "take_profit")
+        elif z >= exit_z and move >= min_exit_net_pct:
             self._sell(state, price, f"mean_exit_{z:.2f}")
         elif move <= -stop_loss:
             self._sell(state, price, "stop_loss")
         else:
-            state.last_signal = f"hold_{move:.2f}%"
-
+            state.last_signal = f"hold_{move:.2f}%_z_{z:.2f}"
     def _volatility_breakout(self, state: ShadowStats, price: float, cfg: dict[str, Any]) -> None:
         lookback = max(10, int(cfg.get("lookback", 24)))
         if len(state.prices) <= lookback:
