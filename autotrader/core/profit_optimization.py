@@ -6,12 +6,15 @@ before any future live rollout is explicitly approved.
 """
 from __future__ import annotations
 
+import json
 import math
 import statistics
 import time
+import urllib.parse
+import urllib.request
 from collections import defaultdict, deque
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Callable
 
 
 @dataclass(frozen=True)
@@ -40,6 +43,12 @@ class OpportunityRouter:
             ["BTC-EUR", "ETH-EUR", "SOL-EUR", "XRP-EUR", "ADA-EUR", "LINK-EUR"],
         )
         self.markets = [str(x).upper() for x in raw]
+        self.auto_discover_eur = bool(self.config.get("auto_discover_eur", False))
+        self.max_markets = max(1, min(100, int(self.config.get("max_markets", 60))))
+        self.discovery_refresh_seconds = max(
+            60.0, float(self.config.get("discovery_refresh_seconds", 1800.0))
+        )
+        self._last_discovery_at = 0.0
         self.history_size = max(8, min(240, int(self.config.get("history_size", 48))))
         self.min_top_depth_eur = max(5.0, float(self.config.get("min_top_depth_eur", 25.0)))
         self.max_spread_bps = max(1.0, float(self.config.get("max_spread_bps", 35.0)))
@@ -48,7 +57,36 @@ class OpportunityRouter:
         self._last_error: dict[str, str] = {}
         self.updated_at = 0.0
 
+    def _discover_markets(self) -> None:
+        if not self.auto_discover_eur:
+            return
+        now = time.time()
+        if self._last_discovery_at and now - self._last_discovery_at < self.discovery_refresh_seconds:
+            return
+        discovered: list[str] = []
+        try:
+            for row in self.adapter.markets():
+                if not isinstance(row, dict):
+                    continue
+                market = str(row.get("market") or row.get("symbol") or "").upper()
+                status = str(row.get("status") or "trading").lower()
+                if market.endswith("-EUR") and status == "trading":
+                    discovered.append(market)
+        except Exception:
+            return
+        preferred = []
+        for market in self.markets:
+            if market not in preferred:
+                preferred.append(market)
+        for market in sorted(set(discovered)):
+            if market not in preferred:
+                preferred.append(market)
+        if preferred:
+            self.markets = preferred[: self.max_markets]
+        self._last_discovery_at = now
+
     def refresh(self) -> None:
+        self._discover_markets()
         latest: dict[str, MarketSnapshot] = {}
         errors: dict[str, str] = {}
         for market in self.markets:
@@ -145,8 +183,140 @@ class OpportunityRouter:
             "live_orders_sent": False,
             "updated_at": self.updated_at,
             "markets_scanned": len(self._latest),
+            "markets_configured": len(self.markets),
+            "auto_discover_eur": self.auto_discover_eur,
+            "max_markets": self.max_markets,
             "errors": self._last_error,
             "rankings": by_strategy,
+        }
+
+
+class BinanceReferenceFeed:
+    """Read-only Binance BTC reference price. Never authenticates or trades."""
+
+    BASE_URL = "https://api.binance.com/api/v3/ticker/price"
+
+    def __init__(
+        self,
+        config: dict[str, Any] | None = None,
+        fetcher: Callable[[str], dict[str, Any]] | None = None,
+    ) -> None:
+        self.config = config or {}
+        self.enabled = bool(self.config.get("enabled", True))
+        self.symbol = str(self.config.get("symbol", "BTCUSDT")).upper()
+        self.interval_seconds = max(1.0, float(self.config.get("interval_seconds", 1.0)))
+        self.timeout_seconds = max(1.0, float(self.config.get("timeout_seconds", 3.0)))
+        self._fetcher = fetcher
+        self.price: float | None = None
+        self.updated_at = 0.0
+        self.error: str | None = None
+
+    def _http_fetch(self, symbol: str) -> dict[str, Any]:
+        query = urllib.parse.urlencode({"symbol": symbol})
+        req = urllib.request.Request(
+            f"{self.BASE_URL}?{query}",
+            headers={"Accept": "application/json", "User-Agent": "AutoTraderReference/1.0"},
+            method="GET",
+        )
+        with urllib.request.urlopen(req, timeout=self.timeout_seconds) as response:
+            payload = json.loads(response.read().decode())
+        if not isinstance(payload, dict):
+            raise ValueError("unexpected Binance reference response")
+        return payload
+
+    def refresh(self) -> None:
+        if not self.enabled:
+            return
+        try:
+            payload = (self._fetcher or self._http_fetch)(self.symbol)
+            price = float(payload["price"])
+            if price <= 0 or not math.isfinite(price):
+                raise ValueError("invalid Binance reference price")
+            self.price = price
+            self.updated_at = time.time()
+            self.error = None
+        except Exception as exc:
+            self.error = type(exc).__name__
+
+    def status(self) -> dict[str, Any]:
+        return {
+            "source": "binance_public",
+            "symbol": self.symbol,
+            "price": self.price,
+            "updated_at": self.updated_at or None,
+            "error": self.error,
+            "read_only": True,
+            "live_orders_sent": False,
+            "interval_seconds": self.interval_seconds,
+        }
+
+
+class PortfolioGoalTracker:
+    """Track a shared portfolio objective without using it as a risk input."""
+
+    def __init__(self, config: dict[str, Any] | None = None) -> None:
+        self.config = config or {}
+        self.enabled = bool(self.config.get("enabled", True))
+        self.starting_equity_eur = max(0.01, float(self.config.get("starting_equity_eur", 50.0)))
+        self.target_equity_eur = max(
+            self.starting_equity_eur,
+            float(self.config.get("target_equity_eur", 25000.0)),
+        )
+        raw = self.config.get(
+            "milestones_eur",
+            [100, 250, 500, 1000, 2500, 5000, 10000, 25000],
+        )
+        self.milestones = sorted({
+            float(x)
+            for x in raw
+            if float(x) > self.starting_equity_eur and float(x) <= self.target_equity_eur
+        })
+        if self.target_equity_eur not in self.milestones:
+            self.milestones.append(self.target_equity_eur)
+
+    def status(
+        self,
+        current_equity_eur: float,
+        strategy_snapshots: list[dict[str, Any]] | None = None,
+    ) -> dict[str, Any]:
+        current = max(0.0, float(current_equity_eur))
+        span = max(0.01, self.target_equity_eur - self.starting_equity_eur)
+        progress = max(
+            0.0,
+            min(100.0, (current - self.starting_equity_eur) / span * 100.0),
+        )
+        next_milestone = next((x for x in self.milestones if current < x), None)
+        contributions = []
+        for row in strategy_snapshots or []:
+            contributions.append({
+                "strategy": row.get("strategy"),
+                "market": row.get("market"),
+                "realized_net_pnl_eur": round(
+                    float(row.get("realized_net_pnl_eur") or 0.0), 6
+                ),
+                "economic_pnl_eur": round(
+                    float(row.get("economic_pnl_eur") or 0.0), 6
+                ),
+            })
+        return {
+            "enabled": self.enabled,
+            "shared_goal": True,
+            "starting_equity_eur": round(self.starting_equity_eur, 2),
+            "target_equity_eur": round(self.target_equity_eur, 2),
+            "current_equity_estimate_eur": round(current, 2),
+            "progress_pct": round(progress, 4),
+            "remaining_eur": round(max(0.0, self.target_equity_eur - current), 2),
+            "next_milestone_eur": round(next_milestone, 2) if next_milestone else None,
+            "target_reached": current >= self.target_equity_eur,
+            "milestones_eur": self.milestones,
+            "strategy_contributions": contributions,
+            "risk_policy": {
+                "goal_is_risk_input": False,
+                "increase_risk_to_catch_up": False,
+                "increase_leverage_to_catch_up": False,
+                "increase_budget_to_catch_up": False,
+                "martingale": False,
+            },
         }
 
 
