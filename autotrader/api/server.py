@@ -62,6 +62,7 @@ from autotrader.core.shadow_strategy_engine import ShadowStrategyEngine
 from autotrader.core.strategy_allocator_v2 import StrategyAllocatorV2
 from autotrader.core.profit_optimization import (
     BinanceReferenceFeed,
+    CalculatedRiskSizer,
     ExecutionV2Advisor,
     OpportunityRouter,
     PortfolioGoalTracker,
@@ -465,6 +466,7 @@ async def _lifespan(app: FastAPI):
     app.state.execution_v2_advisor = ExecutionV2Advisor(agent._config.get("execution_v2", {}) or {})
     app.state.portfolio_goal = PortfolioGoalTracker(agent._config.get("portfolio_goal", {}) or {})
     app.state.binance_reference = BinanceReferenceFeed(agent._config.get("binance_reference", {}) or {})
+    app.state.calculated_risk = CalculatedRiskSizer(agent._config.get("calculated_risk", {}) or {})
 
     if os.getenv("COINBASE_API_KEY", "").strip() and os.getenv("COINBASE_API_SECRET", "").strip():
         try:
@@ -1175,6 +1177,38 @@ def optimization_opportunities() -> dict[str, object]:
 @app.get("/api/optimization/fee-efficiency", tags=["optimization"])
 def optimization_fee_efficiency() -> dict[str, object]:
     return fee_efficiency_rows(_live_profit_snapshots(get_agent()))
+
+
+@app.get("/api/optimization/calculated-risk", tags=["optimization"])
+def optimization_calculated_risk() -> dict[str, object]:
+    agent = get_agent()
+    opp_payload = app.state.opportunity_router.rankings()
+    live_rows = _live_profit_snapshots(agent)
+    fee_rows = fee_efficiency_rows(live_rows).get("rows", [])
+    display = {
+        "market_maker": "MarketMaker",
+        "grid": "GridRunner",
+        "sniper": "SniperBot",
+    }
+    opportunities = []
+    for key, name in display.items():
+        ranked = opp_payload.get("rankings", {}).get(key, [])
+        best = next((x for x in ranked if x.get("eligible")), ranked[0] if ranked else None)
+        if not best:
+            continue
+        opportunities.append({"strategy": name, **best})
+    base_allocations = {}
+    max_order = {}
+    for key, strategy in agent._strategies.items():
+        base_allocations[strategy.name] = float(strategy._config.get("allocation_eur", 0.0) or 0.0)
+        max_order[strategy.name] = float(strategy._config.get("max_order_eur", 0.0) or 0.0)
+    return app.state.calculated_risk.recommend(
+        opportunities,
+        fee_rows,
+        live_rows,
+        base_allocations,
+        max_order,
+    )
 
 
 @app.get("/api/optimization/execution-v2", tags=["optimization"])
