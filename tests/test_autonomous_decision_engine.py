@@ -315,7 +315,8 @@ def test_daily_exposure_headroom_pauses_new_entries_below_exchange_minimum():
     })
     plan = engine.plan(agent=agent, router_payload=_router(), risk_payload=_risk(), armed=True)
     rows = {row["strategy"]: row for row in plan["rows"]}
-    assert rows["GridRunner"]["daily_exposure_headroom_eur"] == 2.0
+    assert rows["GridRunner"]["raw_daily_exposure_headroom_eur"] == 2.0
+    assert rows["GridRunner"]["daily_exposure_headroom_eur"] == 1.75
     assert rows["GridRunner"]["exposure_headroom_ok"] is False
     assert rows["GridRunner"]["entry_allowed"] is False
     assert rows["GridRunner"]["reason"] == "daily_exposure_headroom_low"
@@ -344,7 +345,8 @@ def test_shared_exposure_headroom_is_reserved_across_strategies():
     # MarketMaker reserves first because it is also flat in this fixture.
     assert rows["MarketMaker"]["entry_allowed"] is True
     assert rows["MarketMaker"]["recommended_order_eur"] == 10.0
-    assert rows["GridRunner"]["daily_exposure_headroom_eur"] == 2.0
+    assert rows["GridRunner"]["raw_daily_exposure_headroom_eur"] == 12.0
+    assert rows["GridRunner"]["daily_exposure_headroom_eur"] == 1.75
     assert rows["GridRunner"]["entry_allowed"] is False
 
 
