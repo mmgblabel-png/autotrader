@@ -157,6 +157,14 @@ class ExecutionCoordinator:
                 results.append({"client_order_id": order.order_id, "status": status.lower()})
             except BitvavoError as exc:
                 self.om.update(order.order_id, OrderStatus.FAILED)
+                # The adapter records its journal intent before the execution
+                # gateway evaluates the order. Preserve strategy ownership even
+                # when the gateway rejects before a successful exchange call.
+                try:
+                    if self.adapter.journal.get(order.order_id):
+                        self.adapter.journal.set_strategy(order.order_id, order.strategy)
+                except Exception:
+                    log.warning("Could not persist strategy attribution for rejected order.")
                 if self.failure_handler is not None:
                     self.failure_handler(order, exc.category, str(exc))
                 log.error("Bitvavo order %s failed: %s", order.order_id, exc)
