@@ -274,6 +274,8 @@ class ShadowStrategyEngine:
 
     def status(self, configs: dict[str, dict[str, Any]]) -> dict[str, Any]:
         rows = []
+        learning = self.learner.snapshot() if self.learner is not None else {}
+        learned_states = learning.get("strategies", {}) if isinstance(learning, dict) else {}
         for name, cfg in configs.items():
             state = self._state(name)
             trades = state.completed_trades
@@ -301,6 +303,11 @@ class ShadowStrategyEngine:
                 "realized_net_pnl_eur": round(state.realized_net_pnl_eur, 4),
                 "max_drawdown_pct": round(max_dd_pct, 2),
                 "last_signal": state.last_signal,
+                "strategy_version": state.strategy_version,
+                "adaptive_overrides": (
+                    learned_states.get(self._learner_name(name), {}).get("current_overrides", {})
+                    if isinstance(learned_states.get(self._learner_name(name), {}), dict) else {}
+                ),
                 "promotable": promotable,
             })
         return {
