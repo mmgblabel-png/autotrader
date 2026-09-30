@@ -211,3 +211,9 @@ def test_dashboard_contains_shadow_lab_and_allocator():
     assert "SET → EXECUTE → LEARN → REPEAT" in html
     assert "/api/autonomy/status" in html
     assert 'id="autonomyrows"' in html
+    assert "50+ Market Opportunity Router" in html
+    assert 'id="routerconfigured"' in html
+    assert 'id="routerscanned"' in html
+    assert "/api/risk-lab/leverage-martingale" in html
+    assert "Leverage + Capped Martingale Lab" in html
+    assert 'id="risklabpnl"' in html
