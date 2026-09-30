@@ -27,6 +27,8 @@ class StrategyAllocatorV2:
         self.min_samples = max(1, int(self.config.get("min_samples", 12)))
         self.max_shift_pct = max(0.0, min(50.0, float(self.config.get("max_shift_pct", 25.0))))
         self.min_allocation_eur = max(0.0, float(self.config.get("min_allocation_eur", 5.0)))
+        self.fee_drag_penalty_pct = max(0.0, min(100.0, float(self.config.get("fee_drag_penalty_pct", 50.0))))
+        self.idle_budget_reuse_pct = max(0.0, min(100.0, float(self.config.get("idle_budget_reuse_pct", 50.0))))
 
     @staticmethod
     def _score(net_pnl: float, winrate: float, trades: int, drawdown_pct: float) -> tuple[float, float]:
@@ -43,9 +45,11 @@ class StrategyAllocatorV2:
         live_stats: dict[str, dict[str, Any]],
         shadow_rows: list[dict[str, Any]],
         global_budget_eur: float,
+        fee_rows: list[dict[str, Any]] | None = None,
     ) -> dict[str, Any]:
         rows: list[dict[str, Any]] = []
         shadow_by_name = {str(x.get("name")): x for x in shadow_rows}
+        fee_by_name = {str(x.get("strategy")): x for x in (fee_rows or [])}
         raw_weights: dict[str, float] = {}
 
         name_map = {
@@ -78,6 +82,12 @@ class StrategyAllocatorV2:
                 mode = "live" if enabled and bool(cfg.get("live_capable", False)) else "disabled"
 
             score, confidence = self._score(net, win, trades, dd)
+            fee_row = fee_by_name.get(display, {})
+            fee_drag = fee_row.get("fee_drag_pct")
+            if fee_drag is not None:
+                fee_drag = max(0.0, float(fee_drag))
+                penalty = min(1.0, fee_drag / max(1.0, self.fee_drag_penalty_pct))
+                score -= confidence * 0.30 * penalty
             if trades < self.min_samples:
                 reason = f"insufficient_samples:{trades}/{self.min_samples}"
                 multiplier = 1.0
@@ -98,13 +108,22 @@ class StrategyAllocatorV2:
                 "samples": trades,
                 "net_pnl_eur": round(net, 4),
                 "winrate_pct": round(win, 2),
+                "fee_drag_pct": round(float(fee_drag), 2) if fee_drag is not None else None,
                 "reason": reason,
             })
             if enabled and base > 0:
                 raw_weights[key] = recommended
 
         total_raw = sum(raw_weights.values())
-        scale = min(1.0, global_budget_eur / total_raw) if total_raw > 0 else 1.0
+        base_total = sum(
+            max(0.0, float((cfg or {}).get("allocation_eur", 0.0)))
+            for cfg in strategy_config.values()
+            if bool((cfg or {}).get("enabled", True)) and bool((cfg or {}).get("live_capable", False))
+        )
+        idle_budget = max(0.0, global_budget_eur - base_total)
+        reusable_idle = idle_budget * self.idle_budget_reuse_pct / 100.0
+        target_budget = min(global_budget_eur, base_total + reusable_idle)
+        scale = min(1.0, target_budget / total_raw) if total_raw > 0 else 1.0
         for row in rows:
             value = float(row.pop("pre_normalized_eur", 0.0))
             row["recommended_allocation_eur"] = round(value * scale, 2)
@@ -116,6 +135,9 @@ class StrategyAllocatorV2:
             "global_budget_eur": round(global_budget_eur, 2),
             "max_shift_pct": self.max_shift_pct,
             "min_samples": self.min_samples,
+            "fee_drag_penalty_pct": self.fee_drag_penalty_pct,
+            "idle_budget_reuse_pct": self.idle_budget_reuse_pct,
+            "target_deployable_budget_eur": round(target_budget, 2),
             "recommendations": rows,
             "live_allocations_changed": False,
         }
