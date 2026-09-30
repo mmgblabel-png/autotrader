@@ -1276,6 +1276,52 @@ def health():
     }
 
 
+@app.get("/api/orders/activity", tags=["execution"])
+def order_activity(limit: int = 100) -> dict[str, object]:
+    """Return privacy-safe durable order history for the dashboard.
+
+    This is read-only and intentionally excludes exchange/client order IDs,
+    account identifiers, raw payloads, and secrets.
+    """
+    agent = get_agent()
+    rows = agent._bitvavo.journal.recent_order_activity(limit=limit)
+    terminal = {"filled", "canceled", "cancelled", "rejected", "error", "expired", "shadow", "blocked"}
+    activity: list[dict[str, object]] = []
+    counts: dict[str, int] = {}
+    for row in rows:
+        status = str(row.get("status") or "unknown").lower()
+        counts[status] = counts.get(status, 0) + 1
+        amount = float(row.get("amount") or 0)
+        price = float(row.get("price") or 0)
+        filled_amount = float(row.get("filled_amount") or 0)
+        activity.append({
+            "strategy": str(row.get("strategy") or "unassigned"),
+            "market": str(row.get("market") or "").upper(),
+            "side": str(row.get("side") or "").lower(),
+            "order_type": str(row.get("order_type") or "").lower(),
+            "amount": amount,
+            "price": price,
+            "notional_eur": amount * price if price > 0 else None,
+            "status": status,
+            "is_open": status not in terminal,
+            "created_at": float(row.get("created_at") or 0),
+            "updated_at": float(row.get("updated_at") or 0),
+            "fill_count": int(row.get("fill_count") or 0),
+            "filled_amount": filled_amount,
+            "fee_total": float(row.get("fee_total") or 0),
+            "last_fill_at": float(row.get("last_fill_at") or 0),
+            "last_error": str(row.get("last_error") or "")[:160],
+        })
+    return {
+        "venue": "bitvavo",
+        "read_only": True,
+        "limit": min(max(int(limit), 1), 250),
+        "total_returned": len(activity),
+        "status_counts": counts,
+        "orders": activity,
+    }
+
+
 @app.get("/api/bitvavo/live-state", tags=["execution"])
 def bitvavo_live_state() -> dict[str, object]:
     """Return redacted balances and open orders for configured Bitvavo bot markets."""
