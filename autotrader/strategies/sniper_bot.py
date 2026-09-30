@@ -70,6 +70,9 @@ class SniperBot(BaseStrategy):
             return
 
         if self._position <= 0 and self._prev_price > 0:
+            if not bool(cfg.get("_autonomous_entry_allowed", True)):
+                self._prev_price = current_price
+                return
             move = (current_price - self._prev_price) / self._prev_price
             # Spot mode is intentionally long-only: negative momentum never
             # opens an uncovered short.

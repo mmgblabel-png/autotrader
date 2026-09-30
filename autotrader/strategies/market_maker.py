@@ -146,6 +146,12 @@ class MarketMaker(BaseStrategy):
                 else:
                     can_bid = available_quote >= (size * bid_price)
                     can_ask = False
+                    if not bool(cfg.get("_autonomous_entry_allowed", True)):
+                        can_bid = False
+                        log.info(
+                            "MM autonomous BUY paused: %s",
+                            str(cfg.get("_autonomous_entry_reason") or "entry_not_selected"),
+                        )
                     required_edge = max(0.0, float(cfg.get("_required_entry_edge_pct", 0.0)))
                     if required_edge > 0 and exit_markup_value < required_edge:
                         can_bid = False
