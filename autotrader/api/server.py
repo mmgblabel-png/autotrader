@@ -223,9 +223,21 @@ def _calculated_risk_payload(agent: AutoTrader) -> dict[str, object]:
         "sniper": "SniperBot",
     }
     opportunities = []
+    strategy_markets = (
+        (agent._config.get("autonomous_execution", {}) or {}).get("strategy_markets", {}) or {}
+    )
     for key, name in display.items():
         ranked = opp_payload.get("rankings", {}).get(key, [])
-        best = next((x for x in ranked if x.get("eligible")), ranked[0] if ranked else None)
+        allowed = {
+            str(x).upper()
+            for x in (strategy_markets.get(key) or [])
+            if str(x).strip()
+        }
+        filtered = [
+            x for x in ranked
+            if not allowed or str(x.get("market", "")).upper() in allowed
+        ]
+        best = next((x for x in filtered if x.get("eligible")), filtered[0] if filtered else None)
         if best:
             opportunities.append({"strategy": name, **best})
     base_allocations = {}
@@ -1339,13 +1351,25 @@ def optimization_execution_v2() -> dict[str, object]:
 
 @app.get("/api/markets/overview", tags=["markets"])
 def markets_overview():
-    """Return configured Bitvavo markets and read-only ticker state."""
-    raw = os.getenv("TRADING_MARKETS", "BTC-EUR")
-    markets = [item.strip().upper() for item in raw.split(",") if item.strip()]
+    """Return the vetted autonomous Bitvavo market universe and ticker state."""
+    agent = get_agent()
+    strategy_markets = (
+        (agent._config.get("autonomous_execution", {}) or {}).get("strategy_markets", {}) or {}
+    )
+    usage: dict[str, set[str]] = {}
+    for strategy_key, values in strategy_markets.items():
+        for value in values or []:
+            market = str(value).upper().strip()
+            if market:
+                usage.setdefault(market, set()).add(str(strategy_key))
+    for strategy_key, strategy in agent._strategies.items():
+        market = str(strategy._config.get("symbol", "")).upper().strip()
+        if market:
+            usage.setdefault(market, set()).add(str(strategy_key))
     rows = []
     live_prices = False
-    adapter = get_agent()._bitvavo
-    for market in markets:
+    adapter = agent._bitvavo
+    for market in sorted(usage):
         try:
             adapter.ticker_price(market)
             price_status = "live"
@@ -1356,14 +1380,18 @@ def markets_overview():
             "symbol": market,
             "configured": True,
             "price_status": price_status,
-            "note": "Read-only Bitvavo ticker; orderuitvoering vereist alle live-gates en runtime-arm.",
+            "strategies": sorted(usage[market]),
+            "note": "Vetted autonomous option; execution still requires strategy gates, market quality and runtime arm.",
         })
+    router = app.state.opportunity_router.rankings()
     return {
         "venue": "bitvavo",
         "mode": "live" if getattr(app.state, "live_mode", False) else "paper",
         "markets": rows,
         "live_prices": live_prices,
         "orders_enabled": bool(getattr(app.state, "live_mode", False) and getattr(app.state, "live_armed", False)),
+        "router_scanned": int(router.get("markets_scanned", 0) or 0),
+        "router_configured": int(router.get("markets_configured", 0) or 0),
     }
 
 
