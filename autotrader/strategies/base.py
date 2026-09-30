@@ -65,6 +65,25 @@ class BaseStrategy(ABC):
     def on_order_failure(self, order: "Order", category: str, reason: str) -> None:
         """Receive a rejected/failed live order without retrying immediately."""
 
+    def on_market_switch(self, old_market: str, new_market: str) -> None:
+        """Clear market-specific live snapshots before a strategy changes symbol."""
+        for key, value in {
+            "_current_price": 0.0,
+            "_mid_price": 0.0,
+            "_available_base": 0.0,
+            "_available_quote": 0.0,
+            "_bot_base_inventory": 0.0,
+            "_bot_average_entry_price": 0.0,
+            "_min_profit_exit_price": 0.0,
+            "_exchange_open_order_count": 0,
+            "_live_balance_snapshot_ready": False,
+            "_exchange_open_orders_snapshot_ready": False,
+        }.items():
+            self._config[key] = value
+        self._config["_prices"] = {}
+        self._config["_market_switch_from"] = old_market
+        self._config["_market_switch_to"] = new_market
+
     @abstractmethod
     def tick(self) -> None:
         """Called on every market-data update / loop iteration."""
