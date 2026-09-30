@@ -207,3 +207,7 @@ def test_dashboard_contains_shadow_lab_and_allocator():
     assert "/api/reference/binance-btc" in html
     assert 'id="goalbar"' in html
     assert 'id="binanceprice"' in html
+    assert "Autonomous Control Loop" in html
+    assert "SET → EXECUTE → LEARN → REPEAT" in html
+    assert "/api/autonomy/status" in html
+    assert 'id="autonomyrows"' in html
