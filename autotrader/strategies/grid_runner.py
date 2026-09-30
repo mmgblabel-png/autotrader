@@ -69,6 +69,13 @@ class GridRunner(BaseStrategy):
             log.info("GRID SELL %s %.8f @ %.8f", symbol, sell_size, price)
             return
 
+        if not bool(cfg.get("_autonomous_entry_allowed", True)):
+            log.info(
+                "GRID autonomous entry paused: %s",
+                str(cfg.get("_autonomous_entry_reason") or "entry_not_selected"),
+            )
+            return
+
         required_edge = max(0.0, float(cfg.get("_required_entry_edge_pct", 0.0)))
         target_edge = exit_markup * 100
         if required_edge > 0 and target_edge < required_edge:
