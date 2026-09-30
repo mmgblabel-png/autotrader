@@ -27,9 +27,22 @@ class FakeJournal:
         return {"nonterminal_count": int(self.nonterminal.get((market, strategy), 0))}
 
 
+class FakeGateway:
+    def __init__(self, exposure=0.0, max_exposure=50.0):
+        self.exposure = exposure
+        self.max_exposure = max_exposure
+
+    def status(self):
+        return {
+            "daily_exposure_eur": str(self.exposure),
+            "limits": {"max_daily_exposure_eur": str(self.max_exposure)},
+        }
+
+
 class FakeBitvavo:
-    def __init__(self, journal):
+    def __init__(self, journal, gateway=None):
         self.journal = journal
+        self.gateway = gateway or FakeGateway()
 
     def markets(self, market):
         return [{
@@ -64,7 +77,7 @@ class FakeStrategy:
         self._config["_live_balance_snapshot_ready"] = False
 
 
-def _agent(*, inventory=None, nonterminal=None, open_by_strategy=None):
+def _agent(*, inventory=None, nonterminal=None, open_by_strategy=None, exposure=0.0, max_exposure=50.0):
     strategies = {
         "market_maker": FakeStrategy("MarketMaker", "BTC-EUR", 15, 10, 0),
         "grid": FakeStrategy("GridRunner", "SOL-EUR", 15, 7, 6),
@@ -73,7 +86,10 @@ def _agent(*, inventory=None, nonterminal=None, open_by_strategy=None):
     return SimpleNamespace(
         _strategies=strategies,
         _om=FakeOM(open_by_strategy),
-        _bitvavo=FakeBitvavo(FakeJournal(inventory, nonterminal)),
+        _bitvavo=FakeBitvavo(
+            FakeJournal(inventory, nonterminal),
+            FakeGateway(exposure=exposure, max_exposure=max_exposure),
+        ),
     )
 
 
@@ -278,3 +294,84 @@ def test_market_switch_calls_reset_hook_and_exchange_rules():
     assert result["applied"] is True
     assert ("SOL-EUR", "ETH-EUR") in agent._strategies["grid"].switched
     assert agent._strategies["grid"]._config["_live_balance_snapshot_ready"] is False
+
+
+def test_daily_exposure_headroom_pauses_new_entries_below_exchange_minimum():
+    agent = _agent(exposure=48.0, max_exposure=50.0)
+    engine = AutonomousDecisionEngine({
+        "enabled": True,
+        "apply_live": True,
+        "min_score": 68,
+        "min_confidence": 0.62,
+        "minimum_live_order_eur": 5.0,
+        "strategy_markets": {
+            "market_maker": ["BTC-EUR"],
+            "grid": ["SOL-EUR", "ETH-EUR"],
+            "sniper": ["XRP-EUR", "ADA-EUR"],
+        },
+    })
+    plan = engine.plan(agent=agent, router_payload=_router(), risk_payload=_risk(), armed=True)
+    rows = {row["strategy"]: row for row in plan["rows"]}
+    assert rows["GridRunner"]["daily_exposure_headroom_eur"] == 2.0
+    assert rows["GridRunner"]["exposure_headroom_ok"] is False
+    assert rows["GridRunner"]["entry_allowed"] is False
+    assert rows["GridRunner"]["reason"] == "daily_exposure_headroom_low"
+
+    engine.apply(agent=agent, plan=plan, armed=True)
+    assert agent._strategies["grid"]._config["_autonomous_entry_allowed"] is False
+    assert agent._strategies["sniper"]._config["_autonomous_entry_allowed"] is False
+
+
+def test_shared_exposure_headroom_is_reserved_across_strategies():
+    agent = _agent(exposure=38.0, max_exposure=50.0)
+    engine = AutonomousDecisionEngine({
+        "enabled": True,
+        "apply_live": True,
+        "min_score": 68,
+        "min_confidence": 0.62,
+        "minimum_live_order_eur": 5.0,
+        "strategy_markets": {
+            "market_maker": ["BTC-EUR"],
+            "grid": ["SOL-EUR", "ETH-EUR"],
+            "sniper": ["XRP-EUR", "ADA-EUR"],
+        },
+    })
+    plan = engine.plan(agent=agent, router_payload=_router(), risk_payload=_risk(), armed=True)
+    rows = {row["strategy"]: row for row in plan["rows"]}
+    # MarketMaker reserves first because it is also flat in this fixture.
+    assert rows["MarketMaker"]["entry_allowed"] is True
+    assert rows["MarketMaker"]["recommended_order_eur"] == 10.0
+    assert rows["GridRunner"]["daily_exposure_headroom_eur"] == 2.0
+    assert rows["GridRunner"]["entry_allowed"] is False
+
+
+def test_grid_exit_path_ignores_entry_pause():
+    from autotrader.core.order_manager import OrderManager, OrderSide
+    from autotrader.core.profit_engine import ProfitEngine
+    from autotrader.core.risk_manager import RiskManager
+    from autotrader.strategies.grid_runner import GridRunner
+
+    om = OrderManager()
+    rm = RiskManager()
+    pe = ProfitEngine()
+    cfg = {
+        "enabled": True,
+        "symbol": "SOL-EUR",
+        "exchange": "bitvavo",
+        "order_value_eur": 6.0,
+        "entry_offset_pct": 0.60,
+        "exit_markup_pct": 0.80,
+        "_current_price": 100.0,
+        "_live_balance_snapshot_ready": True,
+        "_available_base": 0.1,
+        "_available_quote": 0.0,
+        "_bot_base_inventory": 0.1,
+        "_bot_average_entry_price": 95.0,
+        "_autonomous_entry_allowed": False,
+    }
+    strategy = GridRunner(om, rm, pe, cfg)
+    strategy.start()
+    strategy.tick()
+    orders = om.open_orders("GridRunner")
+    assert len(orders) == 1
+    assert orders[0].side is OrderSide.SELL
