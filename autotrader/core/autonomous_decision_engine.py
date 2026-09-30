@@ -28,6 +28,9 @@ class AutonomousDecisionEngine:
             self.min_confidence, min(1.0, float(self.config.get("max_size_confidence", 0.75)))
         )
         self.market_thresholds = self.config.get("market_thresholds", {}) or {}
+        self.exposure_safety_buffer_eur = max(
+            0.0, float(self.config.get("exposure_safety_buffer_eur", 0.25))
+        )
         self._last_switch: dict[str, float] = {}
 
     def _thresholds_for_market(self, market: str) -> tuple[float, float]:
@@ -44,6 +47,42 @@ class AutonomousDecisionEngine:
         raw = cfg.get(key, [current])
         values = [str(x).upper() for x in raw if str(x).strip()]
         return values or [current]
+
+    @staticmethod
+    def _pending_buy_reservation_eur(agent) -> float:
+        """Reserve local PENDING BUYs not yet counted by the execution gateway."""
+        total = 0.0
+        strategies_by_name = {
+            strategy.name: strategy for strategy in agent._strategies.values()
+        }
+        try:
+            pending_orders = list(agent._om.open_orders())
+        except Exception:
+            pending_orders = []
+        for order in pending_orders:
+            side = str(getattr(getattr(order, "side", ""), "value", getattr(order, "side", ""))).upper()
+            status = str(getattr(getattr(order, "status", ""), "value", getattr(order, "status", ""))).upper()
+            if side != "BUY" or status != "PENDING":
+                continue
+            try:
+                qty = max(0.0, float(getattr(order, "quantity", 0.0) or 0.0))
+                price = max(0.0, float(getattr(order, "price", 0.0) or 0.0))
+                if qty > 0 and price > 0:
+                    total += qty * price
+                    continue
+            except (TypeError, ValueError):
+                pass
+            strategy = strategies_by_name.get(str(getattr(order, "strategy", "") or ""))
+            if strategy is not None:
+                cfg = strategy._config
+                reserve = float(
+                    cfg.get("order_value_eur")
+                    or cfg.get("max_order_eur")
+                    or cfg.get("allocation_eur")
+                    or 0.0
+                )
+                total += max(0.0, reserve)
+        return total
 
     def plan(
         self,
@@ -77,7 +116,16 @@ class AutonomousDecisionEngine:
                 exposure_headroom_eur = max(0.0, max_exposure - current_exposure)
             except (TypeError, ValueError, AttributeError):
                 exposure_headroom_eur = None
-        virtual_headroom_eur = exposure_headroom_eur
+        pending_buy_reservation_eur = self._pending_buy_reservation_eur(agent)
+        if exposure_headroom_eur is None:
+            virtual_headroom_eur = None
+        else:
+            virtual_headroom_eur = max(
+                0.0,
+                exposure_headroom_eur
+                - pending_buy_reservation_eur
+                - self.exposure_safety_buffer_eur,
+            )
 
         for key, (display, router_key) in strategy_key_map.items():
             strategy = agent._strategies.get(key)
@@ -202,6 +250,12 @@ class AutonomousDecisionEngine:
                 "daily_exposure_headroom_eur": (
                     round(headroom_before, 2) if headroom_before is not None else None
                 ),
+                "raw_daily_exposure_headroom_eur": (
+                    round(exposure_headroom_eur, 2)
+                    if exposure_headroom_eur is not None else None
+                ),
+                "pending_buy_reservation_eur": round(pending_buy_reservation_eur, 2),
+                "exposure_safety_buffer_eur": round(self.exposure_safety_buffer_eur, 2),
                 "exposure_headroom_ok": exposure_headroom_ok,
                 "allowed_markets": sorted(allowed),
                 "market_min_score": round(market_score_min, 2),
