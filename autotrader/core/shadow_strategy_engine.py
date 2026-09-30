@@ -127,14 +127,27 @@ class ShadowStrategyEngine:
     def update(self, name: str, price: float, cfg: dict[str, Any]) -> None:
         if price <= 0 or not math.isfinite(price):
             return
-        state = self._state(name)
+        state = self._ensure_version(name, cfg)
+        learner_name = self._learner_name(name)
+        if self.learner is not None:
+            self.learner.apply_overrides(learner_name, cfg)
         state.prices.append(float(price))
         state.prices = state.prices[-240:]
+        before_trades = state.completed_trades
         kind = str(cfg.get("kind", name)).lower()
         if kind == "mean_reversion":
             self._mean_reversion(state, price, cfg)
         elif kind == "volatility_breakout":
             self._volatility_breakout(state, price, cfg)
+        if self.learner is not None and state.completed_trades > before_trades and state.outcomes:
+            self.learner.record_realized_outcome(
+                strategy_name=learner_name,
+                side="SELL",
+                net_pnl_delta_eur=float(state.outcomes[-1]),
+                strategy_config=cfg,
+                symbol=str(cfg.get("symbol", "")),
+                outcome_key=f"shadow:{name}:{state.strategy_version}:{state.completed_trades}",
+            )
         self._save()
 
     def _buy(self, state: ShadowStats, price: float, cfg: dict[str, Any], signal: str) -> None:
