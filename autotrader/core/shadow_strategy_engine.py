@@ -106,6 +106,7 @@ class ShadowStrategyEngine:
         return {
             "mean_reversion": "MeanReversionShadow",
             "volatility_breakout": "VolatilityBreakoutShadow",
+            "sniper_v2": "SniperV2Shadow",
         }.get(name, name)
 
     def _ensure_version(self, name: str, cfg: dict[str, Any]) -> ShadowStats:
@@ -139,6 +140,8 @@ class ShadowStrategyEngine:
             self._mean_reversion(state, price, cfg)
         elif kind == "volatility_breakout":
             self._volatility_breakout(state, price, cfg)
+        elif kind == "sniper_v2":
+            self._sniper_v2(state, price, cfg)
         if self.learner is not None and state.completed_trades > before_trades and state.outcomes:
             self.learner.record_realized_outcome(
                 strategy_name=learner_name,
@@ -236,28 +239,42 @@ class ShadowStrategyEngine:
         else:
             state.last_signal = f"hold_{move:.2f}%_z_{z:.2f}"
     def _volatility_breakout(self, state: ShadowStats, price: float, cfg: dict[str, Any]) -> None:
-        lookback = max(10, int(cfg.get("lookback", 24)))
+        lookback = max(12, int(cfg.get("lookback", 30)))
         if len(state.prices) <= lookback:
             state.last_signal = "warming_up"
             return
         previous = state.prices[-lookback-1:-1]
-        breakout = max(previous) * (1 + float(cfg.get("breakout_buffer_pct", 0.12)) / 100)
+        buffer_pct = float(cfg.get("breakout_buffer_pct", 0.16))
+        breakout = max(previous) * (1 + buffer_pct / 100)
         returns = [
             abs(previous[i] / previous[i - 1] - 1) * 100
             for i in range(1, len(previous))
             if previous[i - 1] > 0
         ]
         avg_move = statistics.fmean(returns) if returns else 0.0
+        recent_move = statistics.fmean(returns[-5:]) if len(returns) >= 5 else avg_move
+        expansion_ratio = recent_move / avg_move if avg_move > 1e-9 else 0.0
         min_vol = float(cfg.get("min_avg_move_pct", 0.03))
-        take_profit = float(cfg.get("take_profit_pct", 1.4))
-        stop_loss = float(cfg.get("stop_loss_pct", 0.7))
+        min_expansion = float(cfg.get("min_vol_expansion_ratio", 1.08))
+        max_entry_spike = float(cfg.get("max_entry_spike_pct", 1.25))
+        take_profit = float(cfg.get("take_profit_pct", 1.5))
+        stop_loss = float(cfg.get("stop_loss_pct", 0.75))
         trailing = float(cfg.get("trailing_exit_pct", 0.45))
+        min_exit_net_pct = max(self.round_trip_cost_pct + 0.15, float(cfg.get("min_exit_net_pct", 0.75)))
+        breakout_move = (price / max(previous) - 1.0) * 100 if max(previous) > 0 else 0.0
         if state.position_qty <= 0:
-            if price >= breakout and avg_move >= min_vol:
-                self._buy(state, price, cfg, f"breakout_{avg_move:.3f}")
+            if (
+                price >= breakout
+                and avg_move >= min_vol
+                and expansion_ratio >= min_expansion
+                and breakout_move <= max_entry_spike
+            ):
+                self._buy(state, price, cfg, f"breakout_{avg_move:.3f}_x{expansion_ratio:.2f}")
                 cfg["_shadow_peak_price"] = price
+            elif breakout_move > max_entry_spike:
+                state.last_signal = f"skip_spike_{breakout_move:.2f}%"
             else:
-                state.last_signal = f"wait_vol_{avg_move:.3f}"
+                state.last_signal = f"wait_breakout_vol_{avg_move:.3f}_x{expansion_ratio:.2f}"
             return
         peak = max(float(cfg.get("_shadow_peak_price", state.entry_price)), price)
         cfg["_shadow_peak_price"] = peak
@@ -267,8 +284,61 @@ class ShadowStrategyEngine:
             self._sell(state, price, "take_profit")
         elif move <= -stop_loss:
             self._sell(state, price, "stop_loss")
-        elif trail_move <= -trailing and move > 0:
-            self._sell(state, price, "trailing_exit")
+        elif trail_move <= -trailing and move >= min_exit_net_pct:
+            self._sell(state, price, "trailing_profit_exit")
+        else:
+            state.last_signal = f"hold_{move:.2f}%"
+
+    def _sniper_v2(self, state: ShadowStats, price: float, cfg: dict[str, Any]) -> None:
+        fast = max(3, int(cfg.get("ema_fast", 6)))
+        slow = max(fast + 2, int(cfg.get("ema_slow", 18)))
+        if len(state.prices) < slow + 3:
+            state.last_signal = "warming_up"
+            return
+
+        def ema(values: list[float], span: int) -> float:
+            alpha = 2.0 / (span + 1.0)
+            value = values[0]
+            for item in values[1:]:
+                value = alpha * item + (1.0 - alpha) * value
+            return value
+
+        recent = state.prices[-max(slow * 2, slow + 3):]
+        fast_ema = ema(recent[-max(fast * 2, fast):], fast)
+        slow_ema = ema(recent, slow)
+        lookback = max(2, int(cfg.get("momentum_lookback", 3)))
+        ref = state.prices[-lookback - 1]
+        momentum = (price / ref - 1.0) * 100 if ref > 0 else 0.0
+        min_momentum = float(cfg.get("momentum_pct", 0.22))
+        max_spike = max(min_momentum, float(cfg.get("max_entry_spike_pct", 0.90)))
+        take_profit = float(cfg.get("take_profit_pct", 1.10))
+        stop_loss = float(cfg.get("stop_loss_pct", 0.45))
+        trailing = float(cfg.get("trailing_exit_pct", 0.35))
+        min_exit_net_pct = max(self.round_trip_cost_pct + 0.15, float(cfg.get("min_exit_net_pct", 0.75)))
+
+        if state.position_qty <= 0:
+            trend_ok = fast_ema > slow_ema
+            if trend_ok and min_momentum <= momentum <= max_spike:
+                self._buy(state, price, cfg, f"enter_mom_{momentum:.2f}")
+                cfg["_shadow_peak_price"] = price
+            elif momentum > max_spike:
+                state.last_signal = f"skip_spike_{momentum:.2f}%"
+            elif not trend_ok:
+                state.last_signal = "wait_trend"
+            else:
+                state.last_signal = f"wait_momentum_{momentum:.2f}%"
+            return
+
+        peak = max(float(cfg.get("_shadow_peak_price", state.entry_price)), price)
+        cfg["_shadow_peak_price"] = peak
+        move = (price / state.entry_price - 1.0) * 100
+        trail_move = (price / peak - 1.0) * 100
+        if move >= take_profit:
+            self._sell(state, price, "take_profit")
+        elif move <= -stop_loss:
+            self._sell(state, price, "stop_loss")
+        elif move >= min_exit_net_pct and trail_move <= -trailing:
+            self._sell(state, price, "trailing_profit_exit")
         else:
             state.last_signal = f"hold_{move:.2f}%"
 
