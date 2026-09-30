@@ -62,7 +62,13 @@ DASHBOARD_HTML = r'''<!doctype html>
     <div id="execv2note" class="sub" style="margin-top:9px">Analyseert alleen; annuleert of vervangt geen live orders.</div>
   </div>
   <div class="card">
-    <div class="exchange-head"><div><div class="exchange-name">Opportunity Router</div><div class="mini">Beste EUR-markt per strategie op spread, liquiditeit, momentum en volatiliteit</div></div><span id="routerbadge" class="badge ok">shadow</span></div>
+    <div class="exchange-head"><div><div class="exchange-name">50+ Market Opportunity Router</div><div class="mini">Live EUR-markten op spread, liquiditeit, momentum en volatiliteit</div></div><span id="routerbadge" class="badge ok">SCANNING</span></div>
+    <div class="order-kpis" style="grid-template-columns:repeat(4,1fr);margin-top:8px">
+      <div class="order-kpi"><div class="k">Geconfigureerd</div><div id="routerconfigured" class="v blue">—</div></div>
+      <div class="order-kpi"><div class="k">Nu gescand</div><div id="routerscanned" class="v green">—</div></div>
+      <div class="order-kpi"><div class="k">Doel scanner</div><div id="routertarget" class="v">60</div></div>
+      <div class="order-kpi"><div class="k">Fouten</div><div id="routererrors" class="v">0</div></div>
+    </div>
     <div class="table-wrap"><table class="table compact"><thead><tr><th>Strategie</th><th>Beste markt</th><th>Score</th><th>Spread</th><th>Momentum</th><th>Liquiditeit</th></tr></thead><tbody id="routerrows"><tr><td colspan="6" class="sub">Opportunity Router laden…</td></tr></tbody></table></div>
     <div id="routernote" class="sub" style="margin-top:9px">Read-only multi-market scan.</div>
   </div>
@@ -80,6 +86,19 @@ DASHBOARD_HTML = r'''<!doctype html>
     <div class="exchange-head"><div><div class="exchange-name">Autonomous Decision Engine</div><div class="mini">Na operator-arm kiest het systeem zelf markt + ordergrootte binnen harde caps</div></div><span id="autonomymode" class="badge">controleren</span></div>
     <div class="table-wrap"><table class="table compact"><thead><tr><th>Agent</th><th>Huidige markt</th><th>Gewenste markt</th><th>Score</th><th>Confidence</th><th>Order €</th><th>Switch</th><th>Reden</th></tr></thead><tbody id="autonomyrows"><tr><td colspan="8" class="sub">Autonomy laden…</td></tr></tbody></table></div>
     <div id="autonomynote" class="sub" style="margin-top:9px">De engine kan zichzelf nooit armen en mag budget/leverage/harde risicolimieten niet verhogen.</div>
+  </div>
+</section>
+<div class="section-title"><h3>Risk Lab</h3><div class="line"></div><span class="badge">PAPER ONLY</span></div>
+<section class="section">
+  <div class="card">
+    <div class="exchange-head"><div><div class="exchange-name">Leverage + Capped Martingale Lab</div><div class="mini">Meet rendement en drawdown vóór enige aparte live-goedkeuring</div></div><span id="risklabbadge" class="badge">SHADOW RISK LAB</span></div>
+    <div class="order-kpis">
+      <div class="order-kpi"><div class="k">Leverage</div><div id="risklableverage" class="v">—</div></div>
+      <div class="order-kpi"><div class="k">Huidige inzet</div><div id="risklabstake" class="v">—</div></div>
+      <div class="order-kpi"><div class="k">Net PnL</div><div id="risklabpnl" class="v">—</div></div>
+      <div class="order-kpi"><div class="k">Max drawdown</div><div id="risklabdd" class="v">—</div></div>
+    </div>
+    <div id="risklabnote" class="sub">Deze bot kan geen live orders sturen.</div>
   </div>
 </section>
 <div class="section-title"><h3>Shadow Alpha Lab</h3><div class="line"></div><span class="badge">NO LIVE ORDERS</span></div>
@@ -173,10 +192,13 @@ function renderOpportunities(d){
  let ranks=d.rankings||{}, keys=['market_maker','grid','sniper','mean_reversion','volatility_breakout'];
  let names={market_maker:'MarketMaker',grid:'GridRunner',sniper:'SniperBot',mean_reversion:'Mean Reversion',volatility_breakout:'Volatility Breakout'};
  let rows=keys.map(k=>({key:k,best:(ranks[k]||[]).find(x=>x.eligible)||(ranks[k]||[])[0]})).filter(x=>x.best);
- $('routerbadge').textContent=d.live_orders_sent?'ERROR':'SHADOW';
+ const scanned=Number(d.markets_scanned||0),configured=Number(d.markets_configured||0),maxm=Number(d.max_markets||60),errCount=Object.keys(d.errors||{}).length+(d.runtime_error?1:0);
+ $('routerbadge').textContent=d.live_orders_sent?'ERROR':(scanned>=50?'50+ SCANNING':'SCANNING');
  $('routerbadge').className='badge '+(d.live_orders_sent?'':'ok');
+ $('routerconfigured').textContent=configured||'—';$('routerscanned').textContent=scanned||'—';$('routertarget').textContent=maxm;$('routererrors').textContent=errCount;
+ $('routererrors').className='v '+(errCount?'red':'green');
  $('routerrows').innerHTML=rows.length?rows.map(x=>`<tr><td><b>${esc(names[x.key]||x.key)}</b></td><td>${esc(x.best.market)}</td><td class="mono">${Number(x.best.score||0).toFixed(1)}</td><td class="mono">${Number(x.best.spread_bps||0).toFixed(1)} bps</td><td class="mono">${Number(x.best.momentum_pct||0).toFixed(3)}%</td><td class="mono">${money(x.best.liquidity_eur)}</td></tr>`).join(''):'<tr><td colspan="6" class="sub">Nog onvoldoende router-data</td></tr>';
- $('routernote').textContent=(d.markets_scanned||0)+' EUR-markten gescand · live orders verzonden: '+(d.live_orders_sent?'JA':'nee')+(d.runtime_error?' · fout: '+d.runtime_error:'');
+ $('routernote').textContent=scanned+' van '+configured+' beschikbare EUR-markten gescand · cap '+maxm+' · auto-discovery '+(d.auto_discover_eur?'AAN':'uit')+' · live orders verzonden: '+(d.live_orders_sent?'JA':'nee')+(d.runtime_error?' · fout: '+d.runtime_error:'');
 }
 function renderFeeEfficiency(d){
  let rows=d.rows||[];
@@ -191,6 +213,15 @@ function renderAutonomy(d){
  $('autonomyrows').innerHTML=rows.length?rows.map(x=>`<tr><td><b>${esc(x.strategy)}</b></td><td>${esc(x.current_market)}</td><td class="${x.desired_market!==x.current_market?'blue':''}">${esc(x.desired_market)}</td><td class="mono">${Number(x.market_score||0).toFixed(1)}</td><td class="mono">${(Number(x.confidence||0)*100).toFixed(1)}%</td><td class="mono">${money(x.recommended_order_eur)}</td><td class="${x.may_switch?'green':'amber'}">${x.may_switch?'JA':'nee'}</td><td>${esc(x.reason||'—')}</td></tr>`).join(''):'<tr><td colspan="8" class="sub">Nog geen autonomy-plan beschikbaar</td></tr>';
  let rules=p.hard_rules||{};
  $('autonomynote').textContent='Operator-arm vereist: '+(d.operator_activation_required?'ja':'nee')+' · zelf armen: '+(rules.can_arm_itself?'JA':'nee')+' · budget verhogen: '+(rules.can_raise_global_budget?'JA':'nee')+' · leverage: '+(rules.can_use_leverage?'JA':'nee')+' · martingale: '+(rules.can_use_martingale?'JA':'nee');
+}
+function renderRiskLab(d){
+ $('risklabbadge').textContent=d.live_orders_sent?'ERROR':'PAPER ONLY';
+ $('risklabbadge').className='badge '+(d.live_orders_sent?'':'ok');
+ $('risklableverage').textContent=Number(d.leverage||0).toFixed(1)+'×';
+ $('risklabstake').textContent=money(d.current_stake_eur);
+ $('risklabpnl').textContent=money(d.realized_net_pnl_eur);$('risklabpnl').className='v '+(Number(d.realized_net_pnl_eur||0)>=0?'green':'red');
+ $('risklabdd').textContent=Number(d.max_drawdown_pct||0).toFixed(2)+'%';
+ $('risklabnote').textContent='Trades '+(d.completed_trades||0)+' · winrate '+Number(d.winrate_pct||0).toFixed(1)+'% · martingale-stap max '+(d.max_martingale_steps||0)+' · live_capable: '+(d.live_capable?'JA':'nee');
 }
 function renderRisk(d){let pos=d.open_positions||d.positions||[];if(!Array.isArray(pos))pos=[];$('positions').innerHTML=pos.length?pos.map(x=>`<tr><td>${esc(x.symbol||x.market)}</td><td>${esc(x.side)}</td><td>${money(x.notional_eur??x.notional)}</td><td>${money(x.pnl_eur??x.pnl)}</td></tr>`).join(''):'<tr><td colspan="4" class="sub">Geen open posities</td></tr>'}
 function renderProfit(d){
@@ -272,7 +303,7 @@ async function deactivateLive(){
   await refreshLiveReadiness(); alert('Live Trading is gestopt. Nieuwe orders worden niet meer uitgevoerd.');
  }catch(e){alert(e.message||'Stoppen mislukt');}
 }
-async function refresh(){let now=new Date().toLocaleString();$('last').textContent='Bijwerken…';$('apierror').textContent='';let entries=await Promise.allSettled([get('/api/paper/report'),get('/api/execution/status'),get('/api/pnl/summary'),get('/api/health'),get('/api/security/bitvavo'),get('/api/risk/status'),get('/api/markets/overview'),get('/api/strategies'),get('/api/bitvavo/live-state'),get('/api/pnl/live'),get('/api/security/coinbase'),get('/api/coinbase/live-state'),get('/api/arbitrage/coinbase-bitvavo'),get('/api/shadow/strategies'),get('/api/allocator/v2'),get('/api/orders/activity?limit=100'),get('/api/optimization/execution-v2'),get('/api/optimization/opportunities'),get('/api/optimization/fee-efficiency'),get('/api/goals/portfolio'),get('/api/reference/binance-btc'),get('/api/autonomy/status')]);let [r,e,s,h,f,k,m,a,v,p,cb,cbb,arb,sh,al,oa,ev2,op,fe,goal,bref,auto]=entries;let fail=(entry,label)=>{if(entry.status==='rejected')setSectionError(label,entry.reason)};if(r.status==='fulfilled')renderReport(r.value);else fail(r,'Portfolio');if(e.status==='fulfilled')renderExec(e.value);else fail(e,'Execution');if(s.status==='fulfilled')renderStrategies(s.value);else fail(s,'PnL');if(h.status==='fulfilled'){$('ticker').textContent=h.value.runtime?.ticker_running?'actief':'gestopt';$('updated').textContent=new Date().toLocaleTimeString();$('healthbar').style.width=h.value.runtime?.last_tick_error?'25%':'100%'}else fail(h,'Runtime');if(f.status==='fulfilled')renderBitvavo(f.value,e.status==='fulfilled'?e.value:{});else fail(f,'Bitvavo');if(k.status==='fulfilled')renderRisk(k.value);else fail(k,'Risk');if(m.status==='fulfilled')renderMarkets(m.value);else fail(m,'Markten');if(a.status==='fulfilled')renderAgents(a.value);else fail(a,'Agents');if(v.status==='fulfilled')renderLiveState(v.value);else fail(v,'Open orders');if(p.status==='fulfilled')renderProfit(p.value);else fail(p,'Profit supervisor');if(cb.status==='fulfilled')renderCoinbase(cb.value);else fail(cb,'Coinbase');if(cbb.status==='fulfilled')renderCoinbaseBalances(cbb.value);else fail(cbb,'Coinbase saldo');if(arb.status==='fulfilled')renderArbitrage(arb.value);else fail(arb,'Arbitrage');if(sh.status==='fulfilled')renderShadow(sh.value);else fail(sh,'Shadow bots');if(al.status==='fulfilled')renderAllocator(al.value);else fail(al,'Allocator v2');if(oa.status==='fulfilled')renderOrderActivity(oa.value);else fail(oa,'Orderhistorie');if(ev2.status==='fulfilled')renderExecutionV2(ev2.value);else fail(ev2,'Execution v2');if(op.status==='fulfilled')renderOpportunities(op.value);else fail(op,'Opportunity Router');if(fe.status==='fulfilled')renderFeeEfficiency(fe.value);else fail(fe,'Fee Efficiency');if(goal.status==='fulfilled')renderGoal(goal.value);else fail(goal,'€25k doel');if(bref.status==='fulfilled')renderBinanceReference(bref.value);else fail(bref,'Binance reference');if(auto.status==='fulfilled')renderAutonomy(auto.value);else fail(auto,'Autonomy');refreshLiveReadiness();$('last').textContent='Bijgewerkt '+now}
+async function refresh(){let now=new Date().toLocaleString();$('last').textContent='Bijwerken…';$('apierror').textContent='';let entries=await Promise.allSettled([get('/api/paper/report'),get('/api/execution/status'),get('/api/pnl/summary'),get('/api/health'),get('/api/security/bitvavo'),get('/api/risk/status'),get('/api/markets/overview'),get('/api/strategies'),get('/api/bitvavo/live-state'),get('/api/pnl/live'),get('/api/security/coinbase'),get('/api/coinbase/live-state'),get('/api/arbitrage/coinbase-bitvavo'),get('/api/shadow/strategies'),get('/api/allocator/v2'),get('/api/orders/activity?limit=100'),get('/api/optimization/execution-v2'),get('/api/optimization/opportunities'),get('/api/optimization/fee-efficiency'),get('/api/goals/portfolio'),get('/api/reference/binance-btc'),get('/api/autonomy/status'),get('/api/risk-lab/leverage-martingale')]);let [r,e,s,h,f,k,m,a,v,p,cb,cbb,arb,sh,al,oa,ev2,op,fe,goal,bref,auto,rl]=entries;let fail=(entry,label)=>{if(entry.status==='rejected')setSectionError(label,entry.reason)};if(r.status==='fulfilled')renderReport(r.value);else fail(r,'Portfolio');if(e.status==='fulfilled')renderExec(e.value);else fail(e,'Execution');if(s.status==='fulfilled')renderStrategies(s.value);else fail(s,'PnL');if(h.status==='fulfilled'){$('ticker').textContent=h.value.runtime?.ticker_running?'actief':'gestopt';$('updated').textContent=new Date().toLocaleTimeString();$('healthbar').style.width=h.value.runtime?.last_tick_error?'25%':'100%'}else fail(h,'Runtime');if(f.status==='fulfilled')renderBitvavo(f.value,e.status==='fulfilled'?e.value:{});else fail(f,'Bitvavo');if(k.status==='fulfilled')renderRisk(k.value);else fail(k,'Risk');if(m.status==='fulfilled')renderMarkets(m.value);else fail(m,'Markten');if(a.status==='fulfilled')renderAgents(a.value);else fail(a,'Agents');if(v.status==='fulfilled')renderLiveState(v.value);else fail(v,'Open orders');if(p.status==='fulfilled')renderProfit(p.value);else fail(p,'Profit supervisor');if(cb.status==='fulfilled')renderCoinbase(cb.value);else fail(cb,'Coinbase');if(cbb.status==='fulfilled')renderCoinbaseBalances(cbb.value);else fail(cbb,'Coinbase saldo');if(arb.status==='fulfilled')renderArbitrage(arb.value);else fail(arb,'Arbitrage');if(sh.status==='fulfilled')renderShadow(sh.value);else fail(sh,'Shadow bots');if(al.status==='fulfilled')renderAllocator(al.value);else fail(al,'Allocator v2');if(oa.status==='fulfilled')renderOrderActivity(oa.value);else fail(oa,'Orderhistorie');if(ev2.status==='fulfilled')renderExecutionV2(ev2.value);else fail(ev2,'Execution v2');if(op.status==='fulfilled')renderOpportunities(op.value);else fail(op,'Opportunity Router');if(fe.status==='fulfilled')renderFeeEfficiency(fe.value);else fail(fe,'Fee Efficiency');if(goal.status==='fulfilled')renderGoal(goal.value);else fail(goal,'€25k doel');if(bref.status==='fulfilled')renderBinanceReference(bref.value);else fail(bref,'Binance reference');if(auto.status==='fulfilled')renderAutonomy(auto.value);else fail(auto,'Autonomy');if(rl.status==='fulfilled')renderRiskLab(rl.value);else fail(rl,'Risk Lab');refreshLiveReadiness();$('last').textContent='Bijgewerkt '+now}
 function connect(){try{let scheme=location.protocol==='https:'?'wss':'ws';let credential=apiKey||token;if(!credential){$('socket').textContent='auth vereist';return}socket=new WebSocket(`${scheme}://${location.host}/ws/paper`,['at-v1',credential]);socket.onopen=()=>{$('socket').textContent='verbonden';$('socket').className='green'};socket.onmessage=e=>{try{if(($('mode').textContent||'').toLowerCase()!=='live')renderReport(JSON.parse(e.data))}catch(_){}};socket.onclose=()=>{$('socket').textContent='herstellen…';setTimeout(connect,4000)}}catch(_){$('socket').textContent='niet beschikbaar'}}
 if(token||apiKey){$('login').classList.add('hidden');$('app').classList.remove('hidden');refresh();connect()}
 setInterval(()=>{if(!$('app').classList.contains('hidden'))refresh()},5000);
