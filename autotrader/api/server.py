@@ -405,6 +405,20 @@ async def _opportunity_router_loop(app: FastAPI) -> None:
         try:
             await asyncio.to_thread(app.state.opportunity_router.refresh)
             app.state.opportunity_router_error = None
+            payload = app.state.opportunity_router.rankings()
+            scanned = int(payload.get("markets_scanned", 0) or 0)
+            configured = int(payload.get("markets_configured", 0) or 0)
+            previous = getattr(app.state, "opportunity_router_last_logged_count", None)
+            if previous != (configured, scanned):
+                log.info(
+                    "Opportunity router active: configured=%d scanned=%d cap=%d auto_discover=%s live_orders_sent=%s",
+                    configured,
+                    scanned,
+                    int(payload.get("max_markets", 0) or 0),
+                    bool(payload.get("auto_discover_eur")),
+                    bool(payload.get("live_orders_sent")),
+                )
+                app.state.opportunity_router_last_logged_count = (configured, scanned)
         except Exception as exc:
             app.state.opportunity_router_error = type(exc).__name__
             log.warning("Opportunity router refresh failed: %s", type(exc).__name__)
