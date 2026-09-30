@@ -45,16 +45,35 @@ shadow_lab:
     volatility_breakout:
       enabled: true
       kind: volatility_breakout
-      strategy_version: v1
+      strategy_version: v2
       symbol: ADA-EUR
       exchange: bitvavo
       shadow_order_eur: 6.0
-      lookback: 24
-      breakout_buffer_pct: 0.12
+      lookback: 30
+      breakout_buffer_pct: 0.16
       min_avg_move_pct: 0.03
-      take_profit_pct: 1.4
-      stop_loss_pct: 0.7
+      min_vol_expansion_ratio: 1.08
+      max_entry_spike_pct: 1.25
+      min_exit_net_pct: 0.75
+      take_profit_pct: 1.5
+      stop_loss_pct: 0.75
       trailing_exit_pct: 0.45
+    sniper_v2:
+      enabled: true
+      kind: sniper_v2
+      strategy_version: v1
+      symbol: XRP-EUR
+      exchange: bitvavo
+      shadow_order_eur: 6.0
+      ema_fast: 6
+      ema_slow: 18
+      momentum_lookback: 3
+      momentum_pct: 0.22
+      max_entry_spike_pct: 0.90
+      min_exit_net_pct: 0.75
+      take_profit_pct: 1.10
+      stop_loss_pct: 0.45
+      trailing_exit_pct: 0.35
 
 allocator_v2:
   enabled: true
@@ -62,6 +81,29 @@ allocator_v2:
   min_samples: 12
   max_shift_pct: 25.0
   min_allocation_eur: 5.0
+  fee_drag_penalty_pct: 50.0
+  idle_budget_reuse_pct: 50.0
+
+execution_v2:
+  enabled: true
+  apply_live: false
+  stale_after_seconds: 180
+  min_reprice_move_bps: 4.0
+  max_order_age_seconds: 900
+
+opportunity_router:
+  enabled: true
+  interval_seconds: 15
+  history_size: 48
+  min_top_depth_eur: 25
+  max_spread_bps: 35
+  markets:
+    - BTC-EUR
+    - ETH-EUR
+    - SOL-EUR
+    - XRP-EUR
+    - ADA-EUR
+    - LINK-EUR
 
 profit_policy:
   estimated_entry_fee_pct: 0.25
