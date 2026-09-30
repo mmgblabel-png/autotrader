@@ -61,8 +61,10 @@ from autotrader.core.market_feed import BitpandaFusionMarketFeed
 from autotrader.core.shadow_strategy_engine import ShadowStrategyEngine
 from autotrader.core.strategy_allocator_v2 import StrategyAllocatorV2
 from autotrader.core.profit_optimization import (
+    BinanceReferenceFeed,
     ExecutionV2Advisor,
     OpportunityRouter,
+    PortfolioGoalTracker,
     fee_efficiency_rows,
 )
 from autotrader.connectors.bitvavo import BitvavoAdapter
@@ -350,6 +352,13 @@ async def _opportunity_router_loop(app: FastAPI) -> None:
         await asyncio.sleep(app.state.opportunity_router_interval_seconds)
 
 
+async def _binance_reference_loop(app: FastAPI) -> None:
+    """Refresh one public BTC reference price every second; no auth or orders."""
+    while True:
+        await asyncio.to_thread(app.state.binance_reference.refresh)
+        await asyncio.sleep(app.state.binance_reference.interval_seconds)
+
+
 async def _arbitrage_shadow_loop(app: FastAPI) -> None:
     """Continuously refresh read-only Coinbase↔Bitvavo shadow opportunities."""
     while True:
@@ -454,6 +463,8 @@ async def _lifespan(app: FastAPI):
         app.state.opportunity_router_interval_seconds = 15.0
     app.state.opportunity_router_error = None
     app.state.execution_v2_advisor = ExecutionV2Advisor(agent._config.get("execution_v2", {}) or {})
+    app.state.portfolio_goal = PortfolioGoalTracker(agent._config.get("portfolio_goal", {}) or {})
+    app.state.binance_reference = BinanceReferenceFeed(agent._config.get("binance_reference", {}) or {})
 
     if os.getenv("COINBASE_API_KEY", "").strip() and os.getenv("COINBASE_API_SECRET", "").strip():
         try:
@@ -492,6 +503,9 @@ async def _lifespan(app: FastAPI):
     app.state.opportunity_router_task = asyncio.create_task(
         _opportunity_router_loop(app), name="autotrader-opportunity-router-loop"
     )
+    app.state.binance_reference_task = asyncio.create_task(
+        _binance_reference_loop(app), name="autotrader-binance-reference-loop"
+    )
     log.info(
         "AutoTrader agent initialised from '%s' (mode=%s tick=%.3fs live_sync=%.3fs journal_reconcile=%.3fs).",
         _CONFIG_PATH,
@@ -509,6 +523,7 @@ async def _lifespan(app: FastAPI):
         app.state.arbitrage_shadow_task.cancel()
         app.state.shadow_strategy_task.cancel()
         app.state.opportunity_router_task.cancel()
+        app.state.binance_reference_task.cancel()
         with contextlib.suppress(asyncio.CancelledError):
             await app.state.tick_task
         with contextlib.suppress(asyncio.CancelledError):
@@ -517,6 +532,8 @@ async def _lifespan(app: FastAPI):
             await app.state.shadow_strategy_task
         with contextlib.suppress(asyncio.CancelledError):
             await app.state.opportunity_router_task
+        with contextlib.suppress(asyncio.CancelledError):
+            await app.state.binance_reference_task
         agent.stop()
         log.info("AutoTrader agent stopped.")
 
@@ -1129,6 +1146,23 @@ def allocator_v2_status() -> dict[str, object]:
         budget,
         fee_rows=fee_rows,
     )
+
+
+@app.get("/api/goals/portfolio", tags=["goals"])
+def portfolio_goal_status() -> dict[str, object]:
+    agent = get_agent()
+    rows = _live_profit_snapshots(agent)
+    economic_pnl = sum(float(row.get("economic_pnl_eur") or 0.0) for row in rows)
+    current_equity = app.state.portfolio_goal.starting_equity_eur + economic_pnl
+    payload = app.state.portfolio_goal.status(current_equity, rows)
+    payload["equity_basis"] = "starting_equity_plus_fee_aware_economic_pnl"
+    payload["note"] = "The €25,000 target is a shared tracking objective, never a reason to increase risk."
+    return payload
+
+
+@app.get("/api/reference/binance-btc", tags=["markets"])
+def binance_btc_reference() -> dict[str, object]:
+    return app.state.binance_reference.status()
 
 
 @app.get("/api/optimization/opportunities", tags=["optimization"])
