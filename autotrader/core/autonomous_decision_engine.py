@@ -21,6 +21,12 @@ class AutonomousDecisionEngine:
         self.switch_cooldown_seconds = max(
             30.0, float(self.config.get("switch_cooldown_seconds", 300.0))
         )
+        self.max_size_score = max(
+            self.min_score, min(100.0, float(self.config.get("max_size_score", 82.0)))
+        )
+        self.max_size_confidence = max(
+            self.min_confidence, min(1.0, float(self.config.get("max_size_confidence", 0.75)))
+        )
         self._last_switch: dict[str, float] = {}
 
     def _allowed_markets(self, key: str, current: str) -> list[str]:
@@ -83,7 +89,27 @@ class AutonomousDecisionEngine:
             switch_ready = now - float(self._last_switch.get(display, 0.0)) >= self.switch_cooldown_seconds
             score = float(best.get("score") or 0.0) if best else 0.0
             desired = str(best.get("market") or current).upper() if best else current
-            quality_ok = bool(best) and score >= self.min_score and confidence >= self.min_confidence
+            required_entry_edge = max(0.0, float(cfg.get("_required_entry_edge_pct", 0.0)))
+            if key == "market_maker":
+                target_edge = float(cfg.get("cycle_exit_markup_pct", cfg.get("target_spread", 0.0)))
+            elif key == "grid":
+                target_edge = float(cfg.get("exit_markup_pct", 0.0))
+            else:
+                target_edge = float(cfg.get("take_profit_pct", 0.0))
+            profit_gate = target_edge >= required_entry_edge if required_entry_edge > 0 else target_edge > 0
+            quality_ok = (
+                bool(best)
+                and score >= self.min_score
+                and confidence >= self.min_confidence
+                and profit_gate
+            )
+            use_max_size = (
+                quality_ok
+                and score >= self.max_size_score
+                and confidence >= self.max_size_confidence
+            )
+            if use_max_size and hard_cap > 0:
+                suggested_eur = hard_cap
             may_switch = flat and not open_local and not durable_open and switch_ready and quality_ok
             reason = "hold_current_market"
 
@@ -110,6 +136,10 @@ class AutonomousDecisionEngine:
                 "market_score": round(score, 2),
                 "confidence": round(confidence, 4),
                 "recommended_order_eur": round(suggested_eur, 2),
+                "profit_gate": profit_gate,
+                "target_edge_pct": round(target_edge, 4),
+                "required_entry_edge_pct": round(required_entry_edge, 4),
+                "max_size_signal": use_max_size,
                 "quality_ok": quality_ok,
                 "flat": flat,
                 "open_local_order": open_local,
