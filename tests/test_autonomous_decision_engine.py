@@ -23,7 +23,7 @@ class FakeJournal:
     def inventory_cost_basis(self, market, strategy):
         return {"quantity": float(self.inventory.get((market, strategy), 0.0))}
 
-    def strategy_state(self, market, strategy):
+    def strategy_market_state(self, market, strategy):
         return {"nonterminal_count": int(self.nonterminal.get((market, strategy), 0))}
 
 
