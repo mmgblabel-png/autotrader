@@ -379,11 +379,22 @@ class ShadowStrategyEngine:
                     if isinstance(learned_states.get(self._learner_name(name), {}), dict) else {}
                 ),
                 "promotable": promotable,
+                "promotion_ready": promotable,
+                "promotion_action": (
+                    "queue_for_operator_approved_live_release"
+                    if promotable else "continue_shadow_validation"
+                ),
             })
         return {
             "mode": "shadow",
             "live_orders_sent": False,
             "round_trip_cost_pct": round(self.round_trip_cost_pct, 4),
+            "auto_promotion_policy": {
+                "auto_queue_when_ready": True,
+                "auto_set_live_capable": False,
+                "auto_send_live_orders": False,
+                "operator_live_release_required": True,
+            },
             "promotion_rules": {
                 "min_completed_trades": self.min_completed_trades,
                 "min_winrate_pct": self.min_winrate_pct,
