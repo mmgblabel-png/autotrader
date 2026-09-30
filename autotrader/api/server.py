@@ -60,6 +60,16 @@ from autotrader.core.live_preflight import validate_bitvavo_live_strategies
 from autotrader.core.market_feed import BitpandaFusionMarketFeed
 from autotrader.core.shadow_strategy_engine import ShadowStrategyEngine
 from autotrader.core.strategy_allocator_v2 import StrategyAllocatorV2
+from autotrader.core.profit_optimization import (
+    BinanceReferenceFeed,
+    CalculatedRiskSizer,
+    ExecutionV2Advisor,
+    OpportunityRouter,
+    PortfolioGoalTracker,
+    fee_efficiency_rows,
+)
+from autotrader.core.autonomous_decision_engine import AutonomousDecisionEngine
+from autotrader.core.risk_lab import LeverageMartingaleRiskLab
 from autotrader.connectors.bitvavo import BitvavoAdapter
 from autotrader.connectors.coinbase_advanced import CoinbaseAdvancedMarketData, CoinbaseMarketDataError
 from autotrader.connectors.bitpanda_fusion import BitpandaFusionAdapter
@@ -203,6 +213,35 @@ def _running_bitvavo_markets(agent: AutoTrader) -> list[str]:
     })
 
 
+def _calculated_risk_payload(agent: AutoTrader) -> dict[str, object]:
+    opp_payload = app.state.opportunity_router.rankings()
+    live_rows = _live_profit_snapshots(agent)
+    fee_rows = fee_efficiency_rows(live_rows).get("rows", [])
+    display = {
+        "market_maker": "MarketMaker",
+        "grid": "GridRunner",
+        "sniper": "SniperBot",
+    }
+    opportunities = []
+    for key, name in display.items():
+        ranked = opp_payload.get("rankings", {}).get(key, [])
+        best = next((x for x in ranked if x.get("eligible")), ranked[0] if ranked else None)
+        if best:
+            opportunities.append({"strategy": name, **best})
+    base_allocations = {}
+    max_order = {}
+    for strategy in agent._strategies.values():
+        base_allocations[strategy.name] = float(strategy._config.get("allocation_eur", 0.0) or 0.0)
+        max_order[strategy.name] = float(strategy._config.get("max_order_eur", 0.0) or 0.0)
+    return app.state.calculated_risk.recommend(
+        opportunities,
+        fee_rows,
+        live_rows,
+        base_allocations,
+        max_order,
+    )
+
+
 async def _tick_loop(app: FastAPI, agent: AutoTrader) -> None:
     """Drive all active strategies for the lifetime of the API process.
 
@@ -213,6 +252,28 @@ async def _tick_loop(app: FastAPI, agent: AutoTrader) -> None:
     while True:
         try:
             if app.state.live_mode:
+                if getattr(app.state, "autonomous_decision_engine", None) is not None:
+                    try:
+                        risk_payload = _calculated_risk_payload(agent)
+                        plan = app.state.autonomous_decision_engine.plan(
+                            agent=agent,
+                            router_payload=app.state.opportunity_router.rankings(),
+                            risk_payload=risk_payload,
+                            armed=bool(getattr(app.state, "live_armed", False)),
+                        )
+                        app.state.autonomous_plan = plan
+                        app.state.autonomous_apply = app.state.autonomous_decision_engine.apply(
+                            agent=agent,
+                            plan=plan,
+                            armed=bool(getattr(app.state, "live_armed", False)),
+                        )
+                    except Exception as auto_exc:
+                        app.state.autonomous_apply = {
+                            "applied": False,
+                            "reason": type(auto_exc).__name__,
+                            "changes": [],
+                        }
+                        log.warning("Autonomous decision cycle failed safely: %s", type(auto_exc).__name__)
                 running_markets = _running_bitvavo_markets(agent)
                 sync_due = (
                     bool(running_markets)
@@ -319,6 +380,11 @@ async def _shadow_strategy_loop(app: FastAPI, agent: AutoTrader) -> None:
                     price = float(await asyncio.to_thread(agent._bitvavo.ticker_price, symbol))
                     app.state.shadow_strategy_engine.update(name, price, strat_cfg)
                     updated_names.append(name)
+                risk_cfg = agent._config.get("leverage_martingale_risk_lab", {}) or {}
+                if bool(risk_cfg.get("enabled", False)):
+                    risk_symbol = str(risk_cfg.get("symbol", "BTC-EUR")).upper().strip()
+                    risk_price = float(await asyncio.to_thread(agent._bitvavo.ticker_price, risk_symbol))
+                    app.state.leverage_martingale_risk_lab.update(risk_price)
                 first_success = getattr(app.state, "shadow_strategy_last_at", 0.0) == 0.0
                 app.state.shadow_strategy_last_at = time.time()
                 app.state.shadow_strategy_error = None
@@ -331,6 +397,25 @@ async def _shadow_strategy_loop(app: FastAPI, agent: AutoTrader) -> None:
             app.state.shadow_strategy_error = type(exc).__name__
             log.warning("Shadow strategy loop failed: %s", type(exc).__name__)
         await asyncio.sleep(app.state.shadow_strategy_interval_seconds)
+
+
+async def _opportunity_router_loop(app: FastAPI) -> None:
+    """Refresh read-only multi-market rankings; never submits orders."""
+    while True:
+        try:
+            await asyncio.to_thread(app.state.opportunity_router.refresh)
+            app.state.opportunity_router_error = None
+        except Exception as exc:
+            app.state.opportunity_router_error = type(exc).__name__
+            log.warning("Opportunity router refresh failed: %s", type(exc).__name__)
+        await asyncio.sleep(app.state.opportunity_router_interval_seconds)
+
+
+async def _binance_reference_loop(app: FastAPI) -> None:
+    """Refresh one public BTC reference price every second; no auth or orders."""
+    while True:
+        await asyncio.to_thread(app.state.binance_reference.refresh)
+        await asyncio.sleep(app.state.binance_reference.interval_seconds)
 
 
 async def _arbitrage_shadow_loop(app: FastAPI) -> None:
@@ -416,6 +501,9 @@ async def _lifespan(app: FastAPI):
     app.state.arbitrage_shadow_error = None
     shadow_cfg = agent._config.get("shadow_lab", {}) or {}
     app.state.shadow_strategy_engine = ShadowStrategyEngine(shadow_cfg, learner=agent.adaptive_learning)
+    app.state.leverage_martingale_risk_lab = LeverageMartingaleRiskLab(
+        agent._config.get("leverage_martingale_risk_lab", {}) or {}
+    )
     try:
         app.state.shadow_strategy_interval_seconds = max(
             10.0,
@@ -426,6 +514,31 @@ async def _lifespan(app: FastAPI):
     app.state.shadow_strategy_last_at = 0.0
     app.state.shadow_strategy_error = None
     app.state.allocator_v2 = StrategyAllocatorV2(agent._config.get("allocator_v2", {}) or {})
+    router_cfg = agent._config.get("opportunity_router", {}) or {}
+    app.state.opportunity_router = OpportunityRouter(agent._bitvavo, router_cfg)
+    try:
+        app.state.opportunity_router_interval_seconds = max(
+            10.0,
+            float(router_cfg.get("interval_seconds", 15.0)),
+        )
+    except (TypeError, ValueError):
+        app.state.opportunity_router_interval_seconds = 15.0
+    app.state.opportunity_router_error = None
+    app.state.execution_v2_advisor = ExecutionV2Advisor(agent._config.get("execution_v2", {}) or {})
+    app.state.portfolio_goal = PortfolioGoalTracker(agent._config.get("portfolio_goal", {}) or {})
+    app.state.binance_reference = BinanceReferenceFeed(agent._config.get("binance_reference", {}) or {})
+    app.state.calculated_risk = CalculatedRiskSizer(agent._config.get("calculated_risk", {}) or {})
+    app.state.autonomous_decision_engine = AutonomousDecisionEngine(
+        agent._config.get("autonomous_execution", {}) or {}
+    )
+    app.state.autonomous_plan = {
+        "enabled": app.state.autonomous_decision_engine.enabled,
+        "apply_live": app.state.autonomous_decision_engine.apply_live,
+        "armed": False,
+        "mode": "shadow_plan",
+        "rows": [],
+    }
+    app.state.autonomous_apply = {"applied": False, "reason": "startup", "changes": []}
 
     if os.getenv("COINBASE_API_KEY", "").strip() and os.getenv("COINBASE_API_SECRET", "").strip():
         try:
@@ -461,6 +574,12 @@ async def _lifespan(app: FastAPI):
     app.state.shadow_strategy_task = asyncio.create_task(
         _shadow_strategy_loop(app, agent), name="autotrader-shadow-strategy-loop"
     )
+    app.state.opportunity_router_task = asyncio.create_task(
+        _opportunity_router_loop(app), name="autotrader-opportunity-router-loop"
+    )
+    app.state.binance_reference_task = asyncio.create_task(
+        _binance_reference_loop(app), name="autotrader-binance-reference-loop"
+    )
     log.info(
         "AutoTrader agent initialised from '%s' (mode=%s tick=%.3fs live_sync=%.3fs journal_reconcile=%.3fs).",
         _CONFIG_PATH,
@@ -477,12 +596,18 @@ async def _lifespan(app: FastAPI):
         app.state.tick_task.cancel()
         app.state.arbitrage_shadow_task.cancel()
         app.state.shadow_strategy_task.cancel()
+        app.state.opportunity_router_task.cancel()
+        app.state.binance_reference_task.cancel()
         with contextlib.suppress(asyncio.CancelledError):
             await app.state.tick_task
         with contextlib.suppress(asyncio.CancelledError):
             await app.state.arbitrage_shadow_task
         with contextlib.suppress(asyncio.CancelledError):
             await app.state.shadow_strategy_task
+        with contextlib.suppress(asyncio.CancelledError):
+            await app.state.opportunity_router_task
+        with contextlib.suppress(asyncio.CancelledError):
+            await app.state.binance_reference_task
         agent.stop()
         log.info("AutoTrader agent stopped.")
 
@@ -639,17 +764,8 @@ def pnl_events(limit: int = Query(default=100, ge=1, le=200)):
     return {"events": get_agent().profit_engine.events(limit)}
 
 
-@app.get("/api/pnl/live", tags=["pnl"])
-def live_pnl():
-    """Return durable fee-aware live PnL and break-even state per strategy."""
-    agent = get_agent()
-    rows = []
-    totals = {
-        "realized_net_pnl_eur": 0.0,
-        "unrealized_net_pnl_eur": 0.0,
-        "economic_pnl_eur": 0.0,
-        "fees_quote_equivalent_eur": 0.0,
-    }
+def _live_profit_snapshots(agent: AutoTrader) -> list[dict[str, object]]:
+    rows: list[dict[str, object]] = []
     for strategy in agent._strategies.values():
         if not strategy.is_enabled:
             continue
@@ -664,8 +780,23 @@ def live_pnl():
                 mark = float(agent._bitvavo.ticker_price(symbol))
             except Exception:
                 mark = 0.0
-        snapshot = agent.profit_supervisor.strategy_snapshot(symbol, strategy.name, mark)
-        rows.append(snapshot)
+        rows.append(agent.profit_supervisor.strategy_snapshot(symbol, strategy.name, mark))
+    return rows
+
+
+@app.get("/api/pnl/live", tags=["pnl"])
+def live_pnl():
+    """Return durable fee-aware live PnL and break-even state per strategy."""
+    agent = get_agent()
+    rows = []
+    totals = {
+        "realized_net_pnl_eur": 0.0,
+        "unrealized_net_pnl_eur": 0.0,
+        "economic_pnl_eur": 0.0,
+        "fees_quote_equivalent_eur": 0.0,
+    }
+    rows = _live_profit_snapshots(agent)
+    for snapshot in rows:
         for key in totals:
             totals[key] += float(snapshot.get(key, 0.0) or 0.0)
     if totals["economic_pnl_eur"] > 0:
@@ -1081,11 +1212,114 @@ def allocator_v2_status() -> dict[str, object]:
     for key, value in (shadow_cfg.get("strategies", {}) or {}).items():
         merged[key] = dict(value or {})
     budget = float((agent._config.get("portfolio", {}) or {}).get("global_live_budget_eur", 50.0))
+    fee_rows = fee_efficiency_rows(_live_profit_snapshots(agent)).get("rows", [])
     return app.state.allocator_v2.recommendations(
         merged,
         agent.profit_engine.summary(),
         shadow_rows,
         budget,
+        fee_rows=fee_rows,
+    )
+
+
+@app.get("/api/risk-lab/leverage-martingale", tags=["optimization"])
+def leverage_martingale_risk_lab_status() -> dict[str, object]:
+    return app.state.leverage_martingale_risk_lab.status()
+
+
+@app.get("/api/goals/portfolio", tags=["goals"])
+def portfolio_goal_status() -> dict[str, object]:
+    agent = get_agent()
+    rows = _live_profit_snapshots(agent)
+    economic_pnl = sum(float(row.get("economic_pnl_eur") or 0.0) for row in rows)
+    current_equity = app.state.portfolio_goal.starting_equity_eur + economic_pnl
+    payload = app.state.portfolio_goal.status(current_equity, rows)
+    payload["equity_basis"] = "starting_equity_plus_fee_aware_economic_pnl"
+    payload["note"] = "The €25,000 target is a shared tracking objective, never a reason to increase risk."
+    return payload
+
+
+@app.get("/api/reference/binance-btc", tags=["markets"])
+def binance_btc_reference() -> dict[str, object]:
+    return app.state.binance_reference.status()
+
+
+@app.get("/api/optimization/opportunities", tags=["optimization"])
+def optimization_opportunities() -> dict[str, object]:
+    payload = app.state.opportunity_router.rankings()
+    payload["runtime_error"] = getattr(app.state, "opportunity_router_error", None)
+    return payload
+
+
+@app.get("/api/optimization/fee-efficiency", tags=["optimization"])
+def optimization_fee_efficiency() -> dict[str, object]:
+    return fee_efficiency_rows(_live_profit_snapshots(get_agent()))
+
+
+@app.get("/api/optimization/calculated-risk", tags=["optimization"])
+def optimization_calculated_risk() -> dict[str, object]:
+    return _calculated_risk_payload(get_agent())
+
+
+@app.get("/api/autonomy/status", tags=["optimization"])
+def autonomy_status() -> dict[str, object]:
+    return {
+        "plan": getattr(app.state, "autonomous_plan", {}),
+        "last_apply": getattr(app.state, "autonomous_apply", {}),
+        "operator_activation_required": True,
+        "armed": bool(getattr(app.state, "live_armed", False)),
+    }
+
+
+@app.get("/api/optimization/execution-v2", tags=["optimization"])
+def optimization_execution_v2() -> dict[str, object]:
+    agent = get_agent()
+    raw = agent._bitvavo.journal.recent_order_activity(limit=100)
+    books: dict[str, dict[str, float]] = {}
+    active_markets = {
+        str(row.get("market") or "").upper()
+        for row in raw
+        if str(row.get("status") or "").lower() in {"new", "open", "submitted", "partially_filled"}
+    }
+    for market in active_markets:
+        if not market:
+            continue
+        try:
+            book = agent._bitvavo.ticker_book(market)
+            books[market] = {
+                "bid": float(book["bid"]),
+                "ask": float(book["ask"]),
+            }
+        except Exception:
+            continue
+
+    min_exit: dict[str, float] = {}
+    targets: dict[str, float] = {}
+    for strategy in agent._strategies.values():
+        symbol = str(strategy._config.get("symbol", "")).upper()
+        if not symbol:
+            continue
+        mark = float(strategy._config.get("_current_price") or 0.0)
+        if mark <= 0:
+            try:
+                mark = float(agent._bitvavo.ticker_price(symbol))
+            except Exception:
+                mark = 0.0
+        snap = agent.profit_supervisor.strategy_snapshot(symbol, strategy.name, mark)
+        min_exit[strategy.name] = float(snap.get("min_profit_exit_price") or 0.0)
+        if strategy.name == "MarketMaker":
+            targets[strategy.name] = float(strategy._config.get("cycle_exit_markup_pct", 0.0))
+        elif strategy.name == "GridRunner":
+            targets[strategy.name] = float(strategy._config.get("exit_markup_pct", 0.0))
+        elif strategy.name == "SniperBot":
+            targets[strategy.name] = float(strategy._config.get("take_profit_pct", 0.0))
+
+    return app.state.execution_v2_advisor.evaluate(
+        raw,
+        books,
+        min_exit,
+        targets,
+        float(agent.profit_supervisor.policy.required_entry_edge_pct),
     )
 
 

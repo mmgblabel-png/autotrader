@@ -5,6 +5,45 @@ portfolio:
   global_live_budget_eur: 50
   max_total_open_orders: 4
 
+portfolio_goal:
+  enabled: true
+  starting_equity_eur: 50
+  target_equity_eur: 25000
+  milestones_eur:
+    - 100
+    - 250
+    - 500
+    - 1000
+    - 2500
+    - 5000
+    - 10000
+    - 25000
+  goal_is_risk_input: false
+  increase_risk_to_catch_up: false
+
+binance_reference:
+  enabled: true
+  symbol: BTCUSDT
+  interval_seconds: 1
+  timeout_seconds: 3
+
+leverage_martingale_risk_lab:
+  enabled: true
+  path: /data/leverage_martingale_lab.json
+  symbol: BTC-EUR
+  starting_equity_eur: 50
+  base_stake_eur: 3
+  max_stake_eur: 8
+  leverage: 2.0
+  martingale_multiplier: 1.35
+  max_martingale_steps: 2
+  momentum_trigger_pct: 0.20
+  take_profit_pct: 0.75
+  stop_loss_pct: 0.45
+  fee_pct_each_leg: 0.25
+  slippage_pct_each_leg: 0.05
+  live_capable: false
+  live_orders_sent: false
 
 adaptive_learning:
   enabled: true
@@ -45,16 +84,35 @@ shadow_lab:
     volatility_breakout:
       enabled: true
       kind: volatility_breakout
-      strategy_version: v1
+      strategy_version: v2
       symbol: ADA-EUR
       exchange: bitvavo
       shadow_order_eur: 6.0
-      lookback: 24
-      breakout_buffer_pct: 0.12
+      lookback: 30
+      breakout_buffer_pct: 0.16
       min_avg_move_pct: 0.03
-      take_profit_pct: 1.4
-      stop_loss_pct: 0.7
+      min_vol_expansion_ratio: 1.08
+      max_entry_spike_pct: 1.25
+      min_exit_net_pct: 0.75
+      take_profit_pct: 1.5
+      stop_loss_pct: 0.75
       trailing_exit_pct: 0.45
+    sniper_v2:
+      enabled: true
+      kind: sniper_v2
+      strategy_version: v1
+      symbol: XRP-EUR
+      exchange: bitvavo
+      shadow_order_eur: 6.0
+      ema_fast: 6
+      ema_slow: 18
+      momentum_lookback: 3
+      momentum_pct: 0.22
+      max_entry_spike_pct: 0.90
+      min_exit_net_pct: 0.75
+      take_profit_pct: 1.10
+      stop_loss_pct: 0.45
+      trailing_exit_pct: 0.35
 
 allocator_v2:
   enabled: true
@@ -62,6 +120,71 @@ allocator_v2:
   min_samples: 12
   max_shift_pct: 25.0
   min_allocation_eur: 5.0
+  fee_drag_penalty_pct: 50.0
+  idle_budget_reuse_pct: 50.0
+
+execution_v2:
+  enabled: true
+  apply_live: false
+  stale_after_seconds: 180
+  min_reprice_move_bps: 4.0
+  max_order_age_seconds: 900
+
+calculated_risk:
+  enabled: true
+  profile: balanced_aggressive
+  min_confidence: 0.62
+  max_size_multiplier: 1.35
+  max_drawdown_pct: 8.0
+  max_fee_drag_pct: 55.0
+  apply_live: false
+  allow_leverage: false
+  allow_martingale: false
+  allow_budget_increase: false
+
+autonomous_execution:
+  enabled: true
+  apply_live: true
+  min_score: 68.0
+  min_confidence: 0.62
+  max_size_score: 82.0
+  max_size_confidence: 0.75
+  switch_cooldown_seconds: 300
+  strategy_markets:
+    market_maker:
+      - BTC-EUR
+    grid:
+      - SOL-EUR
+      - ETH-EUR
+      - ADA-EUR
+      - LINK-EUR
+    sniper:
+      - XRP-EUR
+      - SOL-EUR
+      - ADA-EUR
+      - LINK-EUR
+  can_arm_itself: false
+  can_raise_global_budget: false
+  can_raise_hard_risk_limits: false
+  allow_leverage: false
+  allow_martingale: false
+
+opportunity_router:
+  enabled: true
+  interval_seconds: 15
+  history_size: 48
+  min_top_depth_eur: 25
+  max_spread_bps: 35
+  auto_discover_eur: true
+  max_markets: 60
+  discovery_refresh_seconds: 1800
+  markets:
+    - BTC-EUR
+    - ETH-EUR
+    - SOL-EUR
+    - XRP-EUR
+    - ADA-EUR
+    - LINK-EUR
 
 profit_policy:
   estimated_entry_fee_pct: 0.25

@@ -34,6 +34,73 @@ DASHBOARD_HTML = r'''<!doctype html>
 <section class="section"><div class="card"><h2>Profit supervisor</h2><div class="grid" style="margin-bottom:12px"><div><div class="label">Economische PnL</div><div id="profitEconomic" class="value">—</div></div><div><div class="label">Gerealiseerd netto</div><div id="profitRealized" class="value">—</div></div><div><div class="label">Ongerealiseerd na exit-kosten</div><div id="profitUnrealized" class="value">—</div></div><div><div class="label">Min. edge nieuwe entry</div><div id="profitEdge" class="value">—</div></div></div><table class="table"><thead><tr><th>Bot</th><th>Markt</th><th>Status</th><th>Inventory</th><th>Break-even</th><th>Min winst-exit</th><th>Net PnL</th></tr></thead><tbody id="profitrows"><tr><td colspan="7" class="sub">Laden…</td></tr></tbody></table><div class="sub" style="margin-top:10px">Gebaseerd op echte journal-fills en geschatte toekomstige fee/slippage. Geen winstgarantie.</div></div></section>
 <section class="section two"><div class="card"><h2>Strategieën</h2><table class="table"><thead><tr><th>Naam</th><th>Status</th><th>PnL</th><th>Trades</th></tr></thead><tbody id="strategies"><tr><td colspan="4" class="sub">Laden…</td></tr></tbody></table></div><div class="card"><h2>Runtime</h2><div class="metric"><span>Feed/ticker</span><b id="ticker">—</b></div><div class="metric"><span>Laatste update</span><b id="updated">—</b></div><div class="metric"><span>WebSocket</span><b id="socket">verbinden…</b></div><div class="bar"><i id="healthbar" style="width:0%"></i></div><div class="sub" style="margin-top:8px">Gezondheidsindicator op basis van ticker en laatste fout.</div></div></section>
 <section class="section two"><div class="card"><h2>Markten</h2><table class="table"><thead><tr><th>Markt</th><th>Venue</th><th>Feed</th><th>Orders</th></tr></thead><tbody id="markets"><tr><td colspan="4" class="sub">Laden…</td></tr></tbody></table><div id="marketnote" class="sub" style="margin-top:10px">Alleen geconfigureerde markten worden getoond; prijzen worden niet verzonnen.</div></div><div class="card"><h2>Trading agents</h2><div id="agents"><div class="sub">Laden…</div></div><div class="notice" style="margin-top:12px">Workflow: marktdata → strategie-signaal → risicocontrole → order-intentie → journal/PnL. Live execution blijft fail-closed tot alle gates én handmatige activatie gereed zijn.</div></div></section>
+<div class="section-title"><h3>Profit Optimization v2</h3><div class="line"></div><span class="badge">ADVISORY · NO LIVE CHANGES</span></div>
+<section class="section exchange-grid">
+  <div class="card">
+    <div class="exchange-head"><div><div class="exchange-name">Gezamenlijk botdoel</div><div class="mini">Alle bots dragen bij aan één portfolio-doel · nooit een reden om risico te verhogen</div></div><span id="goalbadge" class="badge">€25K TARGET</span></div>
+    <div class="grid" style="margin-bottom:12px">
+      <div><div class="label">Huidige equity-schatting</div><div id="goalcurrent" class="value">—</div></div>
+      <div><div class="label">Doel</div><div id="goaltarget" class="value blue">€ 25.000</div></div>
+      <div><div class="label">Voortgang</div><div id="goalprogress" class="value">—</div></div>
+      <div><div class="label">Volgende mijlpaal</div><div id="goalnext" class="value amber">—</div></div>
+    </div>
+    <div class="bar"><i id="goalbar" style="width:0%"></i></div>
+    <div id="goalnote" class="sub" style="margin-top:9px">Geen martingale, geen leverage- of budgetverhoging om het doel in te halen.</div>
+  </div>
+  <div class="card">
+    <div class="exchange-head"><div><div class="exchange-name">BTC Reference Feed</div><div class="mini">Binance public BTCUSDT · 1 seconde · read-only referentie</div></div><span id="binancebadge" class="badge ok">READ ONLY</span></div>
+    <div class="metric"><span>BTCUSDT referentie</span><b id="binanceprice">—</b></div>
+    <div class="metric"><span>Interval</span><b id="binanceinterval">—</b></div>
+    <div class="metric"><span>Laatste update</span><b id="binanceupdated">—</b></div>
+    <div id="binancenote" class="sub" style="margin-top:9px">Deze feed kan geen Binance-orders plaatsen.</div>
+  </div>
+</section>
+<section class="section exchange-grid">
+  <div class="card">
+    <div class="exchange-head"><div><div class="exchange-name">Execution v2</div><div class="mini">Maker-first advies voor stale orders · profit-guard actief</div></div><span id="execv2badge" class="badge">advisory</span></div>
+    <div class="table-wrap"><table class="table compact"><thead><tr><th>Bot</th><th>Markt</th><th>Leeftijd</th><th>Limiet</th><th>Maker target</th><th>Move</th><th>Advies</th></tr></thead><tbody id="execv2rows"><tr><td colspan="7" class="sub">Execution v2 laden…</td></tr></tbody></table></div>
+    <div id="execv2note" class="sub" style="margin-top:9px">Analyseert alleen; annuleert of vervangt geen live orders.</div>
+  </div>
+  <div class="card">
+    <div class="exchange-head"><div><div class="exchange-name">50+ Market Opportunity Router</div><div class="mini">Live EUR-markten op spread, liquiditeit, momentum en volatiliteit</div></div><span id="routerbadge" class="badge ok">SCANNING</span></div>
+    <div class="order-kpis" style="grid-template-columns:repeat(4,1fr);margin-top:8px">
+      <div class="order-kpi"><div class="k">Geconfigureerd</div><div id="routerconfigured" class="v blue">—</div></div>
+      <div class="order-kpi"><div class="k">Nu gescand</div><div id="routerscanned" class="v green">—</div></div>
+      <div class="order-kpi"><div class="k">Doel scanner</div><div id="routertarget" class="v">60</div></div>
+      <div class="order-kpi"><div class="k">Fouten</div><div id="routererrors" class="v">0</div></div>
+    </div>
+    <div class="table-wrap"><table class="table compact"><thead><tr><th>Strategie</th><th>Beste markt</th><th>Score</th><th>Spread</th><th>Momentum</th><th>Liquiditeit</th></tr></thead><tbody id="routerrows"><tr><td colspan="6" class="sub">Opportunity Router laden…</td></tr></tbody></table></div>
+    <div id="routernote" class="sub" style="margin-top:9px">Read-only multi-market scan.</div>
+  </div>
+</section>
+<section class="section">
+  <div class="card">
+    <div class="exchange-head"><div><div class="exchange-name">Fee Efficiency</div><div class="mini">Netto PnL per bot na gemeten fees · fee-drag zichtbaar</div></div><span id="feebadge" class="badge">metrics</span></div>
+    <div class="table-wrap"><table class="table compact"><thead><tr><th>Bot</th><th>Markt</th><th>Netto PnL</th><th>Fees</th><th>Fee drag</th><th>Net / exit</th><th>Status</th></tr></thead><tbody id="feerows"><tr><td colspan="7" class="sub">Fee-efficiency laden…</td></tr></tbody></table></div>
+    <div id="feenote" class="sub" style="margin-top:9px">Allocator v2 gebruikt deze metrics alleen als advies; live-budgetten worden niet automatisch gewijzigd.</div>
+  </div>
+</section>
+<div class="section-title"><h3>Autonomous Control Loop</h3><div class="line"></div><span id="autonomybadge" class="badge">SET → EXECUTE → LEARN → REPEAT</span></div>
+<section class="section">
+  <div class="card">
+    <div class="exchange-head"><div><div class="exchange-name">Autonomous Decision Engine</div><div class="mini">Na operator-arm kiest het systeem zelf markt + ordergrootte binnen harde caps</div></div><span id="autonomymode" class="badge">controleren</span></div>
+    <div class="table-wrap"><table class="table compact"><thead><tr><th>Agent</th><th>Huidige markt</th><th>Gewenste markt</th><th>Score</th><th>Confidence</th><th>Order €</th><th>Switch</th><th>Reden</th></tr></thead><tbody id="autonomyrows"><tr><td colspan="8" class="sub">Autonomy laden…</td></tr></tbody></table></div>
+    <div id="autonomynote" class="sub" style="margin-top:9px">De engine kan zichzelf nooit armen en mag budget/leverage/harde risicolimieten niet verhogen.</div>
+  </div>
+</section>
+<div class="section-title"><h3>Risk Lab</h3><div class="line"></div><span class="badge">PAPER ONLY</span></div>
+<section class="section">
+  <div class="card">
+    <div class="exchange-head"><div><div class="exchange-name">Leverage + Capped Martingale Lab</div><div class="mini">Meet rendement en drawdown vóór enige aparte live-goedkeuring</div></div><span id="risklabbadge" class="badge">SHADOW RISK LAB</span></div>
+    <div class="order-kpis">
+      <div class="order-kpi"><div class="k">Leverage</div><div id="risklableverage" class="v">—</div></div>
+      <div class="order-kpi"><div class="k">Huidige inzet</div><div id="risklabstake" class="v">—</div></div>
+      <div class="order-kpi"><div class="k">Net PnL</div><div id="risklabpnl" class="v">—</div></div>
+      <div class="order-kpi"><div class="k">Max drawdown</div><div id="risklabdd" class="v">—</div></div>
+    </div>
+    <div id="risklabnote" class="sub">Deze bot kan geen live orders sturen.</div>
+  </div>
+</section>
 <div class="section-title"><h3>Shadow Alpha Lab</h3><div class="line"></div><span class="badge">NO LIVE ORDERS</span></div>
 <section class="section exchange-grid"><div class="card"><div class="exchange-head"><div><div class="exchange-name">Mean Reversion + Breakout</div><div class="mini">Live marketdata · simulated fills · fees/slippage included</div></div><span id="shadowbadge" class="badge">shadow</span></div><table class="table compact"><thead><tr><th>Bot</th><th>Markt</th><th>Trades</th><th>Winrate</th><th>Net PnL</th><th>Signaal</th><th>Live-kandidaat</th></tr></thead><tbody id="shadowrows"><tr><td colspan="7" class="sub">Shadow bots laden…</td></tr></tbody></table><div id="shadownote" class="sub" style="margin-top:10px">Deze bots mogen geen echte orders plaatsen.</div></div><div class="card"><div class="exchange-head"><div><div class="exchange-name">Strategy Allocator v2</div><div class="mini">Performance-weighted advies binnen hetzelfde totaalbudget</div></div><span id="allocatorbadge" class="badge">advisory</span></div><table class="table compact"><thead><tr><th>Strategie</th><th>Mode</th><th>Samples</th><th>Score</th><th>Basis</th><th>Advies</th></tr></thead><tbody id="allocatorrows"><tr><td colspan="6" class="sub">Allocator laden…</td></tr></tbody></table><div id="allocatornote" class="sub" style="margin-top:10px">Live allocaties worden niet automatisch gewijzigd.</div></div></section>
 <div class="section-title"><h3>Exchange connectivity & balances</h3><div class="line"></div><span class="badge live">LIVE DATA</span></div>
@@ -94,6 +161,67 @@ function renderAllocator(d){
  $('allocatorbadge').textContent=(d.mode||'advisory').toUpperCase();
  $('allocatorrows').innerHTML=rows.length?rows.map(x=>`<tr><td>${esc(x.strategy)}</td><td>${esc(x.mode)}</td><td>${esc(x.samples)}</td><td>${Number(x.score||0).toFixed(3)}</td><td>${money(x.base_allocation_eur)}</td><td><b>${money(x.recommended_allocation_eur)}</b></td></tr>`).join(''):'<tr><td colspan="6" class="sub">Geen allocatie-advies</td></tr>';
  $('allocatornote').textContent='Advisory only · totaalbudget €'+Number(d.global_budget_eur||0).toFixed(2)+' · max verschuiving '+Number(d.max_shift_pct||0).toFixed(0)+'% · live allocaties gewijzigd: '+(d.live_allocations_changed?'JA':'nee');
+}
+function renderGoal(d){
+ const p=Math.max(0,Math.min(100,Number(d.progress_pct||0)));
+ $('goalcurrent').textContent=money(d.current_equity_estimate_eur);
+ $('goaltarget').textContent=money(d.target_equity_eur);
+ $('goalprogress').textContent=p.toFixed(3)+'%';
+ $('goalnext').textContent=d.next_milestone_eur==null?'DOEL BEREIKT':money(d.next_milestone_eur);
+ $('goalbar').style.width=p+'%';
+ $('goalbadge').textContent=d.target_reached?'TARGET REACHED':'€25K TARGET';
+ $('goalbadge').className='badge '+(d.target_reached?'ok':'');
+ $('goalnote').textContent='Gezamenlijk doel · resterend '+money(d.remaining_eur)+' · doel stuurt risico niet aan · martingale: uit';
+}
+function renderBinanceReference(d){
+ $('binanceprice').textContent=d.price==null?'—':'$ '+Number(d.price).toLocaleString(undefined,{maximumFractionDigits:2});
+ $('binanceinterval').textContent=Number(d.interval_seconds||1).toFixed(0)+' sec';
+ $('binanceupdated').textContent=d.updated_at?new Date(Number(d.updated_at)*1000).toLocaleTimeString():'—';
+ $('binancebadge').textContent=d.error?'FEED ERROR':'READ ONLY';
+ $('binancebadge').className='badge '+(d.error?'':'ok');
+ $('binancenote').textContent='Bron: '+esc(d.source||'binance_public')+' · live orders verzonden: '+(d.live_orders_sent?'JA':'nee')+(d.error?' · '+d.error:'');
+}
+function renderExecutionV2(d){
+ let rows=d.orders||[];
+ $('execv2badge').textContent=(d.mode||'advisory').toUpperCase();
+ $('execv2badge').className='badge '+(d.apply_live?'live':'');
+ $('execv2rows').innerHTML=rows.length?rows.map(x=>`<tr><td><b>${esc(x.strategy)}</b></td><td>${esc(x.market)}</td><td class="mono">${Number(x.age_seconds||0).toFixed(0)}s</td><td class="mono">${money(x.current_limit_price)}</td><td class="mono">${money(x.maker_target_price)}</td><td class="mono">${Number(x.move_bps||0).toFixed(1)} bps</td><td class="${x.recommend_reprice?'green':'amber'}">${x.recommend_reprice?'HERPRIJZEN':'wachten'} · ${esc(x.reason||'')}</td></tr>`).join(''):'<tr><td colspan="7" class="sub">Geen actieve orders om te beoordelen</td></tr>';
+ $('execv2note').textContent='Maker-first advies · live wijzigen: '+(d.apply_live?'AAN':'uit')+' · orders gewijzigd: '+(d.live_orders_changed?'JA':'nee');
+}
+function renderOpportunities(d){
+ let ranks=d.rankings||{}, keys=['market_maker','grid','sniper','mean_reversion','volatility_breakout'];
+ let names={market_maker:'MarketMaker',grid:'GridRunner',sniper:'SniperBot',mean_reversion:'Mean Reversion',volatility_breakout:'Volatility Breakout'};
+ let rows=keys.map(k=>({key:k,best:(ranks[k]||[]).find(x=>x.eligible)||(ranks[k]||[])[0]})).filter(x=>x.best);
+ const scanned=Number(d.markets_scanned||0),configured=Number(d.markets_configured||0),maxm=Number(d.max_markets||60),errCount=Object.keys(d.errors||{}).length+(d.runtime_error?1:0);
+ $('routerbadge').textContent=d.live_orders_sent?'ERROR':(scanned>=50?'50+ SCANNING':'SCANNING');
+ $('routerbadge').className='badge '+(d.live_orders_sent?'':'ok');
+ $('routerconfigured').textContent=configured||'—';$('routerscanned').textContent=scanned||'—';$('routertarget').textContent=maxm;$('routererrors').textContent=errCount;
+ $('routererrors').className='v '+(errCount?'red':'green');
+ $('routerrows').innerHTML=rows.length?rows.map(x=>`<tr><td><b>${esc(names[x.key]||x.key)}</b></td><td>${esc(x.best.market)}</td><td class="mono">${Number(x.best.score||0).toFixed(1)}</td><td class="mono">${Number(x.best.spread_bps||0).toFixed(1)} bps</td><td class="mono">${Number(x.best.momentum_pct||0).toFixed(3)}%</td><td class="mono">${money(x.best.liquidity_eur)}</td></tr>`).join(''):'<tr><td colspan="6" class="sub">Nog onvoldoende router-data</td></tr>';
+ $('routernote').textContent=scanned+' van '+configured+' beschikbare EUR-markten gescand · cap '+maxm+' · auto-discovery '+(d.auto_discover_eur?'AAN':'uit')+' · live orders verzonden: '+(d.live_orders_sent?'JA':'nee')+(d.runtime_error?' · fout: '+d.runtime_error:'');
+}
+function renderFeeEfficiency(d){
+ let rows=d.rows||[];
+ $('feerows').innerHTML=rows.length?rows.map(x=>`<tr><td><b>${esc(x.strategy)}</b></td><td>${esc(x.market)}</td><td class="${Number(x.realized_net_pnl_eur||0)>=0?'green':'red'}">${money(x.realized_net_pnl_eur)}</td><td>${money(x.fees_eur)}</td><td class="${x.fee_drag_pct!=null&&Number(x.fee_drag_pct)>50?'amber':''}">${x.fee_drag_pct==null?'—':Number(x.fee_drag_pct).toFixed(1)+'%'}</td><td>${money(x.net_per_exit_eur)}</td><td>${esc(x.state||'—')}</td></tr>`).join(''):'<tr><td colspan="7" class="sub">Nog onvoldoende fill-data</td></tr>';
+ $('feenote').textContent='Fee-efficiency is meetdata · live wijzigingen: '+(d.live_changes?'JA':'nee');
+}
+function renderAutonomy(d){
+ let p=d.plan||{},rows=p.rows||[],armed=!!d.armed;
+ $('autonomymode').textContent=armed?(p.apply_live?'AUTONOMOUS LIVE':'ARMED / SHADOW PLAN'):'WACHT OP LIVE ARM';
+ $('autonomymode').className='badge '+(armed&&p.apply_live?'live':'');
+ $('autonomybadge').textContent='SET → EXECUTE → LEARN → REPEAT';
+ $('autonomyrows').innerHTML=rows.length?rows.map(x=>`<tr><td><b>${esc(x.strategy)}</b></td><td>${esc(x.current_market)}</td><td class="${x.desired_market!==x.current_market?'blue':''}">${esc(x.desired_market)}</td><td class="mono">${Number(x.market_score||0).toFixed(1)}</td><td class="mono">${(Number(x.confidence||0)*100).toFixed(1)}%</td><td class="mono">${money(x.recommended_order_eur)}</td><td class="${x.may_switch?'green':'amber'}">${x.may_switch?'JA':'nee'}</td><td>${esc(x.reason||'—')}</td></tr>`).join(''):'<tr><td colspan="8" class="sub">Nog geen autonomy-plan beschikbaar</td></tr>';
+ let rules=p.hard_rules||{};
+ $('autonomynote').textContent='Operator-arm vereist: '+(d.operator_activation_required?'ja':'nee')+' · zelf armen: '+(rules.can_arm_itself?'JA':'nee')+' · budget verhogen: '+(rules.can_raise_global_budget?'JA':'nee')+' · leverage: '+(rules.can_use_leverage?'JA':'nee')+' · martingale: '+(rules.can_use_martingale?'JA':'nee');
+}
+function renderRiskLab(d){
+ $('risklabbadge').textContent=d.live_orders_sent?'ERROR':'PAPER ONLY';
+ $('risklabbadge').className='badge '+(d.live_orders_sent?'':'ok');
+ $('risklableverage').textContent=Number(d.leverage||0).toFixed(1)+'×';
+ $('risklabstake').textContent=money(d.current_stake_eur);
+ $('risklabpnl').textContent=money(d.realized_net_pnl_eur);$('risklabpnl').className='v '+(Number(d.realized_net_pnl_eur||0)>=0?'green':'red');
+ $('risklabdd').textContent=Number(d.max_drawdown_pct||0).toFixed(2)+'%';
+ $('risklabnote').textContent='Trades '+(d.completed_trades||0)+' · winrate '+Number(d.winrate_pct||0).toFixed(1)+'% · martingale-stap max '+(d.max_martingale_steps||0)+' · live_capable: '+(d.live_capable?'JA':'nee');
 }
 function renderRisk(d){let pos=d.open_positions||d.positions||[];if(!Array.isArray(pos))pos=[];$('positions').innerHTML=pos.length?pos.map(x=>`<tr><td>${esc(x.symbol||x.market)}</td><td>${esc(x.side)}</td><td>${money(x.notional_eur??x.notional)}</td><td>${money(x.pnl_eur??x.pnl)}</td></tr>`).join(''):'<tr><td colspan="4" class="sub">Geen open posities</td></tr>'}
 function renderProfit(d){
@@ -175,7 +303,7 @@ async function deactivateLive(){
   await refreshLiveReadiness(); alert('Live Trading is gestopt. Nieuwe orders worden niet meer uitgevoerd.');
  }catch(e){alert(e.message||'Stoppen mislukt');}
 }
-async function refresh(){let now=new Date().toLocaleString();$('last').textContent='Bijwerken…';$('apierror').textContent='';let entries=await Promise.allSettled([get('/api/paper/report'),get('/api/execution/status'),get('/api/pnl/summary'),get('/api/health'),get('/api/security/bitvavo'),get('/api/risk/status'),get('/api/markets/overview'),get('/api/strategies'),get('/api/bitvavo/live-state'),get('/api/pnl/live'),get('/api/security/coinbase'),get('/api/coinbase/live-state'),get('/api/arbitrage/coinbase-bitvavo'),get('/api/shadow/strategies'),get('/api/allocator/v2'),get('/api/orders/activity?limit=100')]);let [r,e,s,h,f,k,m,a,v,p,cb,cbb,arb,sh,al,oa]=entries;let fail=(entry,label)=>{if(entry.status==='rejected')setSectionError(label,entry.reason)};if(r.status==='fulfilled')renderReport(r.value);else fail(r,'Portfolio');if(e.status==='fulfilled')renderExec(e.value);else fail(e,'Execution');if(s.status==='fulfilled')renderStrategies(s.value);else fail(s,'PnL');if(h.status==='fulfilled'){$('ticker').textContent=h.value.runtime?.ticker_running?'actief':'gestopt';$('updated').textContent=new Date().toLocaleTimeString();$('healthbar').style.width=h.value.runtime?.last_tick_error?'25%':'100%'}else fail(h,'Runtime');if(f.status==='fulfilled')renderBitvavo(f.value,e.status==='fulfilled'?e.value:{});else fail(f,'Bitvavo');if(k.status==='fulfilled')renderRisk(k.value);else fail(k,'Risk');if(m.status==='fulfilled')renderMarkets(m.value);else fail(m,'Markten');if(a.status==='fulfilled')renderAgents(a.value);else fail(a,'Agents');if(v.status==='fulfilled')renderLiveState(v.value);else fail(v,'Open orders');if(p.status==='fulfilled')renderProfit(p.value);else fail(p,'Profit supervisor');if(cb.status==='fulfilled')renderCoinbase(cb.value);else fail(cb,'Coinbase');if(cbb.status==='fulfilled')renderCoinbaseBalances(cbb.value);else fail(cbb,'Coinbase saldo');if(arb.status==='fulfilled')renderArbitrage(arb.value);else fail(arb,'Arbitrage');if(sh.status==='fulfilled')renderShadow(sh.value);else fail(sh,'Shadow bots');if(al.status==='fulfilled')renderAllocator(al.value);else fail(al,'Allocator v2');if(oa.status==='fulfilled')renderOrderActivity(oa.value);else fail(oa,'Orderhistorie');refreshLiveReadiness();$('last').textContent='Bijgewerkt '+now}
+async function refresh(){let now=new Date().toLocaleString();$('last').textContent='Bijwerken…';$('apierror').textContent='';let entries=await Promise.allSettled([get('/api/paper/report'),get('/api/execution/status'),get('/api/pnl/summary'),get('/api/health'),get('/api/security/bitvavo'),get('/api/risk/status'),get('/api/markets/overview'),get('/api/strategies'),get('/api/bitvavo/live-state'),get('/api/pnl/live'),get('/api/security/coinbase'),get('/api/coinbase/live-state'),get('/api/arbitrage/coinbase-bitvavo'),get('/api/shadow/strategies'),get('/api/allocator/v2'),get('/api/orders/activity?limit=100'),get('/api/optimization/execution-v2'),get('/api/optimization/opportunities'),get('/api/optimization/fee-efficiency'),get('/api/goals/portfolio'),get('/api/reference/binance-btc'),get('/api/autonomy/status'),get('/api/risk-lab/leverage-martingale')]);let [r,e,s,h,f,k,m,a,v,p,cb,cbb,arb,sh,al,oa,ev2,op,fe,goal,bref,auto,rl]=entries;let fail=(entry,label)=>{if(entry.status==='rejected')setSectionError(label,entry.reason)};if(r.status==='fulfilled')renderReport(r.value);else fail(r,'Portfolio');if(e.status==='fulfilled')renderExec(e.value);else fail(e,'Execution');if(s.status==='fulfilled')renderStrategies(s.value);else fail(s,'PnL');if(h.status==='fulfilled'){$('ticker').textContent=h.value.runtime?.ticker_running?'actief':'gestopt';$('updated').textContent=new Date().toLocaleTimeString();$('healthbar').style.width=h.value.runtime?.last_tick_error?'25%':'100%'}else fail(h,'Runtime');if(f.status==='fulfilled')renderBitvavo(f.value,e.status==='fulfilled'?e.value:{});else fail(f,'Bitvavo');if(k.status==='fulfilled')renderRisk(k.value);else fail(k,'Risk');if(m.status==='fulfilled')renderMarkets(m.value);else fail(m,'Markten');if(a.status==='fulfilled')renderAgents(a.value);else fail(a,'Agents');if(v.status==='fulfilled')renderLiveState(v.value);else fail(v,'Open orders');if(p.status==='fulfilled')renderProfit(p.value);else fail(p,'Profit supervisor');if(cb.status==='fulfilled')renderCoinbase(cb.value);else fail(cb,'Coinbase');if(cbb.status==='fulfilled')renderCoinbaseBalances(cbb.value);else fail(cbb,'Coinbase saldo');if(arb.status==='fulfilled')renderArbitrage(arb.value);else fail(arb,'Arbitrage');if(sh.status==='fulfilled')renderShadow(sh.value);else fail(sh,'Shadow bots');if(al.status==='fulfilled')renderAllocator(al.value);else fail(al,'Allocator v2');if(oa.status==='fulfilled')renderOrderActivity(oa.value);else fail(oa,'Orderhistorie');if(ev2.status==='fulfilled')renderExecutionV2(ev2.value);else fail(ev2,'Execution v2');if(op.status==='fulfilled')renderOpportunities(op.value);else fail(op,'Opportunity Router');if(fe.status==='fulfilled')renderFeeEfficiency(fe.value);else fail(fe,'Fee Efficiency');if(goal.status==='fulfilled')renderGoal(goal.value);else fail(goal,'€25k doel');if(bref.status==='fulfilled')renderBinanceReference(bref.value);else fail(bref,'Binance reference');if(auto.status==='fulfilled')renderAutonomy(auto.value);else fail(auto,'Autonomy');if(rl.status==='fulfilled')renderRiskLab(rl.value);else fail(rl,'Risk Lab');refreshLiveReadiness();$('last').textContent='Bijgewerkt '+now}
 function connect(){try{let scheme=location.protocol==='https:'?'wss':'ws';let credential=apiKey||token;if(!credential){$('socket').textContent='auth vereist';return}socket=new WebSocket(`${scheme}://${location.host}/ws/paper`,['at-v1',credential]);socket.onopen=()=>{$('socket').textContent='verbonden';$('socket').className='green'};socket.onmessage=e=>{try{if(($('mode').textContent||'').toLowerCase()!=='live')renderReport(JSON.parse(e.data))}catch(_){}};socket.onclose=()=>{$('socket').textContent='herstellen…';setTimeout(connect,4000)}}catch(_){$('socket').textContent='niet beschikbaar'}}
 if(token||apiKey){$('login').classList.add('hidden');$('app').classList.remove('hidden');refresh();connect()}
 setInterval(()=>{if(!$('app').classList.contains('hidden'))refresh()},5000);

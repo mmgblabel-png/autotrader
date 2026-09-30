@@ -194,3 +194,26 @@ def test_dashboard_contains_shadow_lab_and_allocator():
     assert "/api/orders/activity?limit=100" in html
     assert 'id="orderactivity"' in html
     assert "setInterval(()=>{if(!$('app').classList.contains('hidden'))refresh()},5000)" in html
+    assert "Profit Optimization v2" in html
+    assert "/api/optimization/execution-v2" in html
+    assert "/api/optimization/opportunities" in html
+    assert "/api/optimization/fee-efficiency" in html
+    assert 'id="execv2rows"' in html
+    assert 'id="routerrows"' in html
+    assert 'id="feerows"' in html
+    assert "Gezamenlijk botdoel" in html
+    assert "€25K TARGET" in html
+    assert "/api/goals/portfolio" in html
+    assert "/api/reference/binance-btc" in html
+    assert 'id="goalbar"' in html
+    assert 'id="binanceprice"' in html
+    assert "Autonomous Control Loop" in html
+    assert "SET → EXECUTE → LEARN → REPEAT" in html
+    assert "/api/autonomy/status" in html
+    assert 'id="autonomyrows"' in html
+    assert "50+ Market Opportunity Router" in html
+    assert 'id="routerconfigured"' in html
+    assert 'id="routerscanned"' in html
+    assert "/api/risk-lab/leverage-martingale" in html
+    assert "Leverage + Capped Martingale Lab" in html
+    assert 'id="risklabpnl"' in html

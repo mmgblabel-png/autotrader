@@ -37,6 +37,7 @@ _TUNABLES: dict[str, Tunable] = {
     "SniperBot": Tunable("momentum_pct", 0.50, 1.50, 1.05, 0.98),
     "MeanReversionShadow": Tunable("entry_z", 1.40, 3.00, 1.06, 0.99),
     "VolatilityBreakoutShadow": Tunable("breakout_buffer_pct", 0.08, 0.60, 1.06, 0.99),
+    "SniperV2Shadow": Tunable("momentum_pct", 0.15, 0.80, 1.05, 0.99),
 }
 
 

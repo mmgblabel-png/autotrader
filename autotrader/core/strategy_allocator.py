@@ -44,11 +44,21 @@ class StrategyAllocator:
         self.max_total_open_orders = max(1, int(portfolio.get("max_total_open_orders", 4)))
         self._allocations: dict[str, StrategyAllocation] = {}
 
+        autonomous_markets = (
+            (config.get("autonomous_execution", {}) or {}).get("strategy_markets", {}) or {}
+        )
         for key, raw in (config.get("strategies", {}) or {}).items():
             name = self._NAME_MAP.get(key, key)
             cfg = raw or {}
             symbol = str(cfg.get("symbol", "")).upper().strip()
-            symbols = frozenset({symbol}) if symbol else frozenset()
+            allowed = [
+                str(x).upper().strip()
+                for x in (autonomous_markets.get(key) or [])
+                if str(x).strip()
+            ]
+            if symbol and symbol not in allowed:
+                allowed.append(symbol)
+            symbols = frozenset(allowed or ([symbol] if symbol else []))
             self._allocations[name] = StrategyAllocation(
                 allocation_eur=Decimal(str(cfg.get("allocation_eur", "0"))),
                 max_order_eur=Decimal(str(cfg.get("max_order_eur", "10"))),
