@@ -111,7 +111,7 @@ class StrategyAllocatorV2:
                 "fee_drag_pct": round(float(fee_drag), 2) if fee_drag is not None else None,
                 "reason": reason,
             })
-            if enabled and base > 0:
+            if enabled and base > 0 and mode == "live":
                 raw_weights[key] = recommended
 
         total_raw = sum(raw_weights.values())
@@ -126,7 +126,10 @@ class StrategyAllocatorV2:
         scale = min(1.0, target_budget / total_raw) if total_raw > 0 else 1.0
         for row in rows:
             value = float(row.pop("pre_normalized_eur", 0.0))
-            row["recommended_allocation_eur"] = round(value * scale, 2)
+            row["recommended_allocation_eur"] = round(
+                value * scale if row.get("mode") == "live" else value,
+                2,
+            )
 
         return {
             "enabled": self.enabled,
