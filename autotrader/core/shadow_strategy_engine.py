@@ -255,7 +255,7 @@ class ShadowStrategyEngine:
         recent_move = statistics.fmean(returns[-5:]) if len(returns) >= 5 else avg_move
         expansion_ratio = recent_move / avg_move if avg_move > 1e-9 else 0.0
         min_vol = float(cfg.get("min_avg_move_pct", 0.03))
-        min_expansion = float(cfg.get("min_vol_expansion_ratio", 1.08))
+        min_expansion = float(cfg.get("min_vol_expansion_ratio", 0.0))
         max_entry_spike = float(cfg.get("max_entry_spike_pct", 1.25))
         take_profit = float(cfg.get("take_profit_pct", 1.5))
         stop_loss = float(cfg.get("stop_loss_pct", 0.75))
@@ -292,7 +292,7 @@ class ShadowStrategyEngine:
     def _sniper_v2(self, state: ShadowStats, price: float, cfg: dict[str, Any]) -> None:
         fast = max(3, int(cfg.get("ema_fast", 6)))
         slow = max(fast + 2, int(cfg.get("ema_slow", 18)))
-        if len(state.prices) < slow + 3:
+        if len(state.prices) < slow + 1:
             state.last_signal = "warming_up"
             return
 
