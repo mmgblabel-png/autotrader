@@ -124,6 +124,31 @@ calculated_risk:
   allow_martingale: false
   allow_budget_increase: false
 
+autonomous_execution:
+  enabled: true
+  apply_live: true
+  min_score: 68.0
+  min_confidence: 0.62
+  switch_cooldown_seconds: 300
+  strategy_markets:
+    market_maker:
+      - BTC-EUR
+    grid:
+      - SOL-EUR
+      - ETH-EUR
+      - ADA-EUR
+      - LINK-EUR
+    sniper:
+      - XRP-EUR
+      - SOL-EUR
+      - ADA-EUR
+      - LINK-EUR
+  can_arm_itself: false
+  can_raise_global_budget: false
+  can_raise_hard_risk_limits: false
+  allow_leverage: false
+  allow_martingale: false
+
 opportunity_router:
   enabled: true
   interval_seconds: 15
