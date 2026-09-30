@@ -51,3 +51,38 @@ def test_security_check_fails_closed_without_operator_confirmations(monkeypatch)
     assert report["passed"] is False
     assert report["credentials_present"] is False
     adapter.journal.close()
+
+
+def test_recent_order_activity_is_complete_and_redacted(tmp_path: Path):
+    journal = OrderJournal(str(tmp_path / "orders.sqlite3"))
+    journal.record_intent(
+        client_order_id="private-client-order-id",
+        market="SOL-EUR",
+        side="sell",
+        order_type="limit",
+        amount="0.05",
+        price="100",
+    )
+    journal.set_strategy("private-client-order-id", "GridRunner")
+    journal.update(
+        "private-client-order-id",
+        "filled",
+        {"orderId": "private-exchange-order-id"},
+        exchange_order_id="private-exchange-order-id",
+    )
+    journal.record_fill(
+        "private-client-order-id",
+        {"fillId": "private-fill-id", "amount": "0.05", "price": "100", "fee": "0.01"},
+    )
+    rows = journal.recent_order_activity(limit=10)
+    assert len(rows) == 1
+    row = rows[0]
+    assert row["market"] == "SOL-EUR"
+    assert row["strategy"] == "GridRunner"
+    assert row["status"] == "filled"
+    assert row["fill_count"] == 1
+    assert float(row["filled_amount"]) == 0.05
+    assert "client_order_id" not in row
+    assert "exchange_order_id" not in row
+    assert "raw_json" not in row
+    journal.close()
