@@ -177,6 +177,40 @@ class OrderJournal:
             ).fetchall()
         return [dict(row) for row in rows]
 
+    def recent_order_activity(self, limit: int = 100) -> list[dict[str, Any]]:
+        """Return privacy-safe recent order history with aggregate fill details.
+
+        Exchange/client order identifiers and raw payloads are deliberately omitted.
+        """
+        safe_limit = max(1, min(int(limit), 250))
+        with self._lock:
+            rows = self._db.execute(
+                """
+                SELECT
+                    o.market,
+                    o.side,
+                    o.order_type,
+                    o.amount,
+                    o.price,
+                    o.status,
+                    o.strategy,
+                    o.created_at,
+                    o.updated_at,
+                    o.last_error,
+                    COUNT(f.fill_key) AS fill_count,
+                    COALESCE(SUM(CAST(NULLIF(f.amount,'') AS REAL)), 0) AS filled_amount,
+                    COALESCE(SUM(CAST(NULLIF(f.fee,'') AS REAL)), 0) AS fee_total,
+                    MAX(f.observed_at) AS last_fill_at
+                FROM orders AS o
+                LEFT JOIN fills AS f ON f.client_order_id=o.client_order_id
+                GROUP BY o.client_order_id
+                ORDER BY o.created_at DESC
+                LIMIT ?
+                """,
+                (safe_limit,),
+            ).fetchall()
+        return [dict(row) for row in rows]
+
     def inflight(self) -> list[dict[str, Any]]:
         with self._lock:
             rows = self._db.execute("SELECT * FROM orders WHERE status NOT IN ('filled','canceled','cancelled','rejected','error','expired','shadow','blocked') ORDER BY created_at").fetchall()
