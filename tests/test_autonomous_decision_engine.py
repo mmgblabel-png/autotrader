@@ -39,6 +39,9 @@ class FakeStrategy:
             "allocation_eur": allocation,
             "max_order_eur": max_order,
             "order_value_eur": order_value,
+            "exit_markup_pct": 0.80,
+            "take_profit_pct": 0.80,
+            "cycle_exit_markup_pct": 0.80,
         }
 
 
