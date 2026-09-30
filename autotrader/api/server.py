@@ -60,6 +60,11 @@ from autotrader.core.live_preflight import validate_bitvavo_live_strategies
 from autotrader.core.market_feed import BitpandaFusionMarketFeed
 from autotrader.core.shadow_strategy_engine import ShadowStrategyEngine
 from autotrader.core.strategy_allocator_v2 import StrategyAllocatorV2
+from autotrader.core.profit_optimization import (
+    ExecutionV2Advisor,
+    OpportunityRouter,
+    fee_efficiency_rows,
+)
 from autotrader.connectors.bitvavo import BitvavoAdapter
 from autotrader.connectors.coinbase_advanced import CoinbaseAdvancedMarketData, CoinbaseMarketDataError
 from autotrader.connectors.bitpanda_fusion import BitpandaFusionAdapter
@@ -333,6 +338,18 @@ async def _shadow_strategy_loop(app: FastAPI, agent: AutoTrader) -> None:
         await asyncio.sleep(app.state.shadow_strategy_interval_seconds)
 
 
+async def _opportunity_router_loop(app: FastAPI) -> None:
+    """Refresh read-only multi-market rankings; never submits orders."""
+    while True:
+        try:
+            await asyncio.to_thread(app.state.opportunity_router.refresh)
+            app.state.opportunity_router_error = None
+        except Exception as exc:
+            app.state.opportunity_router_error = type(exc).__name__
+            log.warning("Opportunity router refresh failed: %s", type(exc).__name__)
+        await asyncio.sleep(app.state.opportunity_router_interval_seconds)
+
+
 async def _arbitrage_shadow_loop(app: FastAPI) -> None:
     """Continuously refresh read-only Coinbase↔Bitvavo shadow opportunities."""
     while True:
@@ -426,6 +443,17 @@ async def _lifespan(app: FastAPI):
     app.state.shadow_strategy_last_at = 0.0
     app.state.shadow_strategy_error = None
     app.state.allocator_v2 = StrategyAllocatorV2(agent._config.get("allocator_v2", {}) or {})
+    router_cfg = agent._config.get("opportunity_router", {}) or {}
+    app.state.opportunity_router = OpportunityRouter(agent._bitvavo, router_cfg)
+    try:
+        app.state.opportunity_router_interval_seconds = max(
+            10.0,
+            float(router_cfg.get("interval_seconds", 15.0)),
+        )
+    except (TypeError, ValueError):
+        app.state.opportunity_router_interval_seconds = 15.0
+    app.state.opportunity_router_error = None
+    app.state.execution_v2_advisor = ExecutionV2Advisor(agent._config.get("execution_v2", {}) or {})
 
     if os.getenv("COINBASE_API_KEY", "").strip() and os.getenv("COINBASE_API_SECRET", "").strip():
         try:
@@ -461,6 +489,9 @@ async def _lifespan(app: FastAPI):
     app.state.shadow_strategy_task = asyncio.create_task(
         _shadow_strategy_loop(app, agent), name="autotrader-shadow-strategy-loop"
     )
+    app.state.opportunity_router_task = asyncio.create_task(
+        _opportunity_router_loop(app), name="autotrader-opportunity-router-loop"
+    )
     log.info(
         "AutoTrader agent initialised from '%s' (mode=%s tick=%.3fs live_sync=%.3fs journal_reconcile=%.3fs).",
         _CONFIG_PATH,
@@ -477,12 +508,15 @@ async def _lifespan(app: FastAPI):
         app.state.tick_task.cancel()
         app.state.arbitrage_shadow_task.cancel()
         app.state.shadow_strategy_task.cancel()
+        app.state.opportunity_router_task.cancel()
         with contextlib.suppress(asyncio.CancelledError):
             await app.state.tick_task
         with contextlib.suppress(asyncio.CancelledError):
             await app.state.arbitrage_shadow_task
         with contextlib.suppress(asyncio.CancelledError):
             await app.state.shadow_strategy_task
+        with contextlib.suppress(asyncio.CancelledError):
+            await app.state.opportunity_router_task
         agent.stop()
         log.info("AutoTrader agent stopped.")
 
