@@ -201,3 +201,9 @@ def test_dashboard_contains_shadow_lab_and_allocator():
     assert 'id="execv2rows"' in html
     assert 'id="routerrows"' in html
     assert 'id="feerows"' in html
+    assert "Gezamenlijk botdoel" in html
+    assert "€25K TARGET" in html
+    assert "/api/goals/portfolio" in html
+    assert "/api/reference/binance-btc" in html
+    assert 'id="goalbar"' in html
+    assert 'id="binanceprice"' in html
