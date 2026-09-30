@@ -13,7 +13,10 @@ import tempfile
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import Any, TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from autotrader.core.adaptive_learning import AdaptiveLearning
 
 
 @dataclass
@@ -31,6 +34,7 @@ class ShadowStats:
     last_signal: str = "warming_up"
     last_trade_at: float = 0.0
     outcomes: list[float] = field(default_factory=list)
+    strategy_version: str = "v1"
 
     def as_dict(self) -> dict[str, Any]:
         return {
@@ -47,14 +51,20 @@ class ShadowStats:
             "last_signal": self.last_signal,
             "last_trade_at": self.last_trade_at,
             "outcomes": self.outcomes[-100:],
+            "strategy_version": self.strategy_version,
         }
 
 
 class ShadowStrategyEngine:
     """Run candidate strategies in a persistent no-order shadow account."""
 
-    def __init__(self, config: dict[str, Any] | None = None) -> None:
+    def __init__(
+        self,
+        config: dict[str, Any] | None = None,
+        learner: "AdaptiveLearning | None" = None,
+    ) -> None:
         self.config = config or {}
+        self.learner = learner
         self.path = Path(str(self.config.get("path", "/data/shadow_strategies.json")))
         self.fee_pct = float(self.config.get("fee_pct_each_leg", 0.25))
         self.slippage_pct = float(self.config.get("slippage_pct_each_leg", 0.05))
@@ -91,6 +101,25 @@ class ShadowStrategyEngine:
     def _state(self, name: str) -> ShadowStats:
         return self._states.setdefault(name, ShadowStats())
 
+    @staticmethod
+    def _learner_name(name: str) -> str:
+        return {
+            "mean_reversion": "MeanReversionShadow",
+            "volatility_breakout": "VolatilityBreakoutShadow",
+        }.get(name, name)
+
+    def _ensure_version(self, name: str, cfg: dict[str, Any]) -> ShadowStats:
+        state = self._state(name)
+        version = str(cfg.get("strategy_version", "v1"))
+        if state.strategy_version == version:
+            return state
+        self._states[name] = ShadowStats(
+            prices=state.prices[-240:],
+            strategy_version=version,
+            last_signal=f"version_reset_{version}",
+        )
+        return self._states[name]
+
     @property
     def round_trip_cost_pct(self) -> float:
         return 2.0 * (self.fee_pct + self.slippage_pct)
@@ -98,14 +127,27 @@ class ShadowStrategyEngine:
     def update(self, name: str, price: float, cfg: dict[str, Any]) -> None:
         if price <= 0 or not math.isfinite(price):
             return
-        state = self._state(name)
+        state = self._ensure_version(name, cfg)
+        learner_name = self._learner_name(name)
+        if self.learner is not None:
+            self.learner.apply_overrides(learner_name, cfg)
         state.prices.append(float(price))
         state.prices = state.prices[-240:]
+        before_trades = state.completed_trades
         kind = str(cfg.get("kind", name)).lower()
         if kind == "mean_reversion":
             self._mean_reversion(state, price, cfg)
         elif kind == "volatility_breakout":
             self._volatility_breakout(state, price, cfg)
+        if self.learner is not None and state.completed_trades > before_trades and state.outcomes:
+            self.learner.record_realized_outcome(
+                strategy_name=learner_name,
+                side="SELL",
+                net_pnl_delta_eur=float(state.outcomes[-1]),
+                strategy_config=cfg,
+                symbol=str(cfg.get("symbol", "")),
+                outcome_key=f"shadow:{name}:{state.strategy_version}:{state.completed_trades}",
+            )
         self._save()
 
     def _buy(self, state: ShadowStats, price: float, cfg: dict[str, Any], signal: str) -> None:
@@ -148,7 +190,7 @@ class ShadowStrategyEngine:
         state.last_trade_at = time.time()
 
     def _mean_reversion(self, state: ShadowStats, price: float, cfg: dict[str, Any]) -> None:
-        lookback = max(8, int(cfg.get("lookback", 30)))
+        lookback = max(12, int(cfg.get("lookback", 40)))
         if len(state.prices) < lookback:
             state.last_signal = "warming_up"
             return
@@ -156,24 +198,43 @@ class ShadowStrategyEngine:
         mean = statistics.fmean(window)
         stdev = statistics.pstdev(window)
         z = (price - mean) / stdev if stdev > 1e-12 else 0.0
-        entry_z = -abs(float(cfg.get("entry_z", 1.6)))
-        exit_z = float(cfg.get("exit_z", -0.15))
-        take_profit = float(cfg.get("take_profit_pct", 1.2))
-        stop_loss = float(cfg.get("stop_loss_pct", 1.0))
+        entry_z = -abs(float(cfg.get("entry_z", 2.0)))
+        exit_z = float(cfg.get("exit_z", -0.05))
+        take_profit = float(cfg.get("take_profit_pct", 1.35))
+        stop_loss = float(cfg.get("stop_loss_pct", 1.20))
+        rebound_pct = max(0.0, float(cfg.get("entry_rebound_pct", 0.08)))
+        max_downtrend_pct = max(0.0, float(cfg.get("max_downtrend_pct", 1.20)))
+        min_exit_net_pct = max(
+            self.round_trip_cost_pct + 0.15,
+            float(cfg.get("min_exit_net_pct", 0.75)),
+        )
+        previous = state.prices[-2] if len(state.prices) >= 2 else price
+        rebound = (price / previous - 1) * 100 if previous > 0 else 0.0
+        segment = max(4, min(8, lookback // 4))
+        early_mean = statistics.fmean(window[:segment])
+        late_mean = statistics.fmean(window[-segment:])
+        trend_pct = (late_mean / early_mean - 1) * 100 if early_mean > 0 else 0.0
+
         if state.position_qty <= 0:
-            if z <= entry_z:
-                self._buy(state, price, cfg, f"buy_z_{z:.2f}")
+            if z <= entry_z and rebound >= rebound_pct and trend_pct >= -max_downtrend_pct:
+                self._buy(state, price, cfg, f"buy_z_{z:.2f}_rebound_{rebound:.2f}")
+            elif z <= entry_z and trend_pct < -max_downtrend_pct:
+                state.last_signal = f"skip_downtrend_{trend_pct:.2f}%"
+            elif z <= entry_z:
+                state.last_signal = f"wait_rebound_{rebound:.2f}%"
             else:
                 state.last_signal = f"wait_z_{z:.2f}"
             return
+
         move = (price / state.entry_price - 1) * 100
-        if z >= exit_z or move >= take_profit:
+        if move >= take_profit:
+            self._sell(state, price, "take_profit")
+        elif z >= exit_z and move >= min_exit_net_pct:
             self._sell(state, price, f"mean_exit_{z:.2f}")
         elif move <= -stop_loss:
             self._sell(state, price, "stop_loss")
         else:
-            state.last_signal = f"hold_{move:.2f}%"
-
+            state.last_signal = f"hold_{move:.2f}%_z_{z:.2f}"
     def _volatility_breakout(self, state: ShadowStats, price: float, cfg: dict[str, Any]) -> None:
         lookback = max(10, int(cfg.get("lookback", 24)))
         if len(state.prices) <= lookback:
@@ -213,6 +274,8 @@ class ShadowStrategyEngine:
 
     def status(self, configs: dict[str, dict[str, Any]]) -> dict[str, Any]:
         rows = []
+        learning = self.learner.snapshot() if self.learner is not None else {}
+        learned_states = learning.get("strategies", {}) if isinstance(learning, dict) else {}
         for name, cfg in configs.items():
             state = self._state(name)
             trades = state.completed_trades
@@ -240,6 +303,11 @@ class ShadowStrategyEngine:
                 "realized_net_pnl_eur": round(state.realized_net_pnl_eur, 4),
                 "max_drawdown_pct": round(max_dd_pct, 2),
                 "last_signal": state.last_signal,
+                "strategy_version": state.strategy_version,
+                "adaptive_overrides": (
+                    learned_states.get(self._learner_name(name), {}).get("current_overrides", {})
+                    if isinstance(learned_states.get(self._learner_name(name), {}), dict) else {}
+                ),
                 "promotable": promotable,
             })
         return {

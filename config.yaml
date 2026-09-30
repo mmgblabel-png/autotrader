@@ -30,17 +30,22 @@ shadow_lab:
     mean_reversion:
       enabled: true
       kind: mean_reversion
+      strategy_version: v2
       symbol: ETH-EUR
       exchange: bitvavo
       shadow_order_eur: 6.0
-      lookback: 30
-      entry_z: 1.6
-      exit_z: -0.15
-      take_profit_pct: 1.2
-      stop_loss_pct: 1.0
+      lookback: 40
+      entry_z: 2.0
+      entry_rebound_pct: 0.08
+      max_downtrend_pct: 1.20
+      exit_z: -0.05
+      min_exit_net_pct: 0.75
+      take_profit_pct: 1.35
+      stop_loss_pct: 1.20
     volatility_breakout:
       enabled: true
       kind: volatility_breakout
+      strategy_version: v1
       symbol: ADA-EUR
       exchange: bitvavo
       shadow_order_eur: 6.0
