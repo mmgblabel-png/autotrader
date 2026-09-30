@@ -287,9 +287,14 @@ async def _tick_loop(app: FastAPI, agent: AutoTrader) -> None:
                         }
                         log.warning("Autonomous decision cycle failed safely: %s", type(auto_exc).__name__)
                 running_markets = _running_bitvavo_markets(agent)
-                sync_due = (
-                    bool(running_markets)
-                    and app.state.tick_count % app.state.live_sync_every_ticks == 0
+                market_switch_pending = any(
+                    bool(strategy._config.get("_market_switch_pending", False))
+                    for strategy in agent._strategies.values()
+                    if strategy.is_running
+                )
+                sync_due = bool(running_markets) and (
+                    market_switch_pending
+                    or app.state.tick_count % app.state.live_sync_every_ticks == 0
                 )
                 journal_reconcile_due = (
                     bool(agent._bitvavo.journal.inflight())
@@ -324,6 +329,14 @@ async def _tick_loop(app: FastAPI, agent: AutoTrader) -> None:
                     except Exception as orders_exc:
                         app.state.bitvavo_open_orders_snapshot_ready = False
                         log.warning("Bitvavo open-orders refresh failed: %s", orders_exc)
+                    if (
+                        market_switch_pending
+                        and bool(getattr(app.state, "bitvavo_balance_snapshot_ready", False))
+                        and bool(getattr(app.state, "bitvavo_open_orders_snapshot_ready", False))
+                    ):
+                        for strategy in agent._strategies.values():
+                            if strategy.is_running:
+                                strategy._config["_market_switch_pending"] = False
                 for strategy in agent._strategies.values():
                     if strategy.is_running and strategy._config.get("exchange", "bitvavo").lower() == "bitvavo":
                         symbol = str(strategy._config.get("symbol", "BTC-EUR")).upper()
