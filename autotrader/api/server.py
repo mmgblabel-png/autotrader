@@ -68,6 +68,7 @@ from autotrader.core.profit_optimization import (
     PortfolioGoalTracker,
     fee_efficiency_rows,
 )
+from autotrader.core.autonomous_decision_engine import AutonomousDecisionEngine
 from autotrader.connectors.bitvavo import BitvavoAdapter
 from autotrader.connectors.coinbase_advanced import CoinbaseAdvancedMarketData, CoinbaseMarketDataError
 from autotrader.connectors.bitpanda_fusion import BitpandaFusionAdapter
@@ -211,6 +212,35 @@ def _running_bitvavo_markets(agent: AutoTrader) -> list[str]:
     })
 
 
+def _calculated_risk_payload(agent: AutoTrader) -> dict[str, object]:
+    opp_payload = app.state.opportunity_router.rankings()
+    live_rows = _live_profit_snapshots(agent)
+    fee_rows = fee_efficiency_rows(live_rows).get("rows", [])
+    display = {
+        "market_maker": "MarketMaker",
+        "grid": "GridRunner",
+        "sniper": "SniperBot",
+    }
+    opportunities = []
+    for key, name in display.items():
+        ranked = opp_payload.get("rankings", {}).get(key, [])
+        best = next((x for x in ranked if x.get("eligible")), ranked[0] if ranked else None)
+        if best:
+            opportunities.append({"strategy": name, **best})
+    base_allocations = {}
+    max_order = {}
+    for strategy in agent._strategies.values():
+        base_allocations[strategy.name] = float(strategy._config.get("allocation_eur", 0.0) or 0.0)
+        max_order[strategy.name] = float(strategy._config.get("max_order_eur", 0.0) or 0.0)
+    return app.state.calculated_risk.recommend(
+        opportunities,
+        fee_rows,
+        live_rows,
+        base_allocations,
+        max_order,
+    )
+
+
 async def _tick_loop(app: FastAPI, agent: AutoTrader) -> None:
     """Drive all active strategies for the lifetime of the API process.
 
@@ -221,6 +251,28 @@ async def _tick_loop(app: FastAPI, agent: AutoTrader) -> None:
     while True:
         try:
             if app.state.live_mode:
+                if getattr(app.state, "autonomous_decision_engine", None) is not None:
+                    try:
+                        risk_payload = _calculated_risk_payload(agent)
+                        plan = app.state.autonomous_decision_engine.plan(
+                            agent=agent,
+                            router_payload=app.state.opportunity_router.rankings(),
+                            risk_payload=risk_payload,
+                            armed=bool(getattr(app.state, "live_armed", False)),
+                        )
+                        app.state.autonomous_plan = plan
+                        app.state.autonomous_apply = app.state.autonomous_decision_engine.apply(
+                            agent=agent,
+                            plan=plan,
+                            armed=bool(getattr(app.state, "live_armed", False)),
+                        )
+                    except Exception as auto_exc:
+                        app.state.autonomous_apply = {
+                            "applied": False,
+                            "reason": type(auto_exc).__name__,
+                            "changes": [],
+                        }
+                        log.warning("Autonomous decision cycle failed safely: %s", type(auto_exc).__name__)
                 running_markets = _running_bitvavo_markets(agent)
                 sync_due = (
                     bool(running_markets)
@@ -467,6 +519,17 @@ async def _lifespan(app: FastAPI):
     app.state.portfolio_goal = PortfolioGoalTracker(agent._config.get("portfolio_goal", {}) or {})
     app.state.binance_reference = BinanceReferenceFeed(agent._config.get("binance_reference", {}) or {})
     app.state.calculated_risk = CalculatedRiskSizer(agent._config.get("calculated_risk", {}) or {})
+    app.state.autonomous_decision_engine = AutonomousDecisionEngine(
+        agent._config.get("autonomous_execution", {}) or {}
+    )
+    app.state.autonomous_plan = {
+        "enabled": app.state.autonomous_decision_engine.enabled,
+        "apply_live": app.state.autonomous_decision_engine.apply_live,
+        "armed": False,
+        "mode": "shadow_plan",
+        "rows": [],
+    }
+    app.state.autonomous_apply = {"applied": False, "reason": "startup", "changes": []}
 
     if os.getenv("COINBASE_API_KEY", "").strip() and os.getenv("COINBASE_API_SECRET", "").strip():
         try:
@@ -1181,34 +1244,17 @@ def optimization_fee_efficiency() -> dict[str, object]:
 
 @app.get("/api/optimization/calculated-risk", tags=["optimization"])
 def optimization_calculated_risk() -> dict[str, object]:
-    agent = get_agent()
-    opp_payload = app.state.opportunity_router.rankings()
-    live_rows = _live_profit_snapshots(agent)
-    fee_rows = fee_efficiency_rows(live_rows).get("rows", [])
-    display = {
-        "market_maker": "MarketMaker",
-        "grid": "GridRunner",
-        "sniper": "SniperBot",
+    return _calculated_risk_payload(get_agent())
+
+
+@app.get("/api/autonomy/status", tags=["optimization"])
+def autonomy_status() -> dict[str, object]:
+    return {
+        "plan": getattr(app.state, "autonomous_plan", {}),
+        "last_apply": getattr(app.state, "autonomous_apply", {}),
+        "operator_activation_required": True,
+        "armed": bool(getattr(app.state, "live_armed", False)),
     }
-    opportunities = []
-    for key, name in display.items():
-        ranked = opp_payload.get("rankings", {}).get(key, [])
-        best = next((x for x in ranked if x.get("eligible")), ranked[0] if ranked else None)
-        if not best:
-            continue
-        opportunities.append({"strategy": name, **best})
-    base_allocations = {}
-    max_order = {}
-    for key, strategy in agent._strategies.items():
-        base_allocations[strategy.name] = float(strategy._config.get("allocation_eur", 0.0) or 0.0)
-        max_order[strategy.name] = float(strategy._config.get("max_order_eur", 0.0) or 0.0)
-    return app.state.calculated_risk.recommend(
-        opportunities,
-        fee_rows,
-        live_rows,
-        base_allocations,
-        max_order,
-    )
 
 
 @app.get("/api/optimization/execution-v2", tags=["optimization"])
