@@ -27,11 +27,25 @@ class FakeJournal:
         return {"nonterminal_count": int(self.nonterminal.get((market, strategy), 0))}
 
 
+class FakeBitvavo:
+    def __init__(self, journal):
+        self.journal = journal
+
+    def markets(self, market):
+        return [{
+            "market": market,
+            "status": "trading",
+            "orderTypes": ["limit", "market"],
+            "minOrderInQuoteAsset": "5",
+        }]
+
+
 class FakeStrategy:
     def __init__(self, name, symbol, allocation, max_order, order_value=6.0):
         self.name = name
         self.is_enabled = True
         self.is_running = True
+        self.switched = []
         self._config = {
             "enabled": True,
             "symbol": symbol,
@@ -44,6 +58,11 @@ class FakeStrategy:
             "cycle_exit_markup_pct": 0.80,
         }
 
+    def on_market_switch(self, old_market, new_market):
+        self.switched.append((old_market, new_market))
+        self._config["_current_price"] = 0.0
+        self._config["_live_balance_snapshot_ready"] = False
+
 
 def _agent(*, inventory=None, nonterminal=None, open_by_strategy=None):
     strategies = {
@@ -54,7 +73,7 @@ def _agent(*, inventory=None, nonterminal=None, open_by_strategy=None):
     return SimpleNamespace(
         _strategies=strategies,
         _om=FakeOM(open_by_strategy),
-        _bitvavo=SimpleNamespace(journal=FakeJournal(inventory, nonterminal)),
+        _bitvavo=FakeBitvavo(FakeJournal(inventory, nonterminal)),
     )
 
 
@@ -212,3 +231,50 @@ def test_max_size_requires_profit_gate_and_high_confidence():
     assert row["profit_gate"] is False
     assert row["quality_ok"] is False
     assert row["max_size_signal"] is False
+
+
+def test_extended_market_requires_higher_quality_gate():
+    agent = _agent()
+    payload = _router()
+    payload["rankings"]["sniper"] = [
+        {"market": "PEPE-EUR", "score": 72, "eligible": True},
+        {"market": "ADA-EUR", "score": 71, "eligible": True},
+    ]
+    engine = AutonomousDecisionEngine({
+        "enabled": True,
+        "apply_live": True,
+        "min_score": 68,
+        "min_confidence": 0.62,
+        "market_thresholds": {
+            "PEPE-EUR": {"min_score": 74, "min_confidence": 0.66},
+        },
+        "strategy_markets": {
+            "market_maker": ["BTC-EUR"],
+            "grid": ["SOL-EUR", "ETH-EUR"],
+            "sniper": ["XRP-EUR", "ADA-EUR", "PEPE-EUR"],
+        },
+    })
+    plan = engine.plan(agent=agent, router_payload=payload, risk_payload=_risk(), armed=True)
+    row = next(x for x in plan["rows"] if x["strategy"] == "SniperBot")
+    assert row["desired_market"] == "ADA-EUR"
+    assert row["quality_ok"] is True
+
+
+def test_market_switch_calls_reset_hook_and_exchange_rules():
+    agent = _agent()
+    engine = AutonomousDecisionEngine({
+        "enabled": True,
+        "apply_live": True,
+        "min_score": 68,
+        "min_confidence": 0.62,
+        "strategy_markets": {
+            "market_maker": ["BTC-EUR"],
+            "grid": ["SOL-EUR", "ETH-EUR"],
+            "sniper": ["XRP-EUR", "ADA-EUR"],
+        },
+    })
+    plan = engine.plan(agent=agent, router_payload=_router(), risk_payload=_risk(), armed=True)
+    result = engine.apply(agent=agent, plan=plan, armed=True)
+    assert result["applied"] is True
+    assert ("SOL-EUR", "ETH-EUR") in agent._strategies["grid"].switched
+    assert agent._strategies["grid"]._config["_live_balance_snapshot_ready"] is False
