@@ -69,6 +69,7 @@ from autotrader.core.profit_optimization import (
     fee_efficiency_rows,
 )
 from autotrader.core.autonomous_decision_engine import AutonomousDecisionEngine
+from autotrader.core.risk_lab import LeverageMartingaleRiskLab
 from autotrader.connectors.bitvavo import BitvavoAdapter
 from autotrader.connectors.coinbase_advanced import CoinbaseAdvancedMarketData, CoinbaseMarketDataError
 from autotrader.connectors.bitpanda_fusion import BitpandaFusionAdapter
@@ -379,6 +380,11 @@ async def _shadow_strategy_loop(app: FastAPI, agent: AutoTrader) -> None:
                     price = float(await asyncio.to_thread(agent._bitvavo.ticker_price, symbol))
                     app.state.shadow_strategy_engine.update(name, price, strat_cfg)
                     updated_names.append(name)
+                risk_cfg = agent._config.get("leverage_martingale_risk_lab", {}) or {}
+                if bool(risk_cfg.get("enabled", False)):
+                    risk_symbol = str(risk_cfg.get("symbol", "BTC-EUR")).upper().strip()
+                    risk_price = float(await asyncio.to_thread(agent._bitvavo.ticker_price, risk_symbol))
+                    app.state.leverage_martingale_risk_lab.update(risk_price)
                 first_success = getattr(app.state, "shadow_strategy_last_at", 0.0) == 0.0
                 app.state.shadow_strategy_last_at = time.time()
                 app.state.shadow_strategy_error = None
@@ -495,6 +501,9 @@ async def _lifespan(app: FastAPI):
     app.state.arbitrage_shadow_error = None
     shadow_cfg = agent._config.get("shadow_lab", {}) or {}
     app.state.shadow_strategy_engine = ShadowStrategyEngine(shadow_cfg, learner=agent.adaptive_learning)
+    app.state.leverage_martingale_risk_lab = LeverageMartingaleRiskLab(
+        agent._config.get("leverage_martingale_risk_lab", {}) or {}
+    )
     try:
         app.state.shadow_strategy_interval_seconds = max(
             10.0,
@@ -1211,6 +1220,11 @@ def allocator_v2_status() -> dict[str, object]:
         budget,
         fee_rows=fee_rows,
     )
+
+
+@app.get("/api/risk-lab/leverage-martingale", tags=["optimization"])
+def leverage_martingale_risk_lab_status() -> dict[str, object]:
+    return app.state.leverage_martingale_risk_lab.status()
 
 
 @app.get("/api/goals/portfolio", tags=["goals"])
