@@ -112,6 +112,18 @@ execution_v2:
   min_reprice_move_bps: 4.0
   max_order_age_seconds: 900
 
+calculated_risk:
+  enabled: true
+  profile: balanced_aggressive
+  min_confidence: 0.62
+  max_size_multiplier: 1.35
+  max_drawdown_pct: 8.0
+  max_fee_drag_pct: 55.0
+  apply_live: false
+  allow_leverage: false
+  allow_martingale: false
+  allow_budget_increase: false
+
 opportunity_router:
   enabled: true
   interval_seconds: 15
