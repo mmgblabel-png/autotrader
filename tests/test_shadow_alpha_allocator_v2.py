@@ -100,7 +100,6 @@ def test_shadow_outcome_updates_adaptive_learning(tmp_path: Path):
     snap = learner.snapshot()
     learned = snap["strategies"]["MeanReversionShadow"]
     assert learned["completed_exits"] == 1
-    assert "entry_z" in snap["policy"]["tunables"] if False else True
     assert snap["policy"]["tunables"]["MeanReversionShadow"]["parameter"] == "entry_z"
 
 
