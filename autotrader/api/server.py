@@ -415,7 +415,7 @@ async def _lifespan(app: FastAPI):
     app.state.arbitrage_shadow_cache_at = 0.0
     app.state.arbitrage_shadow_error = None
     shadow_cfg = agent._config.get("shadow_lab", {}) or {}
-    app.state.shadow_strategy_engine = ShadowStrategyEngine(shadow_cfg)
+    app.state.shadow_strategy_engine = ShadowStrategyEngine(shadow_cfg, learner=agent.adaptive_learning)
     try:
         app.state.shadow_strategy_interval_seconds = max(
             10.0,
