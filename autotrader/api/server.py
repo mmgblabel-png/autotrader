@@ -673,17 +673,8 @@ def pnl_events(limit: int = Query(default=100, ge=1, le=200)):
     return {"events": get_agent().profit_engine.events(limit)}
 
 
-@app.get("/api/pnl/live", tags=["pnl"])
-def live_pnl():
-    """Return durable fee-aware live PnL and break-even state per strategy."""
-    agent = get_agent()
-    rows = []
-    totals = {
-        "realized_net_pnl_eur": 0.0,
-        "unrealized_net_pnl_eur": 0.0,
-        "economic_pnl_eur": 0.0,
-        "fees_quote_equivalent_eur": 0.0,
-    }
+def _live_profit_snapshots(agent: AutoTrader) -> list[dict[str, object]]:
+    rows: list[dict[str, object]] = []
     for strategy in agent._strategies.values():
         if not strategy.is_enabled:
             continue
@@ -698,8 +689,23 @@ def live_pnl():
                 mark = float(agent._bitvavo.ticker_price(symbol))
             except Exception:
                 mark = 0.0
-        snapshot = agent.profit_supervisor.strategy_snapshot(symbol, strategy.name, mark)
-        rows.append(snapshot)
+        rows.append(agent.profit_supervisor.strategy_snapshot(symbol, strategy.name, mark))
+    return rows
+
+
+@app.get("/api/pnl/live", tags=["pnl"])
+def live_pnl():
+    """Return durable fee-aware live PnL and break-even state per strategy."""
+    agent = get_agent()
+    rows = []
+    totals = {
+        "realized_net_pnl_eur": 0.0,
+        "unrealized_net_pnl_eur": 0.0,
+        "economic_pnl_eur": 0.0,
+        "fees_quote_equivalent_eur": 0.0,
+    }
+    rows = _live_profit_snapshots(agent)
+    for snapshot in rows:
         for key in totals:
             totals[key] += float(snapshot.get(key, 0.0) or 0.0)
     if totals["economic_pnl_eur"] > 0:
@@ -1115,11 +1121,77 @@ def allocator_v2_status() -> dict[str, object]:
     for key, value in (shadow_cfg.get("strategies", {}) or {}).items():
         merged[key] = dict(value or {})
     budget = float((agent._config.get("portfolio", {}) or {}).get("global_live_budget_eur", 50.0))
+    fee_rows = fee_efficiency_rows(_live_profit_snapshots(agent)).get("rows", [])
     return app.state.allocator_v2.recommendations(
         merged,
         agent.profit_engine.summary(),
         shadow_rows,
         budget,
+        fee_rows=fee_rows,
+    )
+
+
+@app.get("/api/optimization/opportunities", tags=["optimization"])
+def optimization_opportunities() -> dict[str, object]:
+    payload = app.state.opportunity_router.rankings()
+    payload["runtime_error"] = getattr(app.state, "opportunity_router_error", None)
+    return payload
+
+
+@app.get("/api/optimization/fee-efficiency", tags=["optimization"])
+def optimization_fee_efficiency() -> dict[str, object]:
+    return fee_efficiency_rows(_live_profit_snapshots(get_agent()))
+
+
+@app.get("/api/optimization/execution-v2", tags=["optimization"])
+def optimization_execution_v2() -> dict[str, object]:
+    agent = get_agent()
+    raw = agent._bitvavo.journal.recent_order_activity(limit=100)
+    books: dict[str, dict[str, float]] = {}
+    active_markets = {
+        str(row.get("market") or "").upper()
+        for row in raw
+        if str(row.get("status") or "").lower() in {"new", "open", "submitted", "partially_filled"}
+    }
+    for market in active_markets:
+        if not market:
+            continue
+        try:
+            book = agent._bitvavo.ticker_book(market)
+            books[market] = {
+                "bid": float(book["bid"]),
+                "ask": float(book["ask"]),
+            }
+        except Exception:
+            continue
+
+    min_exit: dict[str, float] = {}
+    targets: dict[str, float] = {}
+    for strategy in agent._strategies.values():
+        symbol = str(strategy._config.get("symbol", "")).upper()
+        if not symbol:
+            continue
+        mark = float(strategy._config.get("_current_price") or 0.0)
+        if mark <= 0:
+            try:
+                mark = float(agent._bitvavo.ticker_price(symbol))
+            except Exception:
+                mark = 0.0
+        snap = agent.profit_supervisor.strategy_snapshot(symbol, strategy.name, mark)
+        min_exit[strategy.name] = float(snap.get("min_profit_exit_price") or 0.0)
+        if strategy.name == "MarketMaker":
+            targets[strategy.name] = float(strategy._config.get("cycle_exit_markup_pct", 0.0))
+        elif strategy.name == "GridRunner":
+            targets[strategy.name] = float(strategy._config.get("exit_markup_pct", 0.0))
+        elif strategy.name == "SniperBot":
+            targets[strategy.name] = float(strategy._config.get("take_profit_pct", 0.0))
+
+    return app.state.execution_v2_advisor.evaluate(
+        raw,
+        books,
+        min_exit,
+        targets,
+        float(agent.profit_supervisor.policy.required_entry_edge_pct),
     )
 
 
