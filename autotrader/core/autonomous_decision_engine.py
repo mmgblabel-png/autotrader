@@ -73,13 +73,18 @@ class AutonomousDecisionEngine:
             suggested_eur = min(suggested_eur, hard_cap) if hard_cap > 0 else 0.0
 
             open_local = bool(agent._om.open_orders(display))
+            journal_state = (
+                agent._bitvavo.journal.strategy_state(current, display)
+                if current else {"nonterminal_count": 0}
+            )
+            durable_open = int(journal_state.get("nonterminal_count") or 0) > 0
             inventory = agent._bitvavo.journal.inventory_cost_basis(current, display) if current else {"quantity": 0}
             flat = float(inventory.get("quantity") or 0.0) <= 0.0
             switch_ready = now - float(self._last_switch.get(display, 0.0)) >= self.switch_cooldown_seconds
             score = float(best.get("score") or 0.0) if best else 0.0
             desired = str(best.get("market") or current).upper() if best else current
             quality_ok = bool(best) and score >= self.min_score and confidence >= self.min_confidence
-            may_switch = flat and not open_local and switch_ready and quality_ok
+            may_switch = flat and not open_local and not durable_open and switch_ready and quality_ok
             reason = "hold_current_market"
 
             if not best:
@@ -88,7 +93,7 @@ class AutonomousDecisionEngine:
                 reason = "quality_below_threshold"
             elif not flat:
                 reason = "inventory_locked"
-            elif open_local:
+            elif open_local or durable_open:
                 reason = "open_order_locked"
             elif not switch_ready and desired != current:
                 reason = "switch_cooldown"
@@ -108,6 +113,7 @@ class AutonomousDecisionEngine:
                 "quality_ok": quality_ok,
                 "flat": flat,
                 "open_local_order": open_local,
+                "durable_open_order": durable_open,
                 "may_switch": may_switch,
                 "reason": reason,
             })
