@@ -5,6 +5,7 @@ from pathlib import Path
 
 from autotrader.core.profit_optimization import (
     BinanceReferenceFeed,
+    CalculatedRiskSizer,
     ExecutionV2Advisor,
     OpportunityRouter,
     PortfolioGoalTracker,
@@ -271,3 +272,69 @@ def test_shared_portfolio_goal_never_changes_risk():
     assert status["risk_policy"]["increase_risk_to_catch_up"] is False
     assert status["risk_policy"]["increase_leverage_to_catch_up"] is False
     assert status["risk_policy"]["martingale"] is False
+
+
+def test_calculated_risk_sizer_can_upsize_only_within_hard_order_cap():
+    sizer = CalculatedRiskSizer({
+        "enabled": True,
+        "profile": "balanced_aggressive",
+        "min_confidence": 0.50,
+        "max_size_multiplier": 1.35,
+        "max_drawdown_pct": 8.0,
+        "max_fee_drag_pct": 55.0,
+    })
+    result = sizer.recommend(
+        [{
+            "strategy": "MarketMaker",
+            "market": "BTC-EUR",
+            "score": 95.0,
+            "eligible": True,
+        }],
+        [{"strategy": "MarketMaker", "fee_drag_pct": 10.0}],
+        [{
+            "strategy": "MarketMaker",
+            "market": "BTC-EUR",
+            "profitable_exits": 20,
+            "losing_exits": 0,
+            "max_drawdown_pct": 1.0,
+        }],
+        {"MarketMaker": 15.0},
+        {"MarketMaker": 10.0},
+    )
+    row = result["rows"][0]
+    assert row["size_multiplier"] > 1.0
+    assert row["recommended_order_eur"] <= 10.0
+    assert result["live_budget_changed"] is False
+    assert result["hard_risk_limits_changed"] is False
+    assert result["leverage_changed"] is False
+
+
+def test_calculated_risk_sizer_reduces_size_when_drawdown_or_fees_are_bad():
+    sizer = CalculatedRiskSizer({
+        "min_confidence": 0.50,
+        "max_size_multiplier": 1.35,
+        "max_drawdown_pct": 8.0,
+        "max_fee_drag_pct": 55.0,
+    })
+    result = sizer.recommend(
+        [{
+            "strategy": "GridRunner",
+            "market": "SOL-EUR",
+            "score": 95.0,
+            "eligible": True,
+        }],
+        [{"strategy": "GridRunner", "fee_drag_pct": 80.0}],
+        [{
+            "strategy": "GridRunner",
+            "market": "SOL-EUR",
+            "profitable_exits": 20,
+            "losing_exits": 5,
+            "max_drawdown_pct": 10.0,
+        }],
+        {"GridRunner": 15.0},
+        {"GridRunner": 7.0},
+    )
+    row = result["rows"][0]
+    assert row["size_multiplier"] < 1.0
+    assert row["reason"] == "risk_reduced"
+    assert row["recommended_order_eur"] <= 7.0
