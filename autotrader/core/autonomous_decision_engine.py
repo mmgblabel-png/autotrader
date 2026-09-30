@@ -65,6 +65,19 @@ class AutonomousDecisionEngine:
         rankings = router_payload.get("rankings", {}) if isinstance(router_payload, dict) else {}
         now = time.time()
         rows: list[dict[str, Any]] = []
+        gateway = getattr(getattr(agent, "_bitvavo", None), "gateway", None)
+        exposure_headroom_eur: float | None = None
+        if gateway is not None:
+            try:
+                gateway_status = gateway.status()
+                current_exposure = float(gateway_status.get("daily_exposure_eur") or 0.0)
+                max_exposure = float(
+                    (gateway_status.get("limits") or {}).get("max_daily_exposure_eur") or 0.0
+                )
+                exposure_headroom_eur = max(0.0, max_exposure - current_exposure)
+            except (TypeError, ValueError, AttributeError):
+                exposure_headroom_eur = None
+        virtual_headroom_eur = exposure_headroom_eur
 
         for key, (display, router_key) in strategy_key_map.items():
             strategy = agent._strategies.get(key)
@@ -131,6 +144,29 @@ class AutonomousDecisionEngine:
             )
             if use_max_size and hard_cap > 0:
                 suggested_eur = hard_cap
+
+            minimum_live_order_eur = max(
+                0.0, float(self.config.get("minimum_live_order_eur", 5.0))
+            )
+            failure_cooldown_until = float(cfg.get("_failure_cooldown_until", 0.0) or 0.0)
+            entry_runtime_ready = failure_cooldown_until <= time.time()
+            headroom_before = virtual_headroom_eur
+            exposure_headroom_ok = True
+            if key in {"market_maker", "grid", "sniper"} and flat and virtual_headroom_eur is not None:
+                suggested_eur = min(suggested_eur, virtual_headroom_eur)
+                exposure_headroom_ok = suggested_eur >= minimum_live_order_eur
+
+            entry_allowed = (
+                quality_ok
+                and exposure_headroom_ok
+                and entry_runtime_ready
+                and flat
+                and not open_local
+                and not durable_open
+            )
+            if entry_allowed and virtual_headroom_eur is not None:
+                virtual_headroom_eur = max(0.0, virtual_headroom_eur - suggested_eur)
+
             may_switch = flat and not open_local and not durable_open and switch_ready and quality_ok
             reason = "hold_current_market"
 
@@ -138,6 +174,10 @@ class AutonomousDecisionEngine:
                 reason = "no_eligible_market"
             elif not quality_ok:
                 reason = "quality_below_threshold"
+            elif not exposure_headroom_ok:
+                reason = "daily_exposure_headroom_low"
+            elif not entry_runtime_ready and flat:
+                reason = "failure_cooldown"
             elif not flat:
                 reason = "inventory_locked"
             elif open_local or durable_open:
@@ -157,6 +197,12 @@ class AutonomousDecisionEngine:
                 "market_score": round(score, 2),
                 "confidence": round(confidence, 4),
                 "recommended_order_eur": round(suggested_eur, 2),
+                "entry_allowed": entry_allowed,
+                "entry_runtime_ready": entry_runtime_ready,
+                "daily_exposure_headroom_eur": (
+                    round(headroom_before, 2) if headroom_before is not None else None
+                ),
+                "exposure_headroom_ok": exposure_headroom_ok,
                 "allowed_markets": sorted(allowed),
                 "market_min_score": round(market_score_min, 2),
                 "market_min_confidence": round(market_conf_min, 4),
@@ -206,6 +252,8 @@ class AutonomousDecisionEngine:
             if strategy is None:
                 continue
             cfg = strategy._config
+            cfg["_autonomous_entry_allowed"] = bool(row.get("entry_allowed", False))
+            cfg["_autonomous_entry_reason"] = str(row.get("reason") or "")
             current = str(cfg.get("symbol", "")).upper()
             desired = str(row.get("desired_market") or current).upper()
             order_eur = max(0.0, float(row.get("recommended_order_eur") or 0.0))
