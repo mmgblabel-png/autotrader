@@ -5,6 +5,27 @@ portfolio:
   global_live_budget_eur: 50
   max_total_open_orders: 4
 
+portfolio_goal:
+  enabled: true
+  starting_equity_eur: 50
+  target_equity_eur: 25000
+  milestones_eur:
+    - 100
+    - 250
+    - 500
+    - 1000
+    - 2500
+    - 5000
+    - 10000
+    - 25000
+  goal_is_risk_input: false
+  increase_risk_to_catch_up: false
+
+binance_reference:
+  enabled: true
+  symbol: BTCUSDT
+  interval_seconds: 1
+  timeout_seconds: 3
 
 adaptive_learning:
   enabled: true
@@ -97,6 +118,9 @@ opportunity_router:
   history_size: 48
   min_top_depth_eur: 25
   max_spread_bps: 35
+  auto_discover_eur: true
+  max_markets: 60
+  discovery_refresh_seconds: 1800
   markets:
     - BTC-EUR
     - ETH-EUR
