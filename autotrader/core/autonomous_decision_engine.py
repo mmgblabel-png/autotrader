@@ -80,7 +80,7 @@ class AutonomousDecisionEngine:
 
             open_local = bool(agent._om.open_orders(display))
             journal_state = (
-                agent._bitvavo.journal.strategy_state(current, display)
+                agent._bitvavo.journal.strategy_market_state(current, display)
                 if current else {"nonterminal_count": 0}
             )
             durable_open = int(journal_state.get("nonterminal_count") or 0) > 0
