@@ -4,8 +4,10 @@ import time
 from pathlib import Path
 
 from autotrader.core.profit_optimization import (
+    BinanceReferenceFeed,
     ExecutionV2Advisor,
     OpportunityRouter,
+    PortfolioGoalTracker,
     fee_efficiency_rows,
 )
 from autotrader.core.shadow_strategy_engine import ShadowStrategyEngine
@@ -19,6 +21,12 @@ class FakeBookAdapter:
             "ETH-EUR": {"bid": 50.0, "ask": 50.02, "bid_size": 3.0, "ask_size": 3.0},
             "SOL-EUR": {"bid": 20.0, "ask": 20.03, "bid_size": 10.0, "ask_size": 10.0},
         }
+
+    def markets(self):
+        return [
+            {"market": market, "status": "trading"}
+            for market in self.books
+        ]
 
     def ticker_book(self, market: str):
         row = self.books[market]
@@ -188,3 +196,78 @@ def test_sniper_v2_shadow_completes_profitable_round_trip(tmp_path: Path):
     assert row["completed_trades"] == 1
     assert row["realized_net_pnl_eur"] > 0
     assert row["live_capable"] is False
+
+
+def test_opportunity_router_auto_discovers_up_to_sixty_eur_markets():
+    class ManyMarketAdapter:
+        def __init__(self):
+            self.names = [f"ASSET{i:02d}-EUR" for i in range(55)]
+
+        def markets(self):
+            return [{"market": name, "status": "trading"} for name in self.names]
+
+        def ticker_book(self, market: str):
+            idx = self.names.index(market)
+            bid = 10.0 + idx * 0.01
+            return {
+                "market": market,
+                "bid": bid,
+                "ask": bid + 0.005,
+                "bid_size": 100.0,
+                "ask_size": 100.0,
+            }
+
+    router = OpportunityRouter(
+        ManyMarketAdapter(),
+        {
+            "markets": [],
+            "auto_discover_eur": True,
+            "max_markets": 60,
+            "min_top_depth_eur": 25,
+            "max_spread_bps": 40,
+        },
+    )
+    router.refresh()
+    payload = router.rankings()
+    assert payload["markets_configured"] == 55
+    assert payload["markets_scanned"] == 55
+    assert payload["auto_discover_eur"] is True
+    assert payload["live_orders_sent"] is False
+
+
+def test_binance_reference_feed_is_read_only():
+    feed = BinanceReferenceFeed(
+        {"enabled": True, "symbol": "BTCUSDT", "interval_seconds": 1},
+        fetcher=lambda symbol: {"symbol": symbol, "price": "65000.50"},
+    )
+    feed.refresh()
+    status = feed.status()
+    assert status["price"] == 65000.50
+    assert status["read_only"] is True
+    assert status["live_orders_sent"] is False
+    assert status["interval_seconds"] == 1.0
+
+
+def test_shared_portfolio_goal_never_changes_risk():
+    goal = PortfolioGoalTracker({
+        "starting_equity_eur": 50,
+        "target_equity_eur": 25000,
+        "milestones_eur": [100, 500, 1000, 25000],
+    })
+    status = goal.status(
+        75,
+        [{
+            "strategy": "MarketMaker",
+            "market": "BTC-EUR",
+            "realized_net_pnl_eur": 10,
+            "economic_pnl_eur": 12,
+        }],
+    )
+    assert status["shared_goal"] is True
+    assert status["target_equity_eur"] == 25000
+    assert status["current_equity_estimate_eur"] == 75
+    assert status["next_milestone_eur"] == 100
+    assert status["risk_policy"]["goal_is_risk_input"] is False
+    assert status["risk_policy"]["increase_risk_to_catch_up"] is False
+    assert status["risk_policy"]["increase_leverage_to_catch_up"] is False
+    assert status["risk_policy"]["martingale"] is False
