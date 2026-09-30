@@ -27,6 +27,24 @@ binance_reference:
   interval_seconds: 1
   timeout_seconds: 3
 
+leverage_martingale_risk_lab:
+  enabled: true
+  path: /data/leverage_martingale_lab.json
+  symbol: BTC-EUR
+  starting_equity_eur: 50
+  base_stake_eur: 3
+  max_stake_eur: 8
+  leverage: 2.0
+  martingale_multiplier: 1.35
+  max_martingale_steps: 2
+  momentum_trigger_pct: 0.20
+  take_profit_pct: 0.75
+  stop_loss_pct: 0.45
+  fee_pct_each_leg: 0.25
+  slippage_pct_each_leg: 0.05
+  live_capable: false
+  live_orders_sent: false
+
 adaptive_learning:
   enabled: true
   path: /data/adaptive_learning.json
