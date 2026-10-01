@@ -81,12 +81,50 @@ class OrderJournal:
     def update(self, client_order_id: str, status: str, payload: dict[str, Any] | None = None, *, exchange_order_id: str | None = None, error: str | None = None) -> None:
         payload = payload or {}
         now = time.time()
+        requested_status = str(status).lower()
         with self._lock:
+            effective_status = requested_status
+            effective_error = error
+            if requested_status == "error":
+                current = self._db.execute(
+                    "SELECT status, amount FROM orders WHERE client_order_id=?",
+                    (client_order_id,),
+                ).fetchone()
+                if current is not None:
+                    current_status = str(current["status"] or "").lower()
+                    if current_status in self.TERMINAL and current_status != "error":
+                        effective_status = current_status
+                        effective_error = None
+                    else:
+                        fill_row = self._db.execute(
+                            """
+                            SELECT COALESCE(SUM(CAST(NULLIF(amount,'') AS REAL)),0) AS filled
+                            FROM fills WHERE client_order_id=?
+                            """,
+                            (client_order_id,),
+                        ).fetchone()
+                        try:
+                            ordered = max(0.0, float(current["amount"] or 0.0))
+                            filled = max(0.0, float((fill_row or {})["filled"] or 0.0))
+                        except (TypeError, ValueError):
+                            ordered = 0.0
+                            filled = 0.0
+                        if ordered > 0 and filled + max(1e-12, ordered * 1e-9) >= ordered:
+                            effective_status = "filled"
+                            effective_error = None
+
             self._db.execute(
                 "UPDATE orders SET status=?, exchange_order_id=COALESCE(?,exchange_order_id), updated_at=?, last_error=?, raw_json=? WHERE client_order_id=?",
-                (status, exchange_order_id, now, error, json.dumps(payload, default=str), client_order_id),
+                (effective_status, exchange_order_id, now, effective_error, json.dumps(payload, default=str), client_order_id),
             )
-            self._event(client_order_id, status, payload)
+            if effective_status != requested_status:
+                self._event(
+                    client_order_id,
+                    "reconcile_error_after_terminal",
+                    {"preserved_status": effective_status, "requested_status": requested_status},
+                )
+            else:
+                self._event(client_order_id, effective_status, payload)
             self._db.commit()
 
     def record_fill(self, client_order_id: str, fill: dict[str, Any]) -> None:
