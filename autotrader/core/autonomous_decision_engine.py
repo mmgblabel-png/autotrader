@@ -94,6 +94,7 @@ class AutonomousDecisionEngine:
         router_payload: dict[str, Any],
         risk_payload: dict[str, Any],
         armed: bool,
+        available_balances: dict[str, float] | None = None,
     ) -> dict[str, Any]:
         strategy_key_map = {
             "market_maker": ("MarketMaker", "market_maker"),
@@ -255,11 +256,26 @@ class AutonomousDecisionEngine:
                 if key in {"market_maker", "grid", "grid_eth", "sniper"} and flat
                 else True
             )
+            candidate_quote = str(best.get("quote") or "") if best else ""
+            if not candidate_quote and desired and "-" in desired:
+                candidate_quote = desired.rsplit("-", 1)[1]
+            candidate_quote_to_eur = float(best.get("quote_to_eur") or 0.0) if best else 0.0
+            if candidate_quote == "EUR" and candidate_quote_to_eur <= 0:
+                candidate_quote_to_eur = 1.0
+            available_quote = balances.get(candidate_quote, 0.0) if balances else 0.0
+            available_quote_eur = available_quote * candidate_quote_to_eur
+            funding_ok = True
+            if balances and flat and key in {"market_maker", "grid", "grid_eth", "sniper"}:
+                funding_ok = (
+                    candidate_quote_to_eur > 0
+                    and available_quote_eur + 1e-9 >= suggested_eur
+                )
 
             entry_allowed = (
                 quality_ok
                 and exposure_headroom_ok
                 and minimum_order_ok
+                and funding_ok
                 and entry_runtime_ready
                 and not risk_killed
                 and flat
@@ -284,6 +300,8 @@ class AutonomousDecisionEngine:
                 reason = "daily_exposure_headroom_low"
             elif not minimum_order_ok:
                 reason = "order_below_exchange_minimum"
+            elif not funding_ok:
+                reason = "quote_balance_low"
             elif risk_killed:
                 reason = "risk_kill_switch"
             elif not entry_runtime_ready and flat:
@@ -337,6 +355,9 @@ class AutonomousDecisionEngine:
                 "exposure_safety_buffer_eur": round(self.exposure_safety_buffer_eur, 2),
                 "exposure_headroom_ok": exposure_headroom_ok,
                 "minimum_order_ok": minimum_order_ok,
+                "funding_ok": funding_ok,
+                "available_quote": round(available_quote, 12),
+                "available_quote_eur": round(available_quote_eur, 4),
                 "minimum_live_order_eur": round(minimum_live_order_eur, 2),
                 "pre_headroom_recommended_order_eur": round(pre_headroom_suggested_eur, 2),
                 "allowed_markets": sorted(allowed),
