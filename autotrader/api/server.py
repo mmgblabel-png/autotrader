@@ -777,11 +777,11 @@ async def _opportunity_router_loop(app: FastAPI) -> None:
             previous = getattr(app.state, "opportunity_router_last_logged_count", None)
             if previous != (configured, scanned):
                 log.info(
-                    "Opportunity router active: configured=%d scanned=%d cap=%d auto_discover=%s live_orders_sent=%s",
+                    "Opportunity router active: configured=%d scanned=%d cap=%d full_spot=%s live_orders_sent=%s",
                     configured,
                     scanned,
                     int(payload.get("max_markets", 0) or 0),
-                    bool(payload.get("auto_discover_eur")),
+                    bool(payload.get("auto_discover_all_spot")),
                     bool(payload.get("live_orders_sent")),
                 )
                 app.state.opportunity_router_last_logged_count = (configured, scanned)
