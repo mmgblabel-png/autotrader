@@ -74,7 +74,7 @@ from autotrader.connectors.bitvavo import BitvavoAdapter
 from autotrader.connectors.coinbase_advanced import CoinbaseAdvancedMarketData, CoinbaseMarketDataError
 from autotrader.connectors.bitpanda_fusion import BitpandaFusionAdapter
 from autotrader.api.dashboard_html import dashboard_html
-from autotrader.ml.shadow import walk_forward
+from autotrader.ml.shadow import walk_forward, lookahead_analysis, recursive_analysis
 
 log = get_logger("api.server")
 
@@ -1079,6 +1079,17 @@ def adaptive_learning_status():
 def ml_walk_forward(rows: list[dict] = Body(...)):
     """Evaluate the standard-library shadow model; never places an order."""
     return walk_forward(rows)
+
+
+@app.post("/api/ml/validation", tags=["ml"])
+def ml_validation(rows: list[dict] = Body(...)):
+    """Run lookahead and recursive-history guards for shadow research only."""
+    return {
+        "mode": "shadow_validation",
+        "live_orders_sent": False,
+        "lookahead": lookahead_analysis(rows),
+        "recursive": recursive_analysis(rows),
+    }
 
 
 # ── Strategy list & control ───────────────────────────────────────────────────
