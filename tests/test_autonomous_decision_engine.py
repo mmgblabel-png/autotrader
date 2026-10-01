@@ -553,19 +553,21 @@ def test_sniper_uses_stricter_strategy_specific_thresholds():
     assert row["quality_ok"] is False
 
 
-def test_crypto_crypto_is_ranked_for_research_but_not_live_selected_yet():
+def test_crypto_crypto_can_be_live_selected_when_quote_balance_exists():
     agent = _agent()
     payload = _router()
     payload["rankings"]["grid"].insert(
         0,
         {
             "market": "ETH-BTC",
+            "quote": "BTC",
+            "quote_to_eur": 70000.0,
             "pair_type": "crypto_crypto",
             "score": 99,
             "signal_strength": 95,
             "signal_direction": "RANGE",
             "eligible": True,
-            "live_execution_supported_now": False,
+            "live_execution_supported_now": True,
         },
     )
     engine = AutonomousDecisionEngine({
@@ -580,7 +582,53 @@ def test_crypto_crypto_is_ranked_for_research_but_not_live_selected_yet():
             "sniper": ["*"],
         },
     })
-    plan = engine.plan(agent=agent, router_payload=payload, risk_payload=_risk(), armed=True)
+    plan = engine.plan(
+        agent=agent,
+        router_payload=payload,
+        risk_payload=_risk(),
+        armed=True,
+        available_balances={"EUR": 50.0, "BTC": 0.001},
+    )
     row = next(x for x in plan["rows"] if x["strategy"] == "GridRunner")
     assert row["research_crypto_crypto_count"] >= 1
-    assert row["desired_market"] != "ETH-BTC"
+    assert row["desired_market"] == "ETH-BTC"
+    assert row["funding_ok"] is True
+
+
+def test_crypto_crypto_is_not_selected_without_quote_balance():
+    agent = _agent()
+    payload = _router()
+    payload["rankings"]["grid"].insert(
+        0,
+        {
+            "market": "ETH-BTC",
+            "quote": "BTC",
+            "quote_to_eur": 70000.0,
+            "pair_type": "crypto_crypto",
+            "score": 99,
+            "signal_strength": 95,
+            "signal_direction": "RANGE",
+            "eligible": True,
+            "live_execution_supported_now": True,
+        },
+    )
+    engine = AutonomousDecisionEngine({
+        "enabled": True,
+        "apply_live": True,
+        "min_score": 68,
+        "min_confidence": 0.62,
+        "min_signal_strength": 62,
+        "strategy_markets": {"grid": ["*"]},
+    })
+    plan = engine.plan(
+        agent=agent,
+        router_payload=payload,
+        risk_payload=_risk(),
+        armed=True,
+        available_balances={"EUR": 50.0, "BTC": 0.0},
+    )
+    row = next(x for x in plan["rows"] if x["strategy"] == "GridRunner")
+    assert row["desired_market"] == "ETH-BTC"
+    assert row["funding_ok"] is False
+    assert row["entry_allowed"] is False
+    assert row["reason"] == "quote_balance_low"
