@@ -127,6 +127,8 @@ class ExecutionCoordinator:
                     )
                     if not allocation.accepted:
                         self.om.update(order.order_id, OrderStatus.FAILED)
+                        if self.failure_handler is not None:
+                            self.failure_handler(order, "allocation", allocation.reason)
                         log.warning("Order %s blocked by allocation guard: %s", order.order_id, allocation.reason)
                         results.append({"client_order_id": order.order_id, "status": "failed", "category": "allocation", "reason": allocation.reason})
                         continue
