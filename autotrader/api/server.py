@@ -629,6 +629,9 @@ async def _tick_loop(app: FastAPI, agent: AutoTrader) -> None:
                             router_payload=app.state.opportunity_router.rankings(),
                             risk_payload=risk_payload,
                             armed=bool(getattr(app.state, "live_armed", False)),
+                            available_balances=dict(
+                                getattr(app.state, "bitvavo_balances", {}) or {}
+                            ),
                         )
                         app.state.autonomous_plan = plan
                         app.state.autonomous_apply = app.state.autonomous_decision_engine.apply(
