@@ -52,6 +52,51 @@ class OrderJournal:
         if "strategy" not in columns:
             self._db.execute("ALTER TABLE orders ADD COLUMN strategy TEXT NOT NULL DEFAULT ''")
         self._db.commit()
+        self._repair_fully_filled_error_orders()
+
+    def _repair_fully_filled_error_orders(self) -> int:
+        """Repair legacy error rows only when durable fills prove full execution."""
+        repaired = 0
+        now = time.time()
+        with self._lock:
+            rows = self._db.execute(
+                """
+                SELECT o.client_order_id, o.amount,
+                       COALESCE(SUM(CAST(NULLIF(f.amount,'') AS REAL)),0) AS filled_amount
+                FROM orders AS o
+                LEFT JOIN fills AS f ON f.client_order_id=o.client_order_id
+                WHERE lower(o.status)='error'
+                GROUP BY o.client_order_id
+                """
+            ).fetchall()
+            for row in rows:
+                try:
+                    ordered = max(0.0, float(row["amount"] or 0.0))
+                    filled = max(0.0, float(row["filled_amount"] or 0.0))
+                except (TypeError, ValueError):
+                    continue
+                if ordered <= 0:
+                    continue
+                tolerance = max(1e-12, ordered * 1e-9)
+                if filled + tolerance < ordered:
+                    continue
+                cursor = self._db.execute(
+                    """
+                    UPDATE orders
+                    SET status='filled', last_error=NULL, updated_at=?
+                    WHERE client_order_id=? AND lower(status)='error'
+                    """,
+                    (now, row["client_order_id"]),
+                )
+                if cursor.rowcount == 1:
+                    self._event(
+                        str(row["client_order_id"]),
+                        "legacy_error_repaired_to_filled",
+                        {"filled_amount": filled, "ordered_amount": ordered},
+                    )
+                    repaired += 1
+            self._db.commit()
+        return repaired
 
     def set_strategy(self, client_order_id: str, strategy: str) -> None:
         with self._lock:
