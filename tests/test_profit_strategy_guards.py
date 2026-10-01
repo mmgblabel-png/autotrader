@@ -1,6 +1,6 @@
-from autotrader.core.order_manager import OrderManager
+from autotrader.core.order_manager import OrderManager, OrderSide
 from autotrader.core.profit_engine import ProfitEngine
-from autotrader.core.risk_manager import RiskManager
+from autotrader.core.risk_manager import RiskManager, StrategyRiskConfig
 from autotrader.strategies.grid_runner import GridRunner
 from autotrader.strategies.market_maker import MarketMaker
 from autotrader.strategies.sniper_bot import SniperBot
