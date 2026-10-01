@@ -277,7 +277,7 @@ function renderOpportunities(d){
  $('routerconfigured').textContent=configured||'—';$('routerscanned').textContent=scanned||'—';$('routertarget').textContent=maxm;$('routererrors').textContent=errCount;
  $('routererrors').className='v '+(errCount?'red':'green');
  $('routerrows').innerHTML=rows.length?rows.map(x=>`<tr><td><b>${esc(names[x.key]||x.key)}</b></td><td>${esc(x.best.market)}</td><td class="mono">${Number(x.best.score||0).toFixed(1)}</td><td class="mono">${Number(x.best.signal_strength||0).toFixed(1)}</td><td class="mono">${esc(x.best.signal_direction||'—')}</td><td class="mono">${Number(x.best.spread_bps||0).toFixed(1)} bps</td><td class="mono">${Number(x.best.momentum_pct||0).toFixed(3)}%</td><td class="mono">${money(x.best.liquidity_eur)}</td></tr>`).join(''):'<tr><td colspan="8" class="sub">Nog onvoldoende router-data</td></tr>';
- $('routernote').textContent=scanned+' van '+configured+' beschikbare EUR-markten gescand · cap '+maxm+' · full-spot discovery '+(d.auto_discover_all_spot?'AAN':'uit')+' · crypto→crypto '+Number(d.crypto_crypto_scanned||0)+' · live orders verzonden: '+(d.live_orders_sent?'JA':'nee')+(d.runtime_error?' · fout: '+d.runtime_error:'');
+ $('routernote').textContent=scanned+' van '+configured+' beschikbare spotmarkten gescand · cap '+maxm+' · full-spot discovery '+(d.auto_discover_all_spot?'AAN':'uit')+' · crypto→crypto '+Number(d.crypto_crypto_scanned||0)+' · live orders verzonden: '+(d.live_orders_sent?'JA':'nee')+(d.runtime_error?' · fout: '+d.runtime_error:'');
 }
 function renderUniverse(d){
  const bv=d.bitvavo||{},cb=d.coinbase||{},rows=d.top_quality_candidates||[];
