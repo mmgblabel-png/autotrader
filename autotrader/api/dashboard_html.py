@@ -41,8 +41,14 @@ DASHBOARD_HTML = r'''<!doctype html>
     <div class="grid" style="margin-bottom:12px">
       <div><div class="label">Huidige equity-schatting</div><div id="goalcurrent" class="value">—</div></div>
       <div><div class="label">Doel</div><div id="goaltarget" class="value blue">€ 25.000</div></div>
+      <div><div class="label">Per dag nodig</div><div id="goaldaily" class="value green">—</div></div>
+      <div><div class="label">Dagelijkse groei nodig</div><div id="goalcompound" class="value">—</div></div>
+    </div>
+    <div class="grid" style="margin-bottom:12px">
       <div><div class="label">Voortgang</div><div id="goalprogress" class="value">—</div></div>
       <div><div class="label">Volgende mijlpaal</div><div id="goalnext" class="value amber">—</div></div>
+      <div><div class="label">Horizon</div><div id="goaldays" class="value">—</div></div>
+      <div><div class="label">Resterend</div><div id="goalremaining" class="value">—</div></div>
     </div>
     <div class="bar"><i id="goalbar" style="width:0%"></i></div>
     <div id="goalnote" class="sub" style="margin-top:9px">Geen martingale, geen leverage- of budgetverhoging om het doel in te halen.</div>
@@ -69,7 +75,7 @@ DASHBOARD_HTML = r'''<!doctype html>
       <div class="order-kpi"><div class="k">Doel scanner</div><div id="routertarget" class="v">60</div></div>
       <div class="order-kpi"><div class="k">Fouten</div><div id="routererrors" class="v">0</div></div>
     </div>
-    <div class="table-wrap"><table class="table compact"><thead><tr><th>Strategie</th><th>Beste markt</th><th>Score</th><th>Spread</th><th>Momentum</th><th>Liquiditeit</th></tr></thead><tbody id="routerrows"><tr><td colspan="6" class="sub">Opportunity Router laden…</td></tr></tbody></table></div>
+    <div class="table-wrap"><table class="table compact"><thead><tr><th>Strategie</th><th>Beste markt</th><th>Score</th><th>Signal</th><th>Richting</th><th>Spread</th><th>Momentum</th><th>Liquiditeit</th></tr></thead><tbody id="routerrows"><tr><td colspan="8" class="sub">Opportunity Router laden…</td></tr></tbody></table></div>
     <div id="routernote" class="sub" style="margin-top:9px">Read-only multi-market scan.</div>
   </div>
 </section>
@@ -84,7 +90,7 @@ DASHBOARD_HTML = r'''<!doctype html>
 <section class="section">
   <div class="card">
     <div class="exchange-head"><div><div class="exchange-name">Autonomous Decision Engine</div><div class="mini">Na operator-arm kiest het systeem zelf markt + ordergrootte binnen harde caps</div></div><span id="autonomymode" class="badge">controleren</span></div>
-    <div class="table-wrap"><table class="table compact"><thead><tr><th>Agent</th><th>Huidige markt</th><th>Gewenste markt</th><th>Live opties</th><th>Score</th><th>Confidence</th><th>Order €</th><th>Switch</th><th>Reden</th></tr></thead><tbody id="autonomyrows"><tr><td colspan="9" class="sub">Autonomy laden…</td></tr></tbody></table></div>
+    <div class="table-wrap"><table class="table compact"><thead><tr><th>Agent</th><th>Huidige markt</th><th>Gewenste markt</th><th>Live opties</th><th>Score</th><th>Signal</th><th>Confidence</th><th>Entry</th><th>Order €</th><th>Switch</th><th>Reden</th></tr></thead><tbody id="autonomyrows"><tr><td colspan="11" class="sub">Autonomy laden…</td></tr></tbody></table></div>
     <div id="autonomynote" class="sub" style="margin-top:9px">De engine kan zichzelf nooit armen en mag budget/leverage/harde risicolimieten niet verhogen.</div>
   </div>
 </section>
@@ -173,12 +179,16 @@ function renderGoal(d){
  const p=Math.max(0,Math.min(100,Number(d.progress_pct||0)));
  $('goalcurrent').textContent=money(d.current_equity_estimate_eur);
  $('goaltarget').textContent=money(d.target_equity_eur);
+ $('goaldaily').textContent=money(d.required_daily_linear_eur);
+ $('goalcompound').textContent=Number(d.required_daily_compound_pct||0).toFixed(3)+'%';
+ $('goaldays').textContent=Number(d.target_days||0).toFixed(0)+' dagen';
+ $('goalremaining').textContent=money(d.remaining_eur);
  $('goalprogress').textContent=p.toFixed(3)+'%';
  $('goalnext').textContent=d.next_milestone_eur==null?'DOEL BEREIKT':money(d.next_milestone_eur);
  $('goalbar').style.width=p+'%';
  $('goalbadge').textContent=d.target_reached?'TARGET REACHED':'€25K TARGET';
  $('goalbadge').className='badge '+(d.target_reached?'ok':'');
- $('goalnote').textContent='Gezamenlijk doel · resterend '+money(d.remaining_eur)+' · doel stuurt risico niet aan · martingale: uit';
+ $('goalnote').textContent='Dagstand = benodigde gemiddelde netto groei vanaf de huidige equity over '+Number(d.target_days||0).toFixed(0)+' dagen. Dit is een doelmeter, geen reden om slechtere trades te forceren.';
 }
 function renderBinanceReference(d){
  $('binanceprice').textContent=d.price==null?'—':'$ '+Number(d.price).toLocaleString(undefined,{maximumFractionDigits:2});
@@ -204,7 +214,7 @@ function renderOpportunities(d){
  $('routerbadge').className='badge '+(d.live_orders_sent?'':'ok');
  $('routerconfigured').textContent=configured||'—';$('routerscanned').textContent=scanned||'—';$('routertarget').textContent=maxm;$('routererrors').textContent=errCount;
  $('routererrors').className='v '+(errCount?'red':'green');
- $('routerrows').innerHTML=rows.length?rows.map(x=>`<tr><td><b>${esc(names[x.key]||x.key)}</b></td><td>${esc(x.best.market)}</td><td class="mono">${Number(x.best.score||0).toFixed(1)}</td><td class="mono">${Number(x.best.spread_bps||0).toFixed(1)} bps</td><td class="mono">${Number(x.best.momentum_pct||0).toFixed(3)}%</td><td class="mono">${money(x.best.liquidity_eur)}</td></tr>`).join(''):'<tr><td colspan="6" class="sub">Nog onvoldoende router-data</td></tr>';
+ $('routerrows').innerHTML=rows.length?rows.map(x=>`<tr><td><b>${esc(names[x.key]||x.key)}</b></td><td>${esc(x.best.market)}</td><td class="mono">${Number(x.best.score||0).toFixed(1)}</td><td class="mono">${Number(x.best.signal_strength||0).toFixed(1)}</td><td class="mono">${esc(x.best.signal_direction||'—')}</td><td class="mono">${Number(x.best.spread_bps||0).toFixed(1)} bps</td><td class="mono">${Number(x.best.momentum_pct||0).toFixed(3)}%</td><td class="mono">${money(x.best.liquidity_eur)}</td></tr>`).join(''):'<tr><td colspan="8" class="sub">Nog onvoldoende router-data</td></tr>';
  $('routernote').textContent=scanned+' van '+configured+' beschikbare EUR-markten gescand · cap '+maxm+' · auto-discovery '+(d.auto_discover_eur?'AAN':'uit')+' · live orders verzonden: '+(d.live_orders_sent?'JA':'nee')+(d.runtime_error?' · fout: '+d.runtime_error:'');
 }
 function renderFeeEfficiency(d){
@@ -217,7 +227,7 @@ function renderAutonomy(d){
  $('autonomymode').textContent=armed?(p.apply_live?'AUTONOMOUS LIVE':'ARMED / SHADOW PLAN'):'WACHT OP LIVE ARM';
  $('autonomymode').className='badge '+(armed&&p.apply_live?'live':'');
  $('autonomybadge').textContent='SET → EXECUTE → LEARN → REPEAT';
- $('autonomyrows').innerHTML=rows.length?rows.map(x=>`<tr><td><b>${esc(x.strategy)}</b></td><td>${esc(x.current_market)}</td><td class="${x.desired_market!==x.current_market?'blue':''}">${esc(x.desired_market)}</td><td class="mini">${esc((x.allowed_markets||[]).join(', '))}</td><td class="mono">${Number(x.market_score||0).toFixed(1)}</td><td class="mono">${(Number(x.confidence||0)*100).toFixed(1)}%</td><td class="mono">${money(x.recommended_order_eur)}</td><td class="${x.may_switch?'green':'amber'}">${x.may_switch?'JA':'nee'}</td><td>${esc(x.reason||'—')}</td></tr>`).join(''):'<tr><td colspan="9" class="sub">Nog geen autonomy-plan beschikbaar</td></tr>';
+ $('autonomyrows').innerHTML=rows.length?rows.map(x=>`<tr><td><b>${esc(x.strategy)}</b></td><td>${esc(x.current_market)}</td><td class="${x.desired_market!==x.current_market?'blue':''}">${esc(x.desired_market)}</td><td class="mini">${esc((x.allowed_markets||[]).join(', ')||'router universe')}</td><td class="mono">${Number(x.market_score||0).toFixed(1)}</td><td class="mono">${Number(x.signal_strength||0).toFixed(1)} · ${esc(x.signal_direction||'—')}</td><td class="mono">${(Number(x.confidence||0)*100).toFixed(1)}%</td><td class="${x.entry_allowed?'green':'amber'}"><b>${x.entry_allowed?'OPEN':'WAIT'}</b></td><td class="mono">${money(x.recommended_order_eur)}</td><td class="${x.may_switch?'green':'amber'}">${x.may_switch?'JA':'nee'}</td><td>${esc(x.reason||'—')}</td></tr>`).join(''):'<tr><td colspan="11" class="sub">Nog geen autonomy-plan beschikbaar</td></tr>';
  let rules=p.hard_rules||{};
  $('autonomynote').textContent='Operator-arm vereist: '+(d.operator_activation_required?'ja':'nee')+' · zelf armen: '+(rules.can_arm_itself?'JA':'nee')+' · budget verhogen: '+(rules.can_raise_global_budget?'JA':'nee')+' · leverage: '+(rules.can_use_leverage?'JA':'nee')+' · martingale: '+(rules.can_use_martingale?'JA':'nee');
 }
