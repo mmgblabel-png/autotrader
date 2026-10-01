@@ -330,12 +330,15 @@ strategies:
     order_value_eur: 6.0
     order_size: 0.0
     momentum_pct: 0.5
-    take_profit_pct: 1.0
-    stop_loss_pct: 0.3
-    cooldown_seconds: 60
+    take_profit_pct: 1.5
+    stop_loss_pct: 0.35
+    cooldown_seconds: 600
+    autonomous_min_score: 82
+    autonomous_min_signal_strength: 80
+    autonomous_min_confidence: 0.75
     ema_fast: 9
     ema_slow: 21
-    max_slippage_pct: 0.2
-    max_daily_loss: 15.0
+    max_slippage_pct: 0.12
+    max_daily_loss: 0.25
     max_position_size: 200.0
     max_consecutive_errors: 3
