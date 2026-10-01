@@ -191,15 +191,18 @@ def test_ticker_books_skips_invalid_decimal_rows(monkeypatch):
 
 def test_public_candles_are_normalized_and_sorted(monkeypatch):
     adapter = BitvavoAdapter(api_key="key", api_secret="secret")
-    monkeypatch.setattr(
-        adapter,
-        "_public_request",
-        lambda endpoint, query=None: [
+    calls = []
+
+    def fake_public(endpoint, query=None):
+        calls.append((endpoint, dict(query or {})))
+        return [
             [2000, "2", "3", "1", "2.5", "10"],
             [1000, "1", "2", "0.5", "1.5", "20"],
             [3000, "", "3", "1", "2", "10"],
-        ],
-    )
+        ]
+
+    monkeypatch.setattr(adapter, "_public_request", fake_public)
     rows = adapter.candles("ETH-BTC", interval="1m", limit=120)
+    assert calls == [("/ETH-BTC/candles", {"interval": "1m", "limit": "120"})]
     assert [row["timestamp"] for row in rows] == [1000, 2000]
     assert rows[0]["close"] == Decimal("1.5")
