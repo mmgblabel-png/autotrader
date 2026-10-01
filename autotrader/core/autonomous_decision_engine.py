@@ -275,6 +275,9 @@ class AutonomousDecisionEngine:
                 "signal_strength": round(signal_strength, 2),
                 "signal_direction": signal_direction,
                 "min_signal_strength": round(self.min_signal_strength, 2),
+                "momentum_pct": round(float(best.get("momentum_pct") or 0.0), 6) if best else 0.0,
+                "orderbook_imbalance_pct": round(float(best.get("orderbook_imbalance_pct") or 0.0), 4) if best else 0.0,
+                "expected_slippage_bps": round(float(best.get("expected_slippage_bps") or 0.0), 4) if best else 0.0,
                 "confidence": round(confidence, 4),
                 "recommended_order_eur": round(suggested_eur, 2),
                 "entry_allowed": entry_allowed,
@@ -343,6 +346,13 @@ class AutonomousDecisionEngine:
             if not bool(row.get("quality_ok")):
                 continue
             cfg["_autonomous_entry_allowed"] = bool(row.get("entry_allowed", False))
+            cfg["_autonomous_market_score"] = float(row.get("market_score") or 0.0)
+            cfg["_autonomous_signal_strength"] = float(row.get("signal_strength") or 0.0)
+            cfg["_autonomous_signal_direction"] = str(row.get("signal_direction") or "WAIT")
+            cfg["_autonomous_confidence"] = float(row.get("confidence") or 0.0)
+            cfg["_autonomous_momentum_pct"] = float(row.get("momentum_pct") or 0.0)
+            cfg["_autonomous_orderbook_imbalance_pct"] = float(row.get("orderbook_imbalance_pct") or 0.0)
+            cfg["_autonomous_expected_slippage_bps"] = float(row.get("expected_slippage_bps") or 0.0)
             current = str(cfg.get("symbol", "")).upper()
             desired = str(row.get("desired_market") or current).upper()
             order_eur = max(0.0, float(row.get("recommended_order_eur") or 0.0))
