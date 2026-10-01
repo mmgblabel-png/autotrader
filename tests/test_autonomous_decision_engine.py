@@ -551,3 +551,36 @@ def test_sniper_uses_stricter_strategy_specific_thresholds():
     assert row["min_signal_strength"] == 80
     assert row["entry_allowed"] is False
     assert row["quality_ok"] is False
+
+
+def test_crypto_crypto_is_ranked_for_research_but_not_live_selected_yet():
+    agent = _agent()
+    payload = _router()
+    payload["rankings"]["grid"].insert(
+        0,
+        {
+            "market": "ETH-BTC",
+            "pair_type": "crypto_crypto",
+            "score": 99,
+            "signal_strength": 95,
+            "signal_direction": "RANGE",
+            "eligible": True,
+            "live_execution_supported_now": False,
+        },
+    )
+    engine = AutonomousDecisionEngine({
+        "enabled": True,
+        "apply_live": True,
+        "min_score": 68,
+        "min_confidence": 0.62,
+        "min_signal_strength": 62,
+        "strategy_markets": {
+            "market_maker": ["*"],
+            "grid": ["*"],
+            "sniper": ["*"],
+        },
+    })
+    plan = engine.plan(agent=agent, router_payload=payload, risk_payload=_risk(), armed=True)
+    row = next(x for x in plan["rows"] if x["strategy"] == "GridRunner")
+    assert row["research_crypto_crypto_count"] >= 1
+    assert row["desired_market"] != "ETH-BTC"
