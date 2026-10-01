@@ -1335,6 +1335,7 @@ def optimization_execution_v2() -> dict[str, object]:
 
     min_exit: dict[str, float] = {}
     targets: dict[str, float] = {}
+    last_fill_at: dict[str, float] = {}
     for strategy in agent._strategies.values():
         symbol = str(strategy._config.get("symbol", "")).upper()
         if not symbol:
@@ -1347,6 +1348,9 @@ def optimization_execution_v2() -> dict[str, object]:
                 mark = 0.0
         snap = agent.profit_supervisor.strategy_snapshot(symbol, strategy.name, mark)
         min_exit[strategy.name] = float(snap.get("min_profit_exit_price") or 0.0)
+        last_fill_at[strategy.name] = float(
+            agent._bitvavo.journal.latest_fill_time(symbol, strategy.name)
+        )
         if strategy.name == "MarketMaker":
             targets[strategy.name] = float(strategy._config.get("cycle_exit_markup_pct", 0.0))
         elif strategy.name.startswith("GridRunner"):
@@ -1360,6 +1364,7 @@ def optimization_execution_v2() -> dict[str, object]:
         min_exit,
         targets,
         float(agent.profit_supervisor.policy.required_entry_edge_pct),
+        last_fill_at,
     )
 
 
