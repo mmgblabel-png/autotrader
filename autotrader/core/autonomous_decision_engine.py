@@ -153,10 +153,7 @@ class AutonomousDecisionEngine:
                 row for row in rankings.get(router_key, [])
                 if bool(row.get("eligible"))
                 and (allow_any or str(row.get("market", "")).upper() in allowed)
-                and (
-                    str(row.get("market", "")).upper() not in reserved_markets
-                    or str(row.get("market", "")).upper() == current
-                )
+                and str(row.get("market", "")).upper() not in reserved_markets
             ]
             risk = risk_rows.get(display, {})
             confidence = float(risk.get("confidence") or 0.0)
