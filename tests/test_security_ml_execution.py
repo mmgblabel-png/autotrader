@@ -3,7 +3,7 @@ import time
 
 from autotrader.api.auth import make_password_hash, verify_login
 from autotrader.core.execution_gateway import ExecutionGateway, ExecutionLimits, ExecutionMode, ExecutionRequest
-from autotrader.ml.shadow import signal_from_recent, walk_forward
+from autotrader.ml.shadow import signal_from_recent, walk_forward, lookahead_analysis, recursive_analysis
 
 
 def req(order_id="abc-1234567890123456", amount="10"):
@@ -99,3 +99,26 @@ def test_gateway_rejects_only_adverse_slippage(monkeypatch):
         "sell-adverse-12345678901", time.time(),
     )
     assert not sell_gateway.evaluate(bad_sell).accepted
+
+
+def test_gateway_reports_central_remaining_exposure(monkeypatch):
+    monkeypatch.setenv("EXECUTION_MODE", "paper")
+    gateway = ExecutionGateway(ExecutionLimits(Decimal("10"), Decimal("50"), Decimal("25"), 50))
+    gateway.restore_daily_state(exposure_eur=Decimal("38"))
+    remaining = gateway.remaining_daily_exposure_eur(
+        pending_reservation_eur=Decimal("7"),
+        safety_buffer_eur=Decimal("0.25"),
+    )
+    assert remaining == Decimal("4.75")
+    assert gateway.status()["remaining_daily_exposure_eur"] == "12"
+
+
+def test_shadow_lookahead_and_recursive_validation_are_non_trading():
+    rows = candles(100)
+    lookahead = lookahead_analysis(rows, minimum_prefix=24)
+    recursive = recursive_analysis(rows, windows=(20, 30, 50, 80))
+    assert lookahead["mismatches"] == 0
+    assert lookahead["has_lookahead_warning"] is False
+    assert recursive["status"] == "ok"
+    assert len(recursive["windows"]) >= 3
+    assert 0 <= recursive["action_agreement_pct"] <= 100
