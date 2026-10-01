@@ -9,6 +9,7 @@ portfolio_goal:
   enabled: true
   starting_equity_eur: 50
   target_equity_eur: 25000
+  target_days: 365
   milestones_eur:
     - 100
     - 250
@@ -149,30 +150,20 @@ autonomous_execution:
   apply_live: true
   min_score: 68.0
   min_confidence: 0.62
+  min_signal_strength: 62.0
   max_size_score: 82.0
   max_size_confidence: 0.75
   exposure_safety_buffer_eur: 0.25
-  switch_cooldown_seconds: 300
+  switch_cooldown_seconds: 120
   strategy_markets:
     market_maker:
       - BTC-EUR
     grid:
-      - SOL-EUR
-      - ADA-EUR
-      - LINK-EUR
-      - DOGE-EUR
+      - "*"
     grid_eth:
-      - ETH-EUR
+      - "*"
     sniper:
-      - XRP-EUR
-      - SOL-EUR
-      - ADA-EUR
-      - LINK-EUR
-      - ETH-EUR
-      - DOGE-EUR
-      - PEPE-EUR
-      - NEX-EUR
-      - BILL-EUR
+      - "*"
   market_thresholds:
     PEPE-EUR:
       min_score: 74.0
