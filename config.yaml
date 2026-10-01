@@ -173,21 +173,6 @@ autonomous_execution:
       - PEPE-EUR
       - NEX-EUR
       - BILL-EUR
-    - NEAR-EUR
-    - AVAX-EUR
-    - HBAR-EUR
-    - SUI-EUR
-    - XLM-EUR
-    - AAVE-EUR
-    - ALGO-EUR
-    - ONDO-EUR
-    - FET-EUR
-    - DOT-EUR
-    - LTC-EUR
-    - BCH-EUR
-    - UNI-EUR
-    - HYPE-EUR
-    - QNT-EUR
   market_thresholds:
     PEPE-EUR:
       min_score: 74.0
@@ -226,6 +211,21 @@ opportunity_router:
     - PEPE-EUR
     - NEX-EUR
     - BILL-EUR
+    - NEAR-EUR
+    - AVAX-EUR
+    - HBAR-EUR
+    - SUI-EUR
+    - XLM-EUR
+    - AAVE-EUR
+    - ALGO-EUR
+    - ONDO-EUR
+    - FET-EUR
+    - DOT-EUR
+    - LTC-EUR
+    - BCH-EUR
+    - UNI-EUR
+    - HYPE-EUR
+    - QNT-EUR
 
 profit_policy:
   estimated_entry_fee_pct: 0.25
