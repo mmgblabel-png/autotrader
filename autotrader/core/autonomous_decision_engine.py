@@ -161,11 +161,18 @@ class AutonomousDecisionEngine:
             )
             allowed = set(self._allowed_markets(key, current))
             allow_any = "*" in allowed
-            candidates = [
+            research_candidates = [
                 row for row in rankings.get(router_key, [])
                 if bool(row.get("eligible"))
                 and (allow_any or str(row.get("market", "")).upper() in allowed)
                 and str(row.get("market", "")).upper() not in reserved_markets
+            ]
+            # Full spot discovery includes crypto/crypto immediately, but live
+            # execution remains fail-closed until quote-aware EUR accounting is
+            # validated end-to-end. Research rankings still expose those rows.
+            candidates = [
+                row for row in research_candidates
+                if bool(row.get("live_execution_supported_now", True))
             ]
             risk = risk_rows.get(display, {})
             confidence = float(risk.get("confidence") or 0.0)
@@ -294,6 +301,11 @@ class AutonomousDecisionEngine:
 
             rows.append({
                 "strategy_key": key,
+                "research_candidate_count": len(research_candidates),
+                "research_crypto_crypto_count": sum(
+                    1 for item in research_candidates
+                    if str(item.get("pair_type") or "") == "crypto_crypto"
+                ),
                 "strategy": display,
                 "current_market": current,
                 "desired_market": desired,
