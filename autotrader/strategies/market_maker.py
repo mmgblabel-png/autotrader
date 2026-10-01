@@ -79,7 +79,16 @@ class MarketMaker(BaseStrategy):
             return
 
         spread_pct, adaptive_momentum = self._update_adaptive_state(mid_price)
-        size: float = cfg.get("order_size", 0.001)
+        quote = symbol.rsplit("-", 1)[1] if "-" in symbol else ""
+        quote_to_eur = float(cfg.get("_quote_to_eur", 1.0 if quote == "EUR" else 0.0) or 0.0)
+        if quote_to_eur <= 0:
+            return
+        order_value_eur = max(0.0, float(cfg.get("order_value_eur", 0.0) or 0.0))
+        dynamic_eur_sizing = order_value_eur > 0
+        if dynamic_eur_sizing:
+            size = order_value_eur / (mid_price * quote_to_eur)
+        else:
+            size = float(cfg.get("order_size", 0.001))
 
         # Never quote more frequently than configured and never stack duplicate
         # active quotes. This reduces churn, fees and accidental order buildup.
@@ -94,8 +103,10 @@ class MarketMaker(BaseStrategy):
             log.info("MM skipped: Bitvavo already has an open BTC-EUR order.")
             return
 
-        # Clamp size
-        size = max(cfg.get("min_order_size", 0.0001), min(size, cfg.get("max_order_size", 1.0)))
+        # Legacy fixed-base sizing keeps its clamp. Dynamic EUR sizing is
+        # normalized against venue precision/minimums by the execution adapter.
+        if not dynamic_eur_sizing:
+            size = max(cfg.get("min_order_size", 0.0001), min(size, cfg.get("max_order_size", 1.0)))
 
         # Require the quoted edge to cover an estimated round-trip cost.
         fee_pct = float(cfg.get("estimated_fee_pct", 0.25)) / 100
@@ -118,10 +129,10 @@ class MarketMaker(BaseStrategy):
                 round(entry_price * (1 + exit_markup_pct), 2),
                 min_profit_exit_price,
             )
-        notional = size * mid_price
+        notional_eur = size * mid_price * quote_to_eur
 
-        # Risk gate
-        if not self._rm.check_order(self.name, notional):
+        # Risk gate is always expressed in EUR, regardless of quote currency.
+        if not self._rm.check_order(self.name, notional_eur):
             return
 
         live_snapshot = bool(cfg.get("_live_balance_snapshot_ready", False))
@@ -132,7 +143,7 @@ class MarketMaker(BaseStrategy):
             available_base = float(cfg.get("_available_base", 0.0))
             cycle_mode = bool(cfg.get("inventory_cycle_mode", True))
             bot_inventory = max(0.0, float(cfg.get("_bot_base_inventory", 0.0)))
-            min_size = float(cfg.get("min_order_size", 0.0001))
+            min_size = 0.0 if dynamic_eur_sizing else float(cfg.get("min_order_size", 0.0001))
             if cycle_mode:
                 if bot_inventory >= min_size:
                     can_bid = False
@@ -201,18 +212,20 @@ class MarketMaker(BaseStrategy):
         if can_bid:
             bid = Order(exchange=exchange, symbol=symbol, side=OrderSide.BUY,
                         order_type=OrderType.LIMIT, quantity=size, price=bid_price,
-                        strategy=self.name)
+                        strategy=self.name, quote_to_eur=quote_to_eur,
+                        notional_eur=size * bid_price * quote_to_eur)
             self._om.register(bid)
             placed = True
-            log.info("BID  %s %.4f @ %.2f  (notional=%.2f)", symbol, size, bid_price, notional)
+            log.info("BID  %s %.8f @ %.8f  (eur=%.2f)", symbol, size, bid_price, size * bid_price * quote_to_eur)
 
         if can_ask:
             ask = Order(exchange=exchange, symbol=symbol, side=OrderSide.SELL,
                         order_type=OrderType.LIMIT, quantity=size, price=ask_price,
-                        strategy=self.name)
+                        strategy=self.name, quote_to_eur=quote_to_eur,
+                        notional_eur=size * ask_price * quote_to_eur)
             self._om.register(ask)
             placed = True
-            log.info("ASK  %s %.4f @ %.2f  (notional=%.2f)", symbol, size, ask_price, notional)
+            log.info("ASK  %s %.8f @ %.8f  (eur=%.2f)", symbol, size, ask_price, size * ask_price * quote_to_eur)
 
         if placed:
             cfg["_last_quote_ts"] = now
