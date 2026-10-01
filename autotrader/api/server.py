@@ -970,7 +970,7 @@ def live_readiness():
                 journal_states[key] = {"nonterminal_count": -1}
         if strategy.name == "MarketMaker":
             target_edges[key] = float(strategy._config.get("cycle_exit_markup_pct", 0.0))
-        elif strategy.name == "GridRunner":
+        elif strategy.name.startswith("GridRunner"):
             target_edges[key] = float(strategy._config.get("exit_markup_pct", 0.0))
         elif strategy.name == "SniperBot":
             target_edges[key] = float(strategy._config.get("take_profit_pct", 0.0))
@@ -1470,6 +1470,7 @@ def strategies_status():
         "market_maker": "MarketMaker",
         "arbitrage": "ArbitrageHunter",
         "grid": "GridRunner",
+        "grid_eth": "GridRunnerETH",
         "sniper": "SniperBot",
     }
     active = get_agent().list_strategies()
@@ -1833,11 +1834,12 @@ def bitpanda_fusion_balance_analysis() -> dict[str, object]:
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
-_VALID: Final[set[str]] = {"market_maker", "arbitrage", "grid", "sniper"}
+_VALID: Final[set[str]] = {"market_maker", "arbitrage", "grid", "grid_eth", "sniper"}
 _STRATEGY_DISPLAY_NAMES: Final[dict[str, str]] = {
     "market_maker": "MarketMaker",
     "arbitrage": "ArbitrageHunter",
     "grid": "GridRunner",
+    "grid_eth": "GridRunnerETH",
     "sniper": "SniperBot",
 }
 
