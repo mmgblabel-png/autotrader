@@ -796,13 +796,33 @@ async def _shadow_strategy_loop(app: FastAPI, agent: AutoTrader) -> None:
                     symbol = str(strat_cfg.get("symbol", "")).upper().strip()
                     if not symbol:
                         continue
-                    price = float(await asyncio.to_thread(agent._bitvavo.ticker_price, symbol))
+                    router_snap = app.state.opportunity_router.market_snapshot(symbol)
+                    if (
+                        router_snap
+                        and float(router_snap.get("mid") or 0.0) > 0
+                        and float(router_snap.get("age_seconds") or 9999.0) <= 30.0
+                    ):
+                        price = float(router_snap["mid"])
+                    else:
+                        price = float(
+                            await asyncio.to_thread(agent._bitvavo.ticker_price, symbol)
+                        )
                     app.state.shadow_strategy_engine.update(name, price, strat_cfg)
                     updated_names.append(name)
                 risk_cfg = agent._config.get("leverage_martingale_risk_lab", {}) or {}
                 if bool(risk_cfg.get("enabled", False)):
                     risk_symbol = str(risk_cfg.get("symbol", "BTC-EUR")).upper().strip()
-                    risk_price = float(await asyncio.to_thread(agent._bitvavo.ticker_price, risk_symbol))
+                    risk_snap = app.state.opportunity_router.market_snapshot(risk_symbol)
+                    if (
+                        risk_snap
+                        and float(risk_snap.get("mid") or 0.0) > 0
+                        and float(risk_snap.get("age_seconds") or 9999.0) <= 30.0
+                    ):
+                        risk_price = float(risk_snap["mid"])
+                    else:
+                        risk_price = float(
+                            await asyncio.to_thread(agent._bitvavo.ticker_price, risk_symbol)
+                        )
                     app.state.leverage_martingale_risk_lab.update(risk_price)
                 first_success = getattr(app.state, "shadow_strategy_last_at", 0.0) == 0.0
                 app.state.shadow_strategy_last_at = time.time()
