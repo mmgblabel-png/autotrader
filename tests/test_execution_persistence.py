@@ -174,3 +174,44 @@ def test_three_hour_activity_converts_base_fee_to_eur(tmp_path):
     assert summary["fees_eur"] == pytest.approx(0.0105)
     assert summary["unpriced_fee_count"] == 0
     journal.close()
+
+
+
+def test_reconcile_error_cannot_downgrade_fully_filled_order(tmp_path):
+    journal = OrderJournal(str(tmp_path / "orders.sqlite3"))
+    cid = "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb"
+    journal.record_intent(
+        client_order_id=cid, market="BTC-EUR", side="sell",
+        order_type="limit", amount="0.0001", price="75020",
+    )
+    journal.set_strategy(cid, "MarketMaker")
+    journal.record_fill(cid, {
+        "id": "btc-terminal-fill",
+        "amount": "0.0001",
+        "price": "75020",
+        "fee": "0.012",
+        "feeCurrency": "EUR",
+    })
+
+    journal.update(cid, "error", {"category": "exchange_reject"}, error="exchange_reject")
+
+    row = journal.get(cid)
+    assert row["status"] == "filled"
+    assert row["last_error"] is None
+    journal.close()
+
+
+def test_reconcile_error_cannot_downgrade_existing_terminal_status(tmp_path):
+    journal = OrderJournal(str(tmp_path / "orders.sqlite3"))
+    cid = "cccccccc-cccc-cccc-cccc-cccccccccccc"
+    journal.record_intent(
+        client_order_id=cid, market="ETH-EUR", side="buy",
+        order_type="limit", amount="0.0025", price="2400",
+    )
+    journal.update(cid, "canceled")
+    journal.update(cid, "error", {"category": "not_found"}, error="not_found")
+
+    row = journal.get(cid)
+    assert row["status"] == "canceled"
+    assert row["last_error"] is None
+    journal.close()
