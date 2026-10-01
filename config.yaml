@@ -224,6 +224,7 @@ profit_policy:
   estimated_exit_fee_pct: 0.25
   estimated_slippage_each_leg_pct: 0.05
   min_expected_net_edge_pct: 0.15
+  use_live_fee_tier_for_route_gates: true
 
 strategies:
   market_maker:
