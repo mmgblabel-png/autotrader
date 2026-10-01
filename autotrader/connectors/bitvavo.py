@@ -17,7 +17,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 import uuid
-from decimal import Decimal, ROUND_DOWN, ROUND_UP
+from decimal import Decimal, InvalidOperation, ROUND_DOWN, ROUND_UP
 from typing import Any
 
 from autotrader.core.execution_gateway import ExecutionGateway, ExecutionRequest
@@ -167,7 +167,9 @@ class BitvavoAdapter:
                 ask = Decimal(str(row["ask"]))
                 bid_size = Decimal(str(row["bidSize"]))
                 ask_size = Decimal(str(row["askSize"]))
-            except (KeyError, TypeError, ValueError):
+            except (KeyError, TypeError, ValueError, InvalidOperation):
+                continue
+            if not all(value.is_finite() for value in (bid, ask, bid_size, ask_size)):
                 continue
             if min(bid, ask, bid_size, ask_size) <= 0 or ask < bid:
                 continue
