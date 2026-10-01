@@ -733,6 +733,8 @@ async def _shadow_strategy_loop(app: FastAPI, agent: AutoTrader) -> None:
     cfg = agent._config.get("shadow_lab", {}) or {}
     strategies = cfg.get("strategies", {}) or {}
     dynamic_per_strategy = max(1, int(cfg.get("dynamic_markets_per_strategy", 12)))
+    backfill_limit = max(0, min(720, int(cfg.get("backfill_candles", 120))))
+    backfill_interval = str(cfg.get("backfill_interval", "1m"))
     while True:
         try:
             if bool(cfg.get("enabled", True)):
@@ -767,6 +769,41 @@ async def _shadow_strategy_loop(app: FastAPI, agent: AutoTrader) -> None:
                         strat_cfg = dict(base_cfg)
                         strat_cfg["symbol"] = symbol
                         dynamic_configs[dynamic_name] = strat_cfg
+                        attempted = getattr(app.state, "shadow_backfill_attempted", set())
+                        warmup_target = max(
+                            int(strat_cfg.get("lookback", 0) or 0),
+                            int(strat_cfg.get("ema_slow", 0) or 0) * 2,
+                            24,
+                        )
+                        if (
+                            backfill_limit > 0
+                            and dynamic_name not in attempted
+                            and app.state.shadow_strategy_engine.sample_count(dynamic_name) < warmup_target
+                        ):
+                            attempted.add(dynamic_name)
+                            app.state.shadow_backfill_attempted = attempted
+                            try:
+                                candles = await asyncio.to_thread(
+                                    agent._bitvavo.candles,
+                                    symbol,
+                                    interval=backfill_interval,
+                                    limit=backfill_limit,
+                                )
+                                for candle in candles:
+                                    close = float(candle.get("close") or 0.0)
+                                    if close > 0:
+                                        app.state.shadow_strategy_engine.update(
+                                            dynamic_name,
+                                            close,
+                                            strat_cfg,
+                                            persist=False,
+                                        )
+                            except Exception as backfill_exc:
+                                log.info(
+                                    "Shadow candle warm-up skipped: candidate=%s error=%s",
+                                    dynamic_name,
+                                    type(backfill_exc).__name__,
+                                )
                         app.state.shadow_strategy_engine.update(
                             dynamic_name,
                             price,
@@ -960,6 +997,7 @@ async def _lifespan(app: FastAPI):
     app.state.shadow_strategy_last_at = 0.0
     app.state.shadow_strategy_error = None
     app.state.shadow_dynamic_configs = {}
+    app.state.shadow_backfill_attempted = set()
     app.state.allocator_v2 = StrategyAllocatorV2(agent._config.get("allocator_v2", {}) or {})
     universe_cfg = agent._config.get("market_universe", {}) or {}
     app.state.market_universe = MultiExchangeMarketUniverse(
