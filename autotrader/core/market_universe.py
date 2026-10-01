@@ -55,6 +55,7 @@ class MultiExchangeMarketUniverse:
         }
         self.updated_at = 0.0
         self.error: str | None = None
+        self.venue_errors: dict[str, str] = {}
 
     @staticmethod
     def _pair(market: str, base: str = "", quote: str = "") -> tuple[str, str]:
@@ -140,12 +141,18 @@ class MultiExchangeMarketUniverse:
     def refresh(self) -> None:
         if not self.enabled:
             return
+        venue_errors: dict[str, str] = {}
+        bitvavo_rows: list[dict[str, Any]] = []
+        coinbase_rows: list[dict[str, Any]] = []
+        overlap: list[dict[str, Any]] = []
+        graph: dict[str, list[tuple[str, float]]] = {}
+        books: dict[str, dict[str, Any]] = {}
+
         try:
             market_rows = self.bitvavo.markets()
             books = self.bitvavo.ticker_books()
             graph = self._market_graph(books)
 
-            bitvavo_rows: list[dict[str, Any]] = []
             for raw in market_rows:
                 if not isinstance(raw, dict):
                     continue
@@ -200,125 +207,131 @@ class MultiExchangeMarketUniverse:
                     ),
                 })
 
-            coinbase_products = self.coinbase.list_spot_products()
-            tradable_products = [x for x in coinbase_products if bool(x.get("tradable"))]
-            if tradable_products:
-                start = self._coinbase_cursor % len(tradable_products)
-                batch = [
-                    tradable_products[(start + offset) % len(tradable_products)]
-                    for offset in range(min(self.coinbase_book_batch_size, len(tradable_products)))
-                ]
-                self._coinbase_cursor = (start + len(batch)) % len(tradable_products)
-                for product in batch:
-                    product_id = str(product.get("product_id") or "")
-                    try:
-                        book = self.coinbase.top_of_book(product_id)
-                        self._coinbase_book_cache[product_id] = {
-                            "bid": float(book.bid_price),
-                            "ask": float(book.ask_price),
-                            "bid_size": float(book.bid_size),
-                            "ask_size": float(book.ask_size),
-                            "observed_at": time.time(),
-                        }
-                    except Exception:
-                        continue
-
-            coinbase_rows: list[dict[str, Any]] = []
-            for product in coinbase_products:
-                market = str(product.get("product_id") or "").upper()
-                base, quote = self._pair(
-                    market, str(product.get("base") or ""), str(product.get("quote") or "")
-                )
-                if not market or not base or not quote:
-                    continue
-                cached = self._coinbase_book_cache.get(market)
-                mid = spread_bps = depth_quote = None
-                if cached:
-                    bid = float(cached["bid"])
-                    ask = float(cached["ask"])
-                    mid = (bid + ask) / 2.0
-                    spread_bps = (ask - bid) / mid * 10000.0 if mid > 0 else None
-                    depth_quote = min(
-                        bid * float(cached["bid_size"]),
-                        ask * float(cached["ask_size"]),
-                    )
-                quote_to_eur = self._bridge_rate(quote, graph, self.max_bridge_hops)
-                try:
-                    price = float(product.get("price") or 0.0)
-                    volume = float(product.get("volume_24h") or 0.0)
-                    volume_quote = price * volume if price > 0 and volume > 0 else None
-                except (TypeError, ValueError):
-                    volume_quote = None
-                volume_eur = (
-                    volume_quote * quote_to_eur
-                    if volume_quote is not None and quote_to_eur is not None else None
-                )
-                depth_eur = (
-                    depth_quote * quote_to_eur
-                    if depth_quote is not None and quote_to_eur is not None else None
-                )
-                coinbase_rows.append({
-                    "venue": "coinbase",
-                    "market": market,
-                    "base": base,
-                    "quote": quote,
-                    "quote_kind": quote_kind(quote),
-                    "pair_type": "crypto_crypto" if quote_kind(quote) != "fiat" else "crypto_fiat",
-                    "status": "trading" if bool(product.get("tradable")) else "unavailable",
-                    "tradable": bool(product.get("tradable")),
-                    "mid_quote": round(mid, 12) if mid is not None else None,
-                    "quote_to_eur": round(quote_to_eur, 12) if quote_to_eur is not None else None,
-                    "mid_eur": round(mid * quote_to_eur, 8)
-                    if mid is not None and quote_to_eur is not None else None,
-                    "spread_bps": round(spread_bps, 4) if spread_bps is not None else None,
-                    "top_depth_quote": round(depth_quote, 8) if depth_quote is not None else None,
-                    "top_depth_eur": round(depth_eur, 2) if depth_eur is not None else None,
-                    "volume_24h_eur": round(volume_eur, 2) if volume_eur is not None else None,
-                    "price_change_24h_pct": product.get("price_change_24h_pct"),
-                    "book_sampled": bool(cached),
-                    "book_age_seconds": round(time.time() - float(cached["observed_at"]), 2)
-                    if cached else None,
-                    "live_execution_supported_now": False,
-                    "execution_note": "Coinbase universe is research/arbitrage-shadow only",
-                })
-
-            for row in bitvavo_rows:
-                row["market_quality_score"] = self._score(
-                    spread_bps=row.get("spread_bps"),
-                    top_depth_eur=row.get("top_depth_eur"),
-                    volume_24h_eur=None,
-                )
-            for row in coinbase_rows:
-                row["market_quality_score"] = self._score(
-                    spread_bps=row.get("spread_bps"),
-                    top_depth_eur=row.get("top_depth_eur"),
-                    volume_24h_eur=row.get("volume_24h_eur"),
-                )
-
-            bv_by_market = {x["market"]: x for x in bitvavo_rows if x["tradable"]}
-            cb_by_market = {x["market"]: x for x in coinbase_rows if x["tradable"]}
-            overlap = []
-            for market in sorted(set(bv_by_market) & set(cb_by_market)):
-                bv = bv_by_market[market]
-                cb = cb_by_market[market]
-                overlap.append({
-                    "market": market,
-                    "base": bv["base"],
-                    "quote": bv["quote"],
-                    "pair_type": bv["pair_type"],
-                    "bitvavo_quality_score": bv["market_quality_score"],
-                    "coinbase_quality_score": cb["market_quality_score"],
-                    "bitvavo_book": bv.get("spread_bps") is not None,
-                    "coinbase_book": cb.get("spread_bps") is not None,
-                })
-
             self._bitvavo_rows = bitvavo_rows
-            self._coinbase_rows = coinbase_rows
-            self._overlap = overlap
-            self.updated_at = time.time()
-            self.error = None
-            self._summary = self._build_summary()
         except Exception as exc:
+            venue_errors["bitvavo"] = f"{type(exc).__name__}: {str(exc)[:160]}"
+
+        try:
+        coinbase_products = self.coinbase.list_spot_products()
+        tradable_products = [x for x in coinbase_products if bool(x.get("tradable"))]
+        if tradable_products:
+            start = self._coinbase_cursor % len(tradable_products)
+            batch = [
+                tradable_products[(start + offset) % len(tradable_products)]
+                for offset in range(min(self.coinbase_book_batch_size, len(tradable_products)))
+            ]
+            self._coinbase_cursor = (start + len(batch)) % len(tradable_products)
+            for product in batch:
+                product_id = str(product.get("product_id") or "")
+                try:
+                    book = self.coinbase.top_of_book(product_id)
+                    self._coinbase_book_cache[product_id] = {
+                        "bid": float(book.bid_price),
+                        "ask": float(book.ask_price),
+                        "bid_size": float(book.bid_size),
+                        "ask_size": float(book.ask_size),
+                        "observed_at": time.time(),
+                    }
+                except Exception:
+                    continue
+
+        coinbase_rows: list[dict[str, Any]] = []
+        for product in coinbase_products:
+            market = str(product.get("product_id") or "").upper()
+            base, quote = self._pair(
+                market, str(product.get("base") or ""), str(product.get("quote") or "")
+            )
+            if not market or not base or not quote:
+                continue
+            cached = self._coinbase_book_cache.get(market)
+            mid = spread_bps = depth_quote = None
+            if cached:
+                bid = float(cached["bid"])
+                ask = float(cached["ask"])
+                mid = (bid + ask) / 2.0
+                spread_bps = (ask - bid) / mid * 10000.0 if mid > 0 else None
+                depth_quote = min(
+                    bid * float(cached["bid_size"]),
+                    ask * float(cached["ask_size"]),
+                )
+            quote_to_eur = self._bridge_rate(quote, graph, self.max_bridge_hops)
+            try:
+                price = float(product.get("price") or 0.0)
+                volume = float(product.get("volume_24h") or 0.0)
+                volume_quote = price * volume if price > 0 and volume > 0 else None
+            except (TypeError, ValueError):
+                volume_quote = None
+            volume_eur = (
+                volume_quote * quote_to_eur
+                if volume_quote is not None and quote_to_eur is not None else None
+            )
+            depth_eur = (
+                depth_quote * quote_to_eur
+                if depth_quote is not None and quote_to_eur is not None else None
+            )
+            coinbase_rows.append({
+                "venue": "coinbase",
+                "market": market,
+                "base": base,
+                "quote": quote,
+                "quote_kind": quote_kind(quote),
+                "pair_type": "crypto_crypto" if quote_kind(quote) != "fiat" else "crypto_fiat",
+                "status": "trading" if bool(product.get("tradable")) else "unavailable",
+                "tradable": bool(product.get("tradable")),
+                "mid_quote": round(mid, 12) if mid is not None else None,
+                "quote_to_eur": round(quote_to_eur, 12) if quote_to_eur is not None else None,
+                "mid_eur": round(mid * quote_to_eur, 8)
+                if mid is not None and quote_to_eur is not None else None,
+                "spread_bps": round(spread_bps, 4) if spread_bps is not None else None,
+                "top_depth_quote": round(depth_quote, 8) if depth_quote is not None else None,
+                "top_depth_eur": round(depth_eur, 2) if depth_eur is not None else None,
+                "volume_24h_eur": round(volume_eur, 2) if volume_eur is not None else None,
+                "price_change_24h_pct": product.get("price_change_24h_pct"),
+                "book_sampled": bool(cached),
+                "book_age_seconds": round(time.time() - float(cached["observed_at"]), 2)
+                if cached else None,
+                "live_execution_supported_now": False,
+                "execution_note": "Coinbase universe is research/arbitrage-shadow only",
+            })
+
+        for row in bitvavo_rows:
+            row["market_quality_score"] = self._score(
+                spread_bps=row.get("spread_bps"),
+                top_depth_eur=row.get("top_depth_eur"),
+                volume_24h_eur=None,
+            )
+        for row in coinbase_rows:
+            row["market_quality_score"] = self._score(
+                spread_bps=row.get("spread_bps"),
+                top_depth_eur=row.get("top_depth_eur"),
+                volume_24h_eur=row.get("volume_24h_eur"),
+            )
+
+        bv_by_market = {x["market"]: x for x in bitvavo_rows if x["tradable"]}
+        cb_by_market = {x["market"]: x for x in coinbase_rows if x["tradable"]}
+        overlap = []
+        for market in sorted(set(bv_by_market) & set(cb_by_market)):
+            bv = bv_by_market[market]
+            cb = cb_by_market[market]
+            overlap.append({
+                "market": market,
+                "base": bv["base"],
+                "quote": bv["quote"],
+                "pair_type": bv["pair_type"],
+                "bitvavo_quality_score": bv["market_quality_score"],
+                "coinbase_quality_score": cb["market_quality_score"],
+                "bitvavo_book": bv.get("spread_bps") is not None,
+                "coinbase_book": cb.get("spread_bps") is not None,
+            })
+
+        self._bitvavo_rows = bitvavo_rows
+        self._coinbase_rows = coinbase_rows
+        self._overlap = overlap
+        self.updated_at = time.time()
+        self.error = None
+        self._summary = self._build_summary()
+        except Exception as exc:
+            venue_errors["coinbase"] = f"{type(exc).__name__}: {str(exc)[:160]}"
             self.error = type(exc).__name__
             self.updated_at = time.time()
             self._summary = self._build_summary()
@@ -349,6 +362,7 @@ class MultiExchangeMarketUniverse:
             "live_orders_sent": False,
             "updated_at": self.updated_at,
             "error": self.error,
+            "venue_errors": dict(self.venue_errors),
             "bitvavo": counts(bv),
             "coinbase": counts(cb),
             "exact_cross_venue_overlap": len(self._overlap),
