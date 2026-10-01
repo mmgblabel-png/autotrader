@@ -126,11 +126,12 @@ allocator_v2:
 
 execution_v2:
   enabled: true
-  apply_live: false
-  stale_after_seconds: 180
+  apply_live: true
+  stale_after_seconds: 90
+  manage_interval_seconds: 15
   min_reprice_move_bps: 4.0
   order_refresh_tolerance_bps: 4.0
-  max_order_age_seconds: 900
+  max_order_age_seconds: 300
   filled_order_delay_seconds: 60
 
 calculated_risk:
