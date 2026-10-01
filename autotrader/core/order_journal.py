@@ -285,15 +285,15 @@ class OrderJournal:
                 """,
                 (cutoff,),
             ).fetchall()
-            fill_row = self._db.execute(
+            fill_rows = self._db.execute(
                 """
-                SELECT COUNT(*) AS n,
-                       COALESCE(SUM(CAST(NULLIF(fee,'') AS REAL)),0) AS fees
-                FROM fills
-                WHERE observed_at>=?
+                SELECT f.fee, f.price, f.raw_json, o.market
+                FROM fills AS f
+                JOIN orders AS o ON o.client_order_id=f.client_order_id
+                WHERE f.observed_at>=?
                 """,
                 (cutoff,),
-            ).fetchone()
+            ).fetchall()
             open_row = self._db.execute(
                 """
                 SELECT COUNT(*) AS n
@@ -305,12 +305,30 @@ class OrderJournal:
         error_count = sum(
             counts.get(key, 0) for key in ("rejected", "error", "blocked")
         )
+        fees_eur = Decimal("0")
+        unpriced_fee_count = 0
+        for row in fill_rows:
+            try:
+                fee = abs(Decimal(str(row["fee"] or "0")))
+                price = abs(Decimal(str(row["price"] or "0")))
+                base, _, quote = str(row["market"] or "").upper().partition("-")
+                payload = json.loads(row["raw_json"] or "{}")
+                fee_currency = str(payload.get("feeCurrency") or quote).upper()
+                if fee_currency == quote or not fee_currency:
+                    fees_eur += fee
+                elif fee_currency == base and price > 0:
+                    fees_eur += fee * price
+                elif fee > 0:
+                    unpriced_fee_count += 1
+            except Exception:
+                unpriced_fee_count += 1
         return {
             "orders_created": sum(counts.values()),
             "status_counts": counts,
             "error_orders": error_count,
-            "fills": int((fill_row or {})["n"] or 0) if fill_row else 0,
-            "fees_eur": float((fill_row or {})["fees"] or 0.0) if fill_row else 0.0,
+            "fills": len(fill_rows),
+            "fees_eur": float(fees_eur),
+            "unpriced_fee_count": unpriced_fee_count,
             "open_orders_now": int((open_row or {})["n"] or 0) if open_row else 0,
         }
 
