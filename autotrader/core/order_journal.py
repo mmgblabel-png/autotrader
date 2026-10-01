@@ -126,13 +126,73 @@ class OrderJournal:
         midnight = current - (utc.tm_hour * 3600 + utc.tm_min * 60 + utc.tm_sec)
         with self._lock:
             rows = self._db.execute(
-                "SELECT notional_eur FROM execution_ledger WHERE accepted_at>=?",
+                """
+                SELECT e.notional_eur
+                FROM execution_ledger AS e
+                JOIN orders AS o ON o.client_order_id=e.client_order_id
+                WHERE e.accepted_at>=? AND lower(o.side)='buy'
+                """,
                 (midnight,),
             ).fetchall()
         total = Decimal("0")
         for row in rows:
             try:
                 total += Decimal(str(row["notional_eur"]))
+            except Exception:
+                continue
+        return max(total, Decimal("0"))
+
+    def current_execution_exposure_eur(self) -> Decimal:
+        """Return current bot-owned EUR capital at risk.
+
+        Exposure is inventory cost from confirmed BUY fills plus the unfilled
+        remainder of active BUY orders. Completed SELLs and canceled/rejected
+        BUYs therefore release headroom instead of permanently consuming the
+        daily capital-at-risk cap.
+        """
+        with self._lock:
+            pairs = self._db.execute(
+                """
+                SELECT DISTINCT market, strategy
+                FROM orders
+                WHERE strategy<>'' AND lower(side) IN ('buy','sell')
+                """
+            ).fetchall()
+            open_buys = self._db.execute(
+                """
+                SELECT o.client_order_id, o.amount, o.price,
+                       COALESCE(SUM(CAST(NULLIF(f.amount,'') AS REAL)),0) AS filled_amount,
+                       e.notional_eur
+                FROM orders AS o
+                LEFT JOIN fills AS f ON f.client_order_id=o.client_order_id
+                LEFT JOIN execution_ledger AS e ON e.client_order_id=o.client_order_id
+                WHERE lower(o.side)='buy'
+                  AND o.status NOT IN ('filled','canceled','cancelled','rejected','error','expired','shadow','blocked')
+                GROUP BY o.client_order_id
+                """
+            ).fetchall()
+
+        total = Decimal("0")
+        for pair in pairs:
+            perf = self.strategy_performance(
+                str(pair["market"]),
+                str(pair["strategy"]),
+                mark_price=Decimal("0"),
+                estimated_exit_cost_pct=Decimal("0"),
+            )
+            total += max(Decimal("0"), Decimal(str(perf["inventory_cost_eur"])))
+
+        for row in open_buys:
+            try:
+                amount = max(Decimal("0"), Decimal(str(row["amount"] or "0")))
+                filled = max(Decimal("0"), Decimal(str(row["filled_amount"] or "0")))
+                remaining = max(Decimal("0"), amount - filled)
+                if remaining <= 0:
+                    continue
+                if row["price"] not in {None, ""}:
+                    total += remaining * Decimal(str(row["price"]))
+                elif row["notional_eur"] not in {None, ""} and amount > 0:
+                    total += Decimal(str(row["notional_eur"])) * (remaining / amount)
             except Exception:
                 continue
         return max(total, Decimal("0"))
@@ -145,6 +205,7 @@ class OrderJournal:
                 SELECT client_order_id, amount, price, created_at
                 FROM orders
                 WHERE price IS NOT NULL
+                  AND lower(side)='buy'
                   AND status NOT IN ('rejected','error','shadow','blocked')
                 """
             ).fetchall()
