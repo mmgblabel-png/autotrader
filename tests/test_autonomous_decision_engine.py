@@ -11,7 +11,10 @@ class FakeOM:
 
     def open_orders(self, strategy=None):
         if strategy is None:
-            return []
+            rows = []
+            for values in self.open_by_strategy.values():
+                rows.extend(values)
+            return rows
         return list(self.open_by_strategy.get(strategy, []))
 
 
@@ -312,7 +315,8 @@ def test_daily_exposure_headroom_pauses_new_entries_below_exchange_minimum():
     })
     plan = engine.plan(agent=agent, router_payload=_router(), risk_payload=_risk(), armed=True)
     rows = {row["strategy"]: row for row in plan["rows"]}
-    assert rows["GridRunner"]["daily_exposure_headroom_eur"] == 2.0
+    assert rows["GridRunner"]["raw_daily_exposure_headroom_eur"] == 2.0
+    assert rows["GridRunner"]["daily_exposure_headroom_eur"] == 1.75
     assert rows["GridRunner"]["exposure_headroom_ok"] is False
     assert rows["GridRunner"]["entry_allowed"] is False
     assert rows["GridRunner"]["reason"] == "daily_exposure_headroom_low"
@@ -341,7 +345,8 @@ def test_shared_exposure_headroom_is_reserved_across_strategies():
     # MarketMaker reserves first because it is also flat in this fixture.
     assert rows["MarketMaker"]["entry_allowed"] is True
     assert rows["MarketMaker"]["recommended_order_eur"] == 10.0
-    assert rows["GridRunner"]["daily_exposure_headroom_eur"] == 2.0
+    assert rows["GridRunner"]["raw_daily_exposure_headroom_eur"] == 12.0
+    assert rows["GridRunner"]["daily_exposure_headroom_eur"] == 1.75
     assert rows["GridRunner"]["entry_allowed"] is False
 
 
@@ -375,3 +380,63 @@ def test_grid_exit_path_ignores_entry_pause():
     orders = om.open_orders("GridRunner")
     assert len(orders) == 1
     assert orders[0].side is OrderSide.SELL
+
+
+def test_pending_buy_reservation_prevents_cross_strategy_exposure_race():
+    from autotrader.core.order_manager import OrderSide, OrderStatus
+
+    pending_mm_buy = SimpleNamespace(
+        side=OrderSide.BUY,
+        status=OrderStatus.PENDING,
+        quantity=0.07,
+        price=100.0,
+        strategy="MarketMaker",
+    )
+    agent = _agent(
+        exposure=38.0,
+        max_exposure=50.0,
+        open_by_strategy={"MarketMaker": [pending_mm_buy]},
+    )
+    engine = AutonomousDecisionEngine({
+        "enabled": True,
+        "apply_live": True,
+        "min_score": 68,
+        "min_confidence": 0.62,
+        "minimum_live_order_eur": 5.0,
+        "exposure_safety_buffer_eur": 0.25,
+        "strategy_markets": {
+            "market_maker": ["BTC-EUR"],
+            "grid": ["SOL-EUR", "ETH-EUR"],
+            "sniper": ["XRP-EUR", "ADA-EUR"],
+        },
+    })
+    plan = engine.plan(agent=agent, router_payload=_router(), risk_payload=_risk(), armed=True)
+    rows = {row["strategy"]: row for row in plan["rows"]}
+    assert rows["GridRunner"]["raw_daily_exposure_headroom_eur"] == 12.0
+    assert rows["GridRunner"]["pending_buy_reservation_eur"] == 7.0
+    assert rows["GridRunner"]["daily_exposure_headroom_eur"] == 4.75
+    assert rows["GridRunner"]["entry_allowed"] is False
+    assert rows["GridRunner"]["reason"] == "daily_exposure_headroom_low"
+
+
+def test_exposure_safety_buffer_blocks_borderline_minimum_order():
+    agent = _agent(exposure=44.8, max_exposure=50.0)
+    engine = AutonomousDecisionEngine({
+        "enabled": True,
+        "apply_live": True,
+        "min_score": 68,
+        "min_confidence": 0.62,
+        "minimum_live_order_eur": 5.0,
+        "exposure_safety_buffer_eur": 0.25,
+        "strategy_markets": {
+            "market_maker": ["BTC-EUR"],
+            "grid": ["SOL-EUR", "ETH-EUR"],
+            "sniper": ["XRP-EUR", "ADA-EUR"],
+        },
+    })
+    plan = engine.plan(agent=agent, router_payload=_router(), risk_payload=_risk(), armed=True)
+    rows = {row["strategy"]: row for row in plan["rows"]}
+    assert rows["MarketMaker"]["raw_daily_exposure_headroom_eur"] == 5.2
+    assert rows["MarketMaker"]["daily_exposure_headroom_eur"] == 4.95
+    assert rows["MarketMaker"]["entry_allowed"] is False
+    assert rows["GridRunner"]["entry_allowed"] is False
