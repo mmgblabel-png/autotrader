@@ -47,7 +47,7 @@ class OpportunityRouter:
         )
         self.markets = [str(x).upper() for x in raw]
         self.auto_discover_eur = bool(self.config.get("auto_discover_eur", False))
-        self.max_markets = max(1, min(100, int(self.config.get("max_markets", 60))))
+        self.max_markets = max(1, min(500, int(self.config.get("max_markets", 250))))
         self.discovery_refresh_seconds = max(
             60.0, float(self.config.get("discovery_refresh_seconds", 1800.0))
         )
@@ -96,9 +96,19 @@ class OpportunityRouter:
         self._discover_markets()
         latest: dict[str, MarketSnapshot] = {}
         errors: dict[str, str] = {}
+        bulk_books: dict[str, Any] = {}
+        if hasattr(self.adapter, "ticker_books"):
+            try:
+                raw_books = self.adapter.ticker_books()
+                if isinstance(raw_books, dict):
+                    bulk_books = raw_books
+            except Exception:
+                bulk_books = {}
         for market in self.markets:
             try:
-                book = self.adapter.ticker_book(market)
+                book = bulk_books.get(market) if bulk_books else None
+                if not isinstance(book, dict):
+                    book = self.adapter.ticker_book(market)
                 bid = float(book["bid"])
                 ask = float(book["ask"])
                 bid_size = float(book["bid_size"])
