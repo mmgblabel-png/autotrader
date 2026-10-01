@@ -215,3 +215,64 @@ def test_reconcile_error_cannot_downgrade_existing_terminal_status(tmp_path):
     assert row["status"] == "canceled"
     assert row["last_error"] is None
     journal.close()
+
+
+
+def test_journal_startup_repairs_legacy_error_when_fills_prove_full_execution(tmp_path):
+    path = tmp_path / "orders.sqlite3"
+    journal = OrderJournal(str(path))
+    cid = "dddddddd-dddd-dddd-dddd-dddddddddddd"
+    journal.record_intent(
+        client_order_id=cid, market="BTC-EUR", side="sell",
+        order_type="limit", amount="0.0001", price="75020",
+    )
+    journal.set_strategy(cid, "MarketMaker")
+    journal.record_fill(cid, {
+        "id": "legacy-full-fill",
+        "amount": "0.0001",
+        "price": "75020",
+        "fee": "0.012",
+        "feeCurrency": "EUR",
+    })
+    with journal._lock:
+        journal._db.execute(
+            "UPDATE orders SET status='error', last_error='legacy_cancel_error' WHERE client_order_id=?",
+            (cid,),
+        )
+        journal._db.commit()
+    journal.close()
+
+    reopened = OrderJournal(str(path))
+    row = reopened.get(cid)
+    assert row["status"] == "filled"
+    assert row["last_error"] is None
+    reopened.close()
+
+
+def test_journal_startup_keeps_error_when_fills_are_partial(tmp_path):
+    path = tmp_path / "orders.sqlite3"
+    journal = OrderJournal(str(path))
+    cid = "eeeeeeee-eeee-eeee-eeee-eeeeeeeeeeee"
+    journal.record_intent(
+        client_order_id=cid, market="BTC-EUR", side="sell",
+        order_type="limit", amount="0.0001", price="75020",
+    )
+    journal.record_fill(cid, {
+        "id": "legacy-partial-fill",
+        "amount": "0.00005",
+        "price": "75020",
+        "fee": "0.006",
+        "feeCurrency": "EUR",
+    })
+    with journal._lock:
+        journal._db.execute(
+            "UPDATE orders SET status='error', last_error='legacy_cancel_error' WHERE client_order_id=?",
+            (cid,),
+        )
+        journal._db.commit()
+    journal.close()
+
+    reopened = OrderJournal(str(path))
+    row = reopened.get(cid)
+    assert row["status"] == "error"
+    reopened.close()
