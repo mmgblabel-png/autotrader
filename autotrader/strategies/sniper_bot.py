@@ -52,8 +52,14 @@ class SniperBot(BaseStrategy):
         exchange = str(cfg.get("exchange", "bitvavo")).lower()
         size = float(cfg.get("order_size", 1.0))
         order_value = float(cfg.get("order_value_eur", 0.0))
-        if order_value > 0:
-            size = order_value / current_price
+        quote = symbol.rsplit("-", 1)[1] if "-" in symbol else ""
+        quote_to_eur = float(cfg.get("_quote_to_eur", 1.0 if quote == "EUR" else 0.0) or 0.0)
+        if quote_to_eur <= 0:
+            self._prev_price = current_price
+            return
+        quote_budget = order_value / quote_to_eur if order_value > 0 else 0.0
+        if quote_budget > 0:
+            size = quote_budget / current_price
 
         momentum_pct = float(cfg.get("momentum_pct", 0.5)) / 100
         tp_target_value = float(cfg.get("take_profit_pct", 1.0))
@@ -107,17 +113,18 @@ class SniperBot(BaseStrategy):
                     )
                     self._prev_price = current_price
                     return
-                notional = size * current_price
+                notional_quote = size * current_price
+                notional_eur = notional_quote * quote_to_eur
                 router_slippage_pct = max(
                     0.0,
                     float(cfg.get("_autonomous_expected_slippage_bps", 0.0) or 0.0) / 100.0,
                 )
                 slippage_pct = max(abs(move) * 100 * 0.5, router_slippage_pct)
                 available_quote = float(cfg.get("_available_quote", 0.0))
-                if bool(cfg.get("_live_balance_snapshot_ready", False)) and available_quote < notional:
+                if bool(cfg.get("_live_balance_snapshot_ready", False)) and available_quote < notional_quote:
                     self._prev_price = current_price
                     return
-                if not self._rm.check_order(self.name, notional, slippage_pct=slippage_pct):
+                if not self._rm.check_order(self.name, notional_eur, slippage_pct=slippage_pct):
                     self._prev_price = current_price
                     return
                 order = Order(
@@ -128,6 +135,8 @@ class SniperBot(BaseStrategy):
                     quantity=size,
                     price=current_price,
                     strategy=self.name,
+                    quote_to_eur=quote_to_eur,
+                    notional_eur=notional_eur,
                 )
                 self._om.register(order)
                 self._last_entry_ts = now
@@ -156,8 +165,12 @@ class SniperBot(BaseStrategy):
         size = min(self._position, available_base)
         if size <= 0:
             return
-        notional = size * price
-        if not self._rm.check_order(self.name, notional, risk_reducing=True):
+        quote = symbol.rsplit("-", 1)[1] if "-" in symbol else ""
+        quote_to_eur = float(self._config.get("_quote_to_eur", 1.0 if quote == "EUR" else 0.0) or 0.0)
+        if quote_to_eur <= 0:
+            return
+        notional_eur = size * price * quote_to_eur
+        if not self._rm.check_order(self.name, notional_eur, risk_reducing=True):
             return
         order = Order(
             exchange=exchange,
@@ -167,6 +180,8 @@ class SniperBot(BaseStrategy):
             quantity=size,
             price=price,
             strategy=self.name,
+            quote_to_eur=quote_to_eur,
+            notional_eur=notional_eur,
         )
         self._om.register(order)
         log.info("SNIPE EXIT %s %s %.8f @ %.4f", reason, symbol, size, price)
