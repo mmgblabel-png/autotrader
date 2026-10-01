@@ -74,3 +74,103 @@ def test_error_without_exchange_id_remains_reconcilable(tmp_path):
     rows = journal.reconcile_candidates()
     assert any(row["client_order_id"] == cid for row in rows)
     journal.close()
+
+
+
+def test_daily_entry_turnover_ignores_risk_reducing_sells(tmp_path):
+    journal = OrderJournal(str(tmp_path / "orders.sqlite3"))
+    buy = "55555555-5555-5555-5555-555555555555"
+    sell = "66666666-6666-6666-6666-666666666666"
+    journal.record_intent(
+        client_order_id=buy, market="SOL-EUR", side="buy",
+        order_type="limit", amount="0.06", price="100",
+    )
+    journal.record_execution_acceptance(buy, "6")
+    journal.record_intent(
+        client_order_id=sell, market="SOL-EUR", side="sell",
+        order_type="limit", amount="0.06", price="101",
+    )
+    # Legacy data may contain sells in the ledger; turnover must still count BUYs only.
+    journal.record_execution_acceptance(sell, "6.06")
+    assert journal.daily_execution_exposure_utc() == Decimal("6")
+    journal.close()
+
+
+def test_completed_round_trip_releases_current_exposure(tmp_path):
+    journal = OrderJournal(str(tmp_path / "orders.sqlite3"))
+    buy = "77777777-7777-7777-7777-777777777777"
+    sell = "88888888-8888-8888-8888-888888888888"
+    journal.record_intent(
+        client_order_id=buy, market="SOL-EUR", side="buy",
+        order_type="limit", amount="0.06", price="100",
+    )
+    journal.set_strategy(buy, "GridRunner")
+    journal.record_execution_acceptance(buy, "6")
+    journal.update(buy, "filled")
+    journal.record_fill(buy, {
+        "id": "buy-fill",
+        "amount": "0.06",
+        "price": "100",
+        "fee": "0",
+        "feeCurrency": "EUR",
+    })
+    assert journal.current_execution_exposure_eur() == Decimal("6")
+
+    journal.record_intent(
+        client_order_id=sell, market="SOL-EUR", side="sell",
+        order_type="limit", amount="0.06", price="101",
+    )
+    journal.set_strategy(sell, "GridRunner")
+    journal.update(sell, "filled")
+    journal.record_fill(sell, {
+        "id": "sell-fill",
+        "amount": "0.06",
+        "price": "101",
+        "fee": "0",
+        "feeCurrency": "EUR",
+    })
+
+    assert journal.current_execution_exposure_eur() == Decimal("0")
+    assert journal.daily_execution_exposure_utc() == Decimal("6")
+    journal.close()
+
+
+def test_canceled_buy_releases_current_exposure_but_keeps_turnover(tmp_path):
+    journal = OrderJournal(str(tmp_path / "orders.sqlite3"))
+    cid = "99999999-9999-9999-9999-999999999999"
+    journal.record_intent(
+        client_order_id=cid, market="ETH-EUR", side="buy",
+        order_type="limit", amount="0.0025", price="2400",
+    )
+    journal.set_strategy(cid, "GridRunnerETH")
+    journal.record_execution_acceptance(cid, "6")
+    assert journal.current_execution_exposure_eur() == Decimal("6.0000")
+    journal.update(cid, "canceled")
+    assert journal.current_execution_exposure_eur() == Decimal("0")
+    assert journal.daily_execution_exposure_utc() == Decimal("6")
+    journal.close()
+
+
+
+def test_three_hour_activity_converts_base_fee_to_eur(tmp_path):
+    import time
+    journal = OrderJournal(str(tmp_path / "orders.sqlite3"))
+    cid = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
+    journal.record_intent(
+        client_order_id=cid, market="BTC-EUR", side="buy",
+        order_type="limit", amount="0.0001", price="70000",
+    )
+    journal.set_strategy(cid, "MarketMaker")
+    journal.update(cid, "filled")
+    journal.record_fill(cid, {
+        "id": "fee-fill",
+        "amount": "0.0001",
+        "price": "70000",
+        "fee": "0.00000015",
+        "feeCurrency": "BTC",
+    })
+    summary = journal.activity_summary_since(time.time() - 60)
+    assert summary["fills"] == 1
+    assert summary["fees_eur"] == pytest.approx(0.0105)
+    assert summary["unpriced_fee_count"] == 0
+    journal.close()

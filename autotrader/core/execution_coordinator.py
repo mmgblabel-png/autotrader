@@ -189,4 +189,10 @@ class ExecutionCoordinator:
                 self.om.update(cid, mapped, filled, price, fee)
                 self._record_fills(order, record)
             results.append(record)
+        gateway = getattr(self.adapter, "gateway", None)
+        journal = getattr(self.adapter, "journal", None)
+        if gateway is not None and journal is not None and hasattr(journal, "current_execution_exposure_eur"):
+            gateway.restore_daily_state(
+                exposure_eur=journal.current_execution_exposure_eur()
+            )
         return results
