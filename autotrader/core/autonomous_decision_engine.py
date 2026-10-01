@@ -121,12 +121,21 @@ class AutonomousDecisionEngine:
         if exposure_headroom_eur is None:
             virtual_headroom_eur = None
         else:
-            virtual_headroom_eur = max(
-                0.0,
-                exposure_headroom_eur
-                - pending_buy_reservation_eur
-                - self.exposure_safety_buffer_eur,
-            )
+            try:
+                from decimal import Decimal
+                virtual_headroom_eur = float(
+                    gateway.remaining_daily_exposure_eur(
+                        pending_reservation_eur=Decimal(str(pending_buy_reservation_eur)),
+                        safety_buffer_eur=Decimal(str(self.exposure_safety_buffer_eur)),
+                    )
+                )
+            except (AttributeError, TypeError, ValueError):
+                virtual_headroom_eur = max(
+                    0.0,
+                    exposure_headroom_eur
+                    - pending_buy_reservation_eur
+                    - self.exposure_safety_buffer_eur,
+                )
 
         for key, (display, router_key) in strategy_key_map.items():
             strategy = agent._strategies.get(key)
