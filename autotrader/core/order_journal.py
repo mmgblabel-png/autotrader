@@ -113,9 +113,26 @@ class OrderJournal:
                             effective_status = "filled"
                             effective_error = None
 
+            preserve_terminal_payload = effective_status != requested_status
             self._db.execute(
-                "UPDATE orders SET status=?, exchange_order_id=COALESCE(?,exchange_order_id), updated_at=?, last_error=?, raw_json=? WHERE client_order_id=?",
-                (effective_status, exchange_order_id, now, effective_error, json.dumps(payload, default=str), client_order_id),
+                """
+                UPDATE orders
+                SET status=?,
+                    exchange_order_id=COALESCE(?,exchange_order_id),
+                    updated_at=?,
+                    last_error=?,
+                    raw_json=CASE WHEN ? THEN raw_json ELSE ? END
+                WHERE client_order_id=?
+                """,
+                (
+                    effective_status,
+                    exchange_order_id,
+                    now,
+                    effective_error,
+                    1 if preserve_terminal_payload else 0,
+                    json.dumps(payload, default=str),
+                    client_order_id,
+                ),
             )
             if effective_status != requested_status:
                 self._event(
