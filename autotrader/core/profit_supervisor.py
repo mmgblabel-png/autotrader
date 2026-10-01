@@ -69,6 +69,7 @@ class ProfitSupervisor:
         entry_fee_pct: float | Decimal | None = None,
         exit_fee_pct: float | Decimal | None = None,
         fee_policy_source: str = "configured_conservative",
+        quote_to_eur: float | Decimal = Decimal("1"),
     ) -> dict[str, Any]:
         """Return a fee-aware strategy snapshot.
 
@@ -100,6 +101,7 @@ class ProfitSupervisor:
             strategy,
             mark_price=Decimal(str(mark_price)),
             estimated_exit_cost_pct=future_exit_cost_pct,
+            quote_to_eur=max(Decimal("0"), Decimal(str(quote_to_eur))),
         )
         quantity = Decimal(str(perf["quantity"]))
         realized = Decimal(str(perf["realized_net_pnl_eur"]))
@@ -143,6 +145,7 @@ class ProfitSupervisor:
             "entry_fee_pct": number(entry_fee),
             "exit_fee_pct": number(exit_fee),
             "fee_policy_source": fee_policy_source,
+            "quote_to_eur": number(perf.get("quote_to_eur", quote_to_eur)),
             "profitable_exits": int(perf["profitable_exits"]),
             "losing_exits": int(perf["losing_exits"]),
             "unpriced_fee_count": int(perf["unpriced_fee_count"]),
