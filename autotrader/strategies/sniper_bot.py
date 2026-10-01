@@ -87,10 +87,11 @@ class SniperBot(BaseStrategy):
                 and signal_strength >= min_signal_strength
             )
             local_trigger = self._prev_price > 0 and move >= momentum_pct
-            # In autonomous mode the router already aggregates multi-snapshot
-            # momentum, order-book imbalance, liquidity, spread and slippage.
-            # Keep the old one-tick momentum trigger only as a fallback.
-            if (router_trigger or local_trigger) and now - self._last_entry_ts >= cooldown:
+            # Once autonomous metadata exists, the router is the entry authority.
+            # The legacy one-tick trigger remains only for non-autonomous use.
+            has_router_signal = "_autonomous_signal_direction" in cfg
+            entry_trigger = router_trigger if has_router_signal else local_trigger
+            if entry_trigger and now - self._last_entry_ts >= cooldown:
                 required_edge = max(0.0, float(cfg.get("_required_entry_edge_pct", 0.0)))
                 if required_edge > 0 and tp_target_value < required_edge:
                     log.info(
@@ -177,5 +178,8 @@ class SniperBot(BaseStrategy):
             self._position = max(0.0, self._position - amount)
             if self._position == 0:
                 self._entry_price = 0.0
+                # Enforce the configured cooldown from the confirmed exit fill,
+                # preventing immediate buy-back churn.
+                self._last_entry_ts = time.monotonic()
         self._config["_bot_base_inventory"] = self._position
         self._config["_bot_average_entry_price"] = self._entry_price
