@@ -27,6 +27,39 @@ binance_reference:
   interval_seconds: 1
   timeout_seconds: 3
 
+futures_ai_shadow:
+  enabled: true
+  path: /data/futures_ai_shadow.json
+  source: hyperliquid_public
+  fallback_source: binance_usdm_public
+  interval_seconds: 20
+  timeout_seconds: 3
+  markets:
+    - BTC
+    - ETH
+    - SOL
+    - XRP
+  min_history: 24
+  history_size: 240
+  shadow_capital_usd_per_market: 12.5
+  stake_usd: 4.0
+  max_position_notional_usd: 5.0
+  leverage: 1.0
+  long_probability_threshold: 0.66
+  short_probability_threshold: 0.34
+  min_confidence: 0.30
+  take_profit_pct: 1.00
+  stop_loss_pct: 0.60
+  fee_pct_each_leg: 0.05
+  slippage_pct_each_leg: 0.03
+  promotion_min_completed_trades: 30
+  promotion_min_winrate_pct: 55.0
+  promotion_min_net_pnl_usd: 1.0
+  promotion_max_drawdown_pct: 6.0
+  promotion_min_model_accuracy_pct: 52.0
+  live_capable: false
+  live_orders_sent: false
+
 leverage_martingale_risk_lab:
   enabled: true
   path: /data/leverage_martingale_lab.json
