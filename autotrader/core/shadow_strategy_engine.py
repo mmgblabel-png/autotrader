@@ -125,7 +125,7 @@ class ShadowStrategyEngine:
     def round_trip_cost_pct(self) -> float:
         return 2.0 * (self.fee_pct + self.slippage_pct)
 
-    def update(self, name: str, price: float, cfg: dict[str, Any]) -> None:
+    def update(self, name: str, price: float, cfg: dict[str, Any], *, persist: bool = True) -> None:
         if price <= 0 or not math.isfinite(price):
             return
         state = self._ensure_version(name, cfg)
@@ -151,6 +151,11 @@ class ShadowStrategyEngine:
                 symbol=str(cfg.get("symbol", "")),
                 outcome_key=f"shadow:{name}:{state.strategy_version}:{state.completed_trades}",
             )
+        if persist:
+            self._save()
+
+    def flush(self) -> None:
+        """Persist all shadow states once after a batch of market updates."""
         self._save()
 
     def _buy(self, state: ShadowStats, price: float, cfg: dict[str, Any], signal: str) -> None:
