@@ -440,3 +440,51 @@ def test_exposure_safety_buffer_blocks_borderline_minimum_order():
     assert rows["MarketMaker"]["daily_exposure_headroom_eur"] == 4.95
     assert rows["MarketMaker"]["entry_allowed"] is False
     assert rows["GridRunner"]["entry_allowed"] is False
+
+
+def test_apply_clears_stale_entry_permission_when_quality_drops():
+    agent = _agent()
+    agent._strategies["grid"]._config["_autonomous_entry_allowed"] = True
+    engine = AutonomousDecisionEngine({
+        "enabled": True,
+        "apply_live": True,
+        "min_score": 90,
+        "min_confidence": 0.95,
+        "min_signal_strength": 95,
+        "strategy_markets": {
+            "market_maker": ["BTC-EUR"],
+            "grid": ["SOL-EUR", "ETH-EUR"],
+            "sniper": ["XRP-EUR", "ADA-EUR"],
+        },
+    })
+    plan = engine.plan(agent=agent, router_payload=_router(), risk_payload=_risk(), armed=True)
+    row = next(x for x in plan["rows"] if x["strategy"] == "GridRunner")
+    assert row["quality_ok"] is False
+    engine.apply(agent=agent, plan=plan, armed=True)
+    assert agent._strategies["grid"]._config["_autonomous_entry_allowed"] is False
+
+
+def test_wildcard_market_universe_accepts_router_candidate():
+    agent = _agent()
+    payload = _router()
+    payload["rankings"]["grid"].insert(
+        0,
+        {"market": "AAVE-EUR", "score": 95, "signal_strength": 90, "eligible": True},
+    )
+    engine = AutonomousDecisionEngine({
+        "enabled": True,
+        "apply_live": True,
+        "min_score": 68,
+        "min_confidence": 0.62,
+        "min_signal_strength": 62,
+        "strategy_markets": {
+            "market_maker": ["BTC-EUR"],
+            "grid": ["*"],
+            "sniper": ["*"],
+        },
+    })
+    plan = engine.plan(agent=agent, router_payload=payload, risk_payload=_risk(), armed=True)
+    row = next(x for x in plan["rows"] if x["strategy"] == "GridRunner")
+    assert row["desired_market"] == "AAVE-EUR"
+    assert row["signal_strength"] == 90
+    assert row["quality_ok"] is True
