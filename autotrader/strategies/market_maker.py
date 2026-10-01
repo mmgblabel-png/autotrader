@@ -117,8 +117,8 @@ class MarketMaker(BaseStrategy):
                      spread_pct * 100, minimum_spread * 100)
             return
 
-        bid_price = round(mid_price * (1 - spread_pct / 2), 2)
-        ask_price = round(mid_price * (1 + spread_pct / 2), 2)
+        bid_price = mid_price * (1 - spread_pct / 2)
+        ask_price = mid_price * (1 + spread_pct / 2)
         entry_price = max(0.0, float(cfg.get("_bot_average_entry_price", 0.0)))
         exit_markup_value = float(cfg.get("cycle_exit_markup_pct", cfg.get("target_spread", 0.80)))
         exit_markup_pct = exit_markup_value / 100
@@ -126,7 +126,7 @@ class MarketMaker(BaseStrategy):
         if bool(cfg.get("inventory_cycle_mode", True)) and entry_price > 0:
             ask_price = max(
                 ask_price,
-                round(entry_price * (1 + exit_markup_pct), 2),
+                entry_price * (1 + exit_markup_pct),
                 min_profit_exit_price,
             )
         notional_eur = size * mid_price * quote_to_eur
