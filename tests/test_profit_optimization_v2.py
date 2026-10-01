@@ -420,6 +420,6 @@ def test_opportunity_router_scans_crypto_crypto_with_eur_bridge():
     assert rows["ETH-BTC"]["pair_type"] == "crypto_crypto"
     assert rows["ETH-BTC"]["quote_to_eur"] > 1000
     assert rows["ETH-BTC"]["liquidity_eur"] > 25
-    assert rows["ETH-BTC"]["live_execution_supported_now"] is False
+    assert rows["ETH-BTC"]["live_execution_supported_now"] is True
     assert rows["SOL-USDC"]["quote_to_eur"] > 0
     assert rows["BTC-EUR"]["live_execution_supported_now"] is True
