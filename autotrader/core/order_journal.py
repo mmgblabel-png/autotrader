@@ -338,6 +338,52 @@ class OrderJournal:
             ).fetchall()
         return [dict(row) for row in rows]
 
+    def strategy_active_markets(self, strategy: str) -> list[dict[str, Any]]:
+        """Return bot-owned markets that still need runtime management.
+
+        A market is active when this strategy has a durable nonterminal order or
+        positive fill-derived inventory. This is used after process restarts so
+        dynamically routed positions are not forgotten when config defaults are
+        reloaded.
+        """
+        with self._lock:
+            rows = self._db.execute(
+                """
+                SELECT market,
+                       SUM(CASE WHEN status NOT IN
+                           ('filled','canceled','cancelled','rejected','error','expired','shadow','blocked')
+                           THEN 1 ELSE 0 END) AS open_orders
+                FROM orders
+                WHERE strategy=?
+                GROUP BY market
+                """,
+                (strategy,),
+            ).fetchall()
+        active: list[dict[str, Any]] = []
+        for row in rows:
+            market = str(row["market"] or "").upper()
+            if not market:
+                continue
+            inventory = self.inventory_cost_basis(market, strategy)
+            quantity = max(Decimal("0"), Decimal(str(inventory.get("quantity") or "0")))
+            open_orders = int(row["open_orders"] or 0)
+            if open_orders > 0 or quantity > 0:
+                active.append({
+                    "market": market,
+                    "open_orders": open_orders,
+                    "inventory_quantity": str(quantity),
+                    "average_entry_price": str(inventory.get("average_entry_price") or "0"),
+                })
+        active.sort(
+            key=lambda x: (
+                int(x["open_orders"]) > 0,
+                Decimal(str(x["inventory_quantity"])) > 0,
+                Decimal(str(x["inventory_quantity"])),
+            ),
+            reverse=True,
+        )
+        return active
+
     def recent_order_activity(self, limit: int = 100) -> list[dict[str, Any]]:
         """Return privacy-safe recent order history with aggregate fill details.
 
