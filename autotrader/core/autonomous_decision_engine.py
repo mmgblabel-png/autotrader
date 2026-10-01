@@ -107,6 +107,10 @@ class AutonomousDecisionEngine:
             for x in (risk_payload.get("rows", []) if isinstance(risk_payload, dict) else [])
         }
         rankings = router_payload.get("rankings", {}) if isinstance(router_payload, dict) else {}
+        balances = {
+            str(asset).upper(): max(0.0, float(value or 0.0))
+            for asset, value in (available_balances or {}).items()
+        }
         now = time.time()
         rows: list[dict[str, Any]] = []
         gateway = getattr(getattr(agent, "_bitvavo", None), "gateway", None)
@@ -168,9 +172,8 @@ class AutonomousDecisionEngine:
                 and (allow_any or str(row.get("market", "")).upper() in allowed)
                 and str(row.get("market", "")).upper() not in reserved_markets
             ]
-            # Full spot discovery includes crypto/crypto immediately, but live
-            # execution remains fail-closed until quote-aware EUR accounting is
-            # validated end-to-end. Research rankings still expose those rows.
+            # Full spot discovery includes crypto/crypto. Live selection still
+            # requires quote-aware EUR accounting plus real quote funding.
             candidates = [
                 row for row in research_candidates
                 if bool(row.get("live_execution_supported_now", True))
