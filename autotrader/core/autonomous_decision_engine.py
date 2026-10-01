@@ -348,6 +348,7 @@ class AutonomousDecisionEngine:
             cfg["_autonomous_entry_allowed"] = bool(row.get("entry_allowed", False))
             cfg["_autonomous_market_score"] = float(row.get("market_score") or 0.0)
             cfg["_autonomous_signal_strength"] = float(row.get("signal_strength") or 0.0)
+            cfg["_autonomous_min_signal_strength"] = float(row.get("min_signal_strength") or self.min_signal_strength)
             cfg["_autonomous_signal_direction"] = str(row.get("signal_direction") or "WAIT")
             cfg["_autonomous_confidence"] = float(row.get("confidence") or 0.0)
             cfg["_autonomous_momentum_pct"] = float(row.get("momentum_pct") or 0.0)
