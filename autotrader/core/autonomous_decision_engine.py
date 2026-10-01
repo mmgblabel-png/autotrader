@@ -164,7 +164,7 @@ class AutonomousDecisionEngine:
             for candidate in candidates:
                 candidate_market = str(candidate.get("market", "")).upper()
                 candidate_score_min, candidate_conf_min = self._thresholds_for_market(candidate_market)
-                candidate_signal = float(candidate.get("signal_strength") or 0.0)
+                candidate_signal = float(candidate.get("signal_strength", candidate.get("score", 0.0)) or 0.0)
                 if (
                     float(candidate.get("score") or 0.0) >= candidate_score_min
                     and candidate_signal >= self.min_signal_strength
@@ -190,7 +190,7 @@ class AutonomousDecisionEngine:
             flat = float(inventory.get("quantity") or 0.0) <= 0.0
             switch_ready = now - float(self._last_switch.get(display, 0.0)) >= self.switch_cooldown_seconds
             score = float(best.get("score") or 0.0) if best else 0.0
-            signal_strength = float(best.get("signal_strength") or 0.0) if best else 0.0
+            signal_strength = float(best.get("signal_strength", best.get("score", 0.0)) or 0.0) if best else 0.0
             signal_direction = str(best.get("signal_direction") or "WAIT") if best else "WAIT"
             desired = str(best.get("market") or current).upper() if best else current
             required_entry_edge = max(0.0, float(cfg.get("_required_entry_edge_pct", 0.0)))
