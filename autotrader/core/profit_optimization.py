@@ -85,7 +85,6 @@ class OpportunityRouter:
         except Exception:
             return
         preferred = []
-        conversion_graph = self._market_graph(bulk_books) if bulk_books else {}
         for market in self.markets:
             if market not in preferred:
                 preferred.append(market)
@@ -148,6 +147,7 @@ class OpportunityRouter:
                     bulk_books = raw_books
             except Exception:
                 bulk_books = {}
+        conversion_graph = self._market_graph(bulk_books) if bulk_books else {}
         for market in self.markets:
             try:
                 book = bulk_books.get(market) if bulk_books else None
