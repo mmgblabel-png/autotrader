@@ -185,6 +185,66 @@ class OpportunityRouter:
     def _weighted(features: dict[str, float], weights: dict[str, float]) -> float:
         return sum(features.get(k, 0.0) * v for k, v in weights.items())
 
+    @staticmethod
+    def _signal_strength(
+        strategy: str,
+        features: dict[str, float],
+        snap: MarketSnapshot,
+    ) -> tuple[float, str]:
+        """Return strategy-specific signal strength separate from market quality."""
+        if strategy == "sniper":
+            value = (
+                features["momentum"] * 0.35
+                + features["trend"] * 0.30
+                + features["buy_imbalance"] * 0.20
+                + features["liquidity"] * 0.10
+                + features["freshness"] * 0.05
+            )
+            if snap.momentum_pct <= 0 or snap.imbalance_pct <= 0:
+                value *= 0.55
+            direction = "LONG" if snap.momentum_pct > 0 and snap.imbalance_pct > 0 else "WAIT"
+        elif strategy == "grid":
+            value = (
+                features["volatility_quality"] * 0.30
+                + features["book_balance_quality"] * 0.25
+                + features["liquidity"] * 0.20
+                + features["spread_quality"] * 0.15
+                + features["slippage_quality"] * 0.10
+            )
+            if abs(snap.momentum_pct) > 0.25:
+                value *= 0.70
+            direction = "RANGE"
+        elif strategy == "market_maker":
+            value = (
+                features["book_balance_quality"] * 0.25
+                + features["spread_quality"] * 0.25
+                + features["liquidity"] * 0.20
+                + features["freshness"] * 0.15
+                + features["slippage_quality"] * 0.15
+            )
+            if abs(snap.momentum_pct) > 0.30:
+                value *= 0.65
+            direction = "NEUTRAL"
+        elif strategy == "volatility_breakout":
+            value = (
+                features["momentum"] * 0.30
+                + features["trend"] * 0.25
+                + features["liquidity"] * 0.20
+                + features["buy_imbalance"] * 0.15
+                + features["freshness"] * 0.10
+            )
+            direction = "LONG" if snap.momentum_pct > 0 else "WAIT"
+        else:
+            value = (
+                features["volatility_quality"] * 0.30
+                + features["book_balance_quality"] * 0.25
+                + features["liquidity"] * 0.20
+                + features["spread_quality"] * 0.15
+                + features["freshness"] * 0.10
+            )
+            direction = "MEAN_REVERT"
+        return max(0.0, min(100.0, value)), direction
+
     def rankings(self) -> dict[str, Any]:
         profiles = {
             "market_maker": {"spread_quality": 0.25, "liquidity": 0.25, "volatility_quality": 0.15, "book_balance_quality": 0.15, "freshness": 0.10, "slippage_quality": 0.10},
@@ -199,6 +259,9 @@ class OpportunityRouter:
             for snap in self._latest.values():
                 features = self._features(snap)
                 score = self._weighted(features, weights)
+                signal_strength, signal_direction = self._signal_strength(
+                    strategy, features, snap
+                )
                 eligible = (
                     snap.liquidity_eur >= self.min_top_depth_eur
                     and snap.spread_bps <= self.max_spread_bps
@@ -206,6 +269,8 @@ class OpportunityRouter:
                 rows.append({
                     "market": snap.market,
                     "score": round(score, 2),
+                    "signal_strength": round(signal_strength, 2),
+                    "signal_direction": signal_direction,
                     "eligible": eligible,
                     "mid": round(snap.mid, 10),
                     "spread_bps": round(snap.spread_bps, 3),
@@ -302,6 +367,7 @@ class PortfolioGoalTracker:
             self.starting_equity_eur,
             float(self.config.get("target_equity_eur", 25000.0)),
         )
+        self.target_days = max(1, int(self.config.get("target_days", 365)))
         raw = self.config.get(
             "milestones_eur",
             [100, 250, 500, 1000, 2500, 5000, 10000, 25000],
@@ -326,6 +392,14 @@ class PortfolioGoalTracker:
             min(100.0, (current - self.starting_equity_eur) / span * 100.0),
         )
         next_milestone = next((x for x in self.milestones if current < x), None)
+        required_daily_linear_eur = max(
+            0.0, self.target_equity_eur - current
+        ) / self.target_days
+        required_daily_compound_pct = 0.0
+        if current > 0 and current < self.target_equity_eur:
+            required_daily_compound_pct = (
+                (self.target_equity_eur / current) ** (1.0 / self.target_days) - 1.0
+            ) * 100.0
         contributions = []
         for row in strategy_snapshots or []:
             contributions.append({
@@ -346,6 +420,9 @@ class PortfolioGoalTracker:
             "current_equity_estimate_eur": round(current, 2),
             "progress_pct": round(progress, 4),
             "remaining_eur": round(max(0.0, self.target_equity_eur - current), 2),
+            "target_days": self.target_days,
+            "required_daily_linear_eur": round(required_daily_linear_eur, 2),
+            "required_daily_compound_pct": round(required_daily_compound_pct, 4),
             "next_milestone_eur": round(next_milestone, 2) if next_milestone else None,
             "target_reached": current >= self.target_equity_eur,
             "milestones_eur": self.milestones,
@@ -408,7 +485,19 @@ class CalculatedRiskSizer:
             ) + int(snap.get("losing_exits") or 0)
             sample_conf = min(1.0, samples / 20.0)
             quality_conf = score / 100.0
-            confidence = 0.65 * quality_conf + 0.35 * sample_conf
+            signal_conf = max(
+                0.0,
+                min(1.0, float(opp.get("signal_strength", score) or 0.0) / 100.0),
+            )
+            # Cold start no longer forces a high-quality, high-signal market
+            # below the execution threshold merely because it has few exits.
+            # Historical samples still increase confidence as evidence accrues.
+            evidence_conf = 0.50 + 0.50 * sample_conf
+            confidence = (
+                0.45 * quality_conf
+                + 0.35 * signal_conf
+                + 0.20 * evidence_conf
+            )
             risk_penalty = 1.0
             if dd > self.max_drawdown_pct:
                 risk_penalty *= 0.45
@@ -435,6 +524,7 @@ class CalculatedRiskSizer:
                 "strategy": strategy,
                 "market": opp.get("market"),
                 "opportunity_score": round(score, 2),
+                "signal_strength": round(signal_conf * 100.0, 2),
                 "confidence": round(confidence, 4),
                 "drawdown_pct": round(dd, 3),
                 "fee_drag_pct": round(fee_drag, 2),

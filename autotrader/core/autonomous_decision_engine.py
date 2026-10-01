@@ -18,6 +18,9 @@ class AutonomousDecisionEngine:
         self.apply_live = bool(self.config.get("apply_live", False))
         self.min_score = max(0.0, min(100.0, float(self.config.get("min_score", 68.0))))
         self.min_confidence = max(0.0, min(1.0, float(self.config.get("min_confidence", 0.62))))
+        self.min_signal_strength = max(
+            0.0, min(100.0, float(self.config.get("min_signal_strength", 62.0)))
+        )
         self.switch_cooldown_seconds = max(
             30.0, float(self.config.get("switch_cooldown_seconds", 300.0))
         )
@@ -118,6 +121,7 @@ class AutonomousDecisionEngine:
             except (TypeError, ValueError, AttributeError):
                 exposure_headroom_eur = None
         pending_buy_reservation_eur = self._pending_buy_reservation_eur(agent)
+        reserved_markets: set[str] = set()
         if exposure_headroom_eur is None:
             virtual_headroom_eur = None
         else:
@@ -144,9 +148,12 @@ class AutonomousDecisionEngine:
             cfg = strategy._config
             current = str(cfg.get("symbol", "")).upper()
             allowed = set(self._allowed_markets(key, current))
+            allow_any = "*" in allowed
             candidates = [
                 row for row in rankings.get(router_key, [])
-                if bool(row.get("eligible")) and str(row.get("market", "")).upper() in allowed
+                if bool(row.get("eligible"))
+                and (allow_any or str(row.get("market", "")).upper() in allowed)
+                and str(row.get("market", "")).upper() not in reserved_markets
             ]
             risk = risk_rows.get(display, {})
             confidence = float(risk.get("confidence") or 0.0)
@@ -154,8 +161,10 @@ class AutonomousDecisionEngine:
             for candidate in candidates:
                 candidate_market = str(candidate.get("market", "")).upper()
                 candidate_score_min, candidate_conf_min = self._thresholds_for_market(candidate_market)
+                candidate_signal = float(candidate.get("signal_strength", candidate.get("score", 0.0)) or 0.0)
                 if (
                     float(candidate.get("score") or 0.0) >= candidate_score_min
+                    and candidate_signal >= self.min_signal_strength
                     and confidence >= candidate_conf_min
                 ):
                     passing.append(candidate)
@@ -178,6 +187,8 @@ class AutonomousDecisionEngine:
             flat = float(inventory.get("quantity") or 0.0) <= 0.0
             switch_ready = now - float(self._last_switch.get(display, 0.0)) >= self.switch_cooldown_seconds
             score = float(best.get("score") or 0.0) if best else 0.0
+            signal_strength = float(best.get("signal_strength", best.get("score", 0.0)) or 0.0) if best else 0.0
+            signal_direction = str(best.get("signal_direction") or "WAIT") if best else "WAIT"
             desired = str(best.get("market") or current).upper() if best else current
             required_entry_edge = max(0.0, float(cfg.get("_required_entry_edge_pct", 0.0)))
             if key == "market_maker":
@@ -192,6 +203,7 @@ class AutonomousDecisionEngine:
                 bool(best)
                 and bool(passing)
                 and score >= market_score_min
+                and signal_strength >= self.min_signal_strength
                 and confidence >= market_conf_min
                 and profit_gate
             )
@@ -226,6 +238,10 @@ class AutonomousDecisionEngine:
                 virtual_headroom_eur = max(0.0, virtual_headroom_eur - suggested_eur)
 
             may_switch = flat and not open_local and not durable_open and switch_ready and quality_ok
+            if bool(cfg.get("exclusive_symbol", False)):
+                reserved = current if (not flat or open_local or durable_open) else desired if quality_ok else ""
+                if reserved:
+                    reserved_markets.add(reserved)
             reason = "hold_current_market"
 
             if not best:
@@ -253,6 +269,12 @@ class AutonomousDecisionEngine:
                 "current_market": current,
                 "desired_market": desired,
                 "market_score": round(score, 2),
+                "signal_strength": round(signal_strength, 2),
+                "signal_direction": signal_direction,
+                "min_signal_strength": round(self.min_signal_strength, 2),
+                "momentum_pct": round(float(best.get("momentum_pct") or 0.0), 6) if best else 0.0,
+                "orderbook_imbalance_pct": round(float(best.get("orderbook_imbalance_pct") or 0.0), 4) if best else 0.0,
+                "expected_slippage_bps": round(float(best.get("expected_slippage_bps") or 0.0), 4) if best else 0.0,
                 "confidence": round(confidence, 4),
                 "recommended_order_eur": round(suggested_eur, 2),
                 "entry_allowed": entry_allowed,
@@ -309,15 +331,26 @@ class AutonomousDecisionEngine:
 
         changes: list[dict[str, Any]] = []
         for row in plan.get("rows", []):
-            if not bool(row.get("quality_ok")):
-                continue
             key = str(row.get("strategy_key") or "")
             strategy = agent._strategies.get(key)
             if strategy is None:
                 continue
             cfg = strategy._config
+            # Fail closed every decision cycle. A previously strong opportunity
+            # must never leave a stale True gate behind after quality degrades.
+            cfg["_autonomous_entry_allowed"] = False
+            cfg["_autonomous_entry_reason"] = str(row.get("reason") or "entry_not_selected")
+            if not bool(row.get("quality_ok")):
+                continue
             cfg["_autonomous_entry_allowed"] = bool(row.get("entry_allowed", False))
-            cfg["_autonomous_entry_reason"] = str(row.get("reason") or "")
+            cfg["_autonomous_market_score"] = float(row.get("market_score") or 0.0)
+            cfg["_autonomous_signal_strength"] = float(row.get("signal_strength") or 0.0)
+            cfg["_autonomous_min_signal_strength"] = float(row.get("min_signal_strength") or self.min_signal_strength)
+            cfg["_autonomous_signal_direction"] = str(row.get("signal_direction") or "WAIT")
+            cfg["_autonomous_confidence"] = float(row.get("confidence") or 0.0)
+            cfg["_autonomous_momentum_pct"] = float(row.get("momentum_pct") or 0.0)
+            cfg["_autonomous_orderbook_imbalance_pct"] = float(row.get("orderbook_imbalance_pct") or 0.0)
+            cfg["_autonomous_expected_slippage_bps"] = float(row.get("expected_slippage_bps") or 0.0)
             current = str(cfg.get("symbol", "")).upper()
             desired = str(row.get("desired_market") or current).upper()
             order_eur = max(0.0, float(row.get("recommended_order_eur") or 0.0))

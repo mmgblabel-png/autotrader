@@ -27,7 +27,7 @@ class SniperBot(BaseStrategy):
         self._position = 0.0
         self._entry_price = 0.0
         self._prev_price = 0.0
-        self._last_entry_ts = time.monotonic()
+        self._last_entry_ts = 0.0
 
     def _sync_live_inventory(self) -> None:
         cfg = self._config
@@ -69,14 +69,29 @@ class SniperBot(BaseStrategy):
             self._prev_price = current_price
             return
 
-        if self._position <= 0 and self._prev_price > 0:
-            if not bool(cfg.get("_autonomous_entry_allowed", True)):
+        if self._position <= 0:
+            autonomous_allowed = bool(cfg.get("_autonomous_entry_allowed", True))
+            if not autonomous_allowed:
                 self._prev_price = current_price
                 return
-            move = (current_price - self._prev_price) / self._prev_price
-            # Spot mode is intentionally long-only: negative momentum never
-            # opens an uncovered short.
-            if move >= momentum_pct and now - self._last_entry_ts >= cooldown:
+
+            move = (
+                (current_price - self._prev_price) / self._prev_price
+                if self._prev_price > 0 else 0.0
+            )
+            signal_strength = float(cfg.get("_autonomous_signal_strength", 0.0) or 0.0)
+            min_signal_strength = float(cfg.get("_autonomous_min_signal_strength", 62.0) or 62.0)
+            signal_direction = str(cfg.get("_autonomous_signal_direction", "WAIT")).upper()
+            router_trigger = (
+                signal_direction == "LONG"
+                and signal_strength >= min_signal_strength
+            )
+            local_trigger = self._prev_price > 0 and move >= momentum_pct
+            # Once autonomous metadata exists, the router is the entry authority.
+            # The legacy one-tick trigger remains only for non-autonomous use.
+            has_router_signal = "_autonomous_signal_direction" in cfg
+            entry_trigger = router_trigger if has_router_signal else local_trigger
+            if entry_trigger and now - self._last_entry_ts >= cooldown:
                 required_edge = max(0.0, float(cfg.get("_required_entry_edge_pct", 0.0)))
                 if required_edge > 0 and tp_target_value < required_edge:
                     log.info(
@@ -87,7 +102,11 @@ class SniperBot(BaseStrategy):
                     self._prev_price = current_price
                     return
                 notional = size * current_price
-                slippage_pct = abs(move) * 100 * 0.5
+                router_slippage_pct = max(
+                    0.0,
+                    float(cfg.get("_autonomous_expected_slippage_bps", 0.0) or 0.0) / 100.0,
+                )
+                slippage_pct = max(abs(move) * 100 * 0.5, router_slippage_pct)
                 available_quote = float(cfg.get("_available_quote", 0.0))
                 if bool(cfg.get("_live_balance_snapshot_ready", False)) and available_quote < notional:
                     self._prev_price = current_price
@@ -106,7 +125,15 @@ class SniperBot(BaseStrategy):
                 )
                 self._om.register(order)
                 self._last_entry_ts = now
-                log.info("SNIPE ENTER BUY %s %.8f @ %.4f (move=%.3f%%)", symbol, size, current_price, move * 100)
+                log.info(
+                    "SNIPE ENTER BUY %s %.8f @ %.4f (router=%s signal=%.1f move=%.3f%%)",
+                    symbol,
+                    size,
+                    current_price,
+                    router_trigger,
+                    signal_strength,
+                    move * 100,
+                )
 
         elif self._position > 0 and self._entry_price > 0:
             pnl_pct = (current_price - self._entry_price) / self._entry_price
@@ -151,5 +178,8 @@ class SniperBot(BaseStrategy):
             self._position = max(0.0, self._position - amount)
             if self._position == 0:
                 self._entry_price = 0.0
+                # Enforce the configured cooldown from the confirmed exit fill,
+                # preventing immediate buy-back churn.
+                self._last_entry_ts = time.monotonic()
         self._config["_bot_base_inventory"] = self._position
         self._config["_bot_average_entry_price"] = self._entry_price

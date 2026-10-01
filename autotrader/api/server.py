@@ -55,6 +55,7 @@ from autotrader.core.logger import get_logger
 from autotrader.core.notifications import notify_paper_report
 from autotrader.core.paper_reporting import build_paper_report, export_paper_report
 from autotrader.core.execution_gateway import ExecutionGateway
+from autotrader.core.order_manager import OrderStatus
 from autotrader.core.bitvavo_security import validate_bitvavo_security
 from autotrader.core.live_preflight import validate_bitvavo_live_strategies
 from autotrader.core.market_feed import BitpandaFusionMarketFeed
@@ -234,9 +235,10 @@ def _calculated_risk_payload(agent: AutoTrader) -> dict[str, object]:
             for x in (strategy_markets.get(key) or [])
             if str(x).strip()
         }
+        allow_any = "*" in allowed
         filtered = [
             x for x in ranked
-            if not allowed or str(x.get("market", "")).upper() in allowed
+            if allow_any or not allowed or str(x.get("market", "")).upper() in allowed
         ]
         best = next((x for x in filtered if x.get("eligible")), filtered[0] if filtered else None)
         if best:
@@ -253,6 +255,125 @@ def _calculated_risk_payload(agent: AutoTrader) -> dict[str, object]:
         base_allocations,
         max_order,
     )
+
+
+def _manage_stale_bot_orders(app: FastAPI, agent: AutoTrader) -> dict[str, object]:
+    """Cancel only durable bot-owned stale orders so autonomy can re-evaluate.
+
+    This is deliberately conservative:
+    - requires live mode + explicit runtime arm;
+    - requires execution_v2.apply_live;
+    - never touches orders without both strategy ownership and exchange_order_id;
+    - stale BUYs are released when the strategy has moved on or quality failed;
+    - risk-reducing SELLs are released only when a safe profitable re-quote is possible.
+    """
+    advisor = getattr(app.state, "execution_v2_advisor", None)
+    if (
+        advisor is None
+        or not getattr(advisor, "enabled", False)
+        or not getattr(advisor, "apply_live", False)
+        or not bool(getattr(app.state, "live_mode", False))
+        or not bool(getattr(app.state, "live_armed", False))
+    ):
+        return {"applied": False, "reason": "disabled_or_not_armed", "canceled": []}
+
+    now_mono = time.monotonic()
+    last_manage = float(getattr(app.state, "execution_v2_last_manage_at", 0.0) or 0.0)
+    manage_interval = max(5.0, float(advisor.config.get("manage_interval_seconds", 15.0)))
+    if last_manage and now_mono - last_manage < manage_interval:
+        return getattr(
+            app.state,
+            "execution_v2_live_actions",
+            {"applied": False, "reason": "interval", "canceled": []},
+        )
+    app.state.execution_v2_last_manage_at = now_mono
+
+    plan_rows = {
+        str(row.get("strategy") or ""): row
+        for row in (getattr(app.state, "autonomous_plan", {}) or {}).get("rows", [])
+    }
+    canceled: list[dict[str, object]] = []
+    now = time.time()
+
+    for record in list(agent._bitvavo.journal.inflight()):
+        client_order_id = str(record.get("client_order_id") or "").strip()
+        exchange_order_id = str(record.get("exchange_order_id") or "").strip()
+        strategy_name = str(record.get("strategy") or "").strip()
+        market = str(record.get("market") or "").upper().strip()
+        side = str(record.get("side") or "").lower().strip()
+        if not client_order_id or not exchange_order_id or not strategy_name or not market:
+            continue
+
+        age = max(0.0, now - float(record.get("created_at") or now))
+        plan_row = plan_rows.get(strategy_name, {}) or {}
+        cancel_reason = ""
+
+        if side == "buy":
+            desired = str(plan_row.get("desired_market") or market).upper()
+            quality_ok = bool(plan_row.get("quality_ok", False))
+            if age >= float(advisor.max_order_age_seconds):
+                cancel_reason = "buy_max_age"
+            elif age >= float(advisor.stale_after_seconds) and (
+                not quality_ok or desired != market
+            ):
+                cancel_reason = "buy_stale_opportunity_changed"
+        elif side == "sell":
+            if age < float(advisor.stale_after_seconds):
+                continue
+            try:
+                mark = float(agent._bitvavo.ticker_price(market))
+                snap = agent.profit_supervisor.strategy_snapshot(
+                    market, strategy_name, mark
+                )
+                min_exit = float(snap.get("min_profit_exit_price") or 0.0)
+            except Exception:
+                continue
+            if min_exit > 0 and mark < min_exit:
+                continue
+            if age >= float(advisor.max_order_age_seconds):
+                cancel_reason = "sell_max_age_safe_requote"
+            elif age >= float(advisor.stale_after_seconds) * 2.0:
+                cancel_reason = "sell_stale_safe_requote"
+
+        if not cancel_reason:
+            continue
+
+        try:
+            agent._bitvavo.cancel_order(market, exchange_order_id)
+            local = agent._om.get(client_order_id)
+            if local is not None:
+                agent._om.update(client_order_id, OrderStatus.CANCELLED)
+            canceled.append({
+                "strategy": strategy_name,
+                "market": market,
+                "side": side,
+                "age_seconds": round(age, 1),
+                "reason": cancel_reason,
+            })
+            log.info(
+                "Execution v2 canceled stale bot order: strategy=%s market=%s side=%s age=%.1fs reason=%s",
+                strategy_name,
+                market,
+                side,
+                age,
+                cancel_reason,
+            )
+        except Exception as exc:
+            log.warning(
+                "Execution v2 stale cancel failed safely: strategy=%s market=%s category=%s",
+                strategy_name,
+                market,
+                type(exc).__name__,
+            )
+
+    result = {
+        "applied": True,
+        "reason": "managed",
+        "canceled": canceled,
+        "live_orders_changed": bool(canceled),
+    }
+    app.state.execution_v2_live_actions = result
+    return result
 
 
 async def _tick_loop(app: FastAPI, agent: AutoTrader) -> None:
@@ -280,6 +401,7 @@ async def _tick_loop(app: FastAPI, agent: AutoTrader) -> None:
                             plan=plan,
                             armed=bool(getattr(app.state, "live_armed", False)),
                         )
+                        _manage_stale_bot_orders(app, agent)
                     except Exception as auto_exc:
                         app.state.autonomous_apply = {
                             "applied": False,
@@ -565,6 +687,13 @@ async def _lifespan(app: FastAPI):
         app.state.opportunity_router_interval_seconds = 15.0
     app.state.opportunity_router_error = None
     app.state.execution_v2_advisor = ExecutionV2Advisor(agent._config.get("execution_v2", {}) or {})
+    app.state.execution_v2_last_manage_at = 0.0
+    app.state.execution_v2_live_actions = {
+        "applied": False,
+        "reason": "startup",
+        "canceled": [],
+        "live_orders_changed": False,
+    }
     app.state.portfolio_goal = PortfolioGoalTracker(agent._config.get("portfolio_goal", {}) or {})
     app.state.binance_reference = BinanceReferenceFeed(agent._config.get("binance_reference", {}) or {})
     app.state.calculated_risk = CalculatedRiskSizer(agent._config.get("calculated_risk", {}) or {})
@@ -1417,7 +1546,7 @@ def optimization_execution_v2() -> dict[str, object]:
         elif strategy.name == "SniperBot":
             targets[strategy.name] = float(strategy._config.get("take_profit_pct", 0.0))
 
-    return app.state.execution_v2_advisor.evaluate(
+    payload = app.state.execution_v2_advisor.evaluate(
         raw,
         books,
         min_exit,
@@ -1425,6 +1554,15 @@ def optimization_execution_v2() -> dict[str, object]:
         float(agent.profit_supervisor.policy.required_entry_edge_pct),
         last_fill_at,
     )
+    payload["last_live_actions"] = getattr(
+        app.state,
+        "execution_v2_live_actions",
+        {"applied": False, "reason": "startup", "canceled": []},
+    )
+    payload["live_orders_changed"] = bool(
+        payload["last_live_actions"].get("live_orders_changed", False)
+    )
+    return payload
 
 
 @app.get("/api/markets/overview", tags=["markets"])
