@@ -151,3 +151,22 @@ def test_allocator_wildcard_accepts_router_selected_market_with_same_caps():
     assert decision.accepted
     assert allocator.allocation_for("GridRunnerETH").max_order_eur == Decimal("7")
     assert allocator.global_budget_eur == Decimal("50")
+
+
+def test_allocator_values_crypto_quote_order_in_eur():
+    cfg = config()
+    cfg["autonomous_execution"] = {"strategy_markets": {"grid": ["*"]}}
+    allocator = StrategyAllocator(cfg)
+    order = Order(
+        "bitvavo",
+        "ETH-BTC",
+        OrderSide.BUY,
+        OrderType.LIMIT,
+        0.0017,
+        0.05,
+        strategy="GridRunner",
+        quote_to_eur=70000.0,
+        notional_eur=5.95,
+    )
+    decision = allocator.evaluate(order, [], observed_price=Decimal("0.05"))
+    assert decision.accepted
