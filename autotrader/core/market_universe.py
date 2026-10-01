@@ -202,11 +202,11 @@ class MultiExchangeMarketUniverse:
                 "min_order_base": raw.get("minOrderInBaseAsset"),
                 "min_order_quote": raw.get("minOrderInQuoteAsset"),
                 "order_types": list(raw.get("orderTypes") or []),
-                "live_execution_supported_now": quote == "EUR",
+                "live_execution_supported_now": quote_to_eur is not None and quote_to_eur > 0,
                 "execution_note": (
-                    "current live accounting supports EUR quote"
-                    if quote == "EUR"
-                    else "research/shadow until crypto-quote accounting is fully validated"
+                    "quote-aware EUR accounting available"
+                    if quote_to_eur is not None and quote_to_eur > 0
+                    else "blocked until an EUR bridge is available"
                 ),
             }
             row["market_quality_score"] = self._score(
