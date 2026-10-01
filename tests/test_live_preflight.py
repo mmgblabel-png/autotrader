@@ -11,10 +11,11 @@ class Strategy:
 
 
 class Adapter:
-    def __init__(self, *, open_orders=None, prices=None, rules=None):
+    def __init__(self, *, open_orders=None, prices=None, rules=None, journal=None):
         self._open_orders = open_orders or {}
         self._prices = prices or {}
         self._rules = rules or {}
+        self.journal = journal
 
     def markets(self, market):
         return [self._rules[market]]
@@ -140,3 +141,112 @@ def test_preflight_supports_second_named_grid_runner():
     assert report["passed"] is True
     assert report["strategies"][0]["strategy"] == "GridRunnerETH"
     assert report["strategies"][0]["order_type"] == "limit"
+
+
+class FakeJournal:
+    def __init__(self, rows):
+        self.rows = {row["client_order_id"]: dict(row) for row in rows}
+
+    def get(self, client_order_id):
+        row = self.rows.get(client_order_id)
+        return dict(row) if row else None
+
+    def inflight(self):
+        terminal = {"filled", "canceled", "cancelled", "rejected", "error", "expired", "shadow", "blocked"}
+        return [
+            dict(row)
+            for row in self.rows.values()
+            if str(row.get("status") or "").lower() not in terminal
+        ]
+
+
+def test_preflight_allows_safe_restart_resume_for_bot_owned_open_order():
+    journal = FakeJournal([{
+        "client_order_id": "cid-managed",
+        "exchange_order_id": "oid-managed",
+        "market": "BTC-EUR",
+        "side": "sell",
+        "status": "new",
+    }])
+    strategies = [
+        Strategy("MarketMaker", {
+            "enabled": True, "live_capable": True, "exchange": "bitvavo",
+            "symbol": "BTC-EUR", "order_size": 0.0001,
+            "allocation_eur": 15, "max_order_eur": 10,
+        })
+    ]
+    adapter = Adapter(
+        prices={"BTC-EUR": "74100"},
+        rules={"BTC-EUR": market_rule(base_min="0.00005", quantity_decimals=8)},
+        open_orders={"BTC-EUR": [{
+            "market": "BTC-EUR",
+            "clientOrderId": "cid-managed",
+            "orderId": "oid-managed",
+            "side": "sell",
+            "status": "new",
+        }]},
+        journal=journal,
+    )
+    report = validate_bitvavo_live_strategies(strategies, adapter)
+    assert report["passed"] is True
+    assert report["open_orders_clear"] is False
+    assert report["resume_safe"] is True
+    assert report["managed_open_order_count"] == 1
+    assert report["unmanaged_open_order_count"] == 0
+    assert report["journal_inflight_safe"] is True
+    assert report["strategies"][0]["managed_open_order_count"] == 1
+
+
+def test_preflight_blocks_unknown_exchange_order_on_restart():
+    journal = FakeJournal([])
+    strategies = [
+        Strategy("MarketMaker", {
+            "enabled": True, "live_capable": True, "exchange": "bitvavo",
+            "symbol": "BTC-EUR", "order_size": 0.0001,
+            "allocation_eur": 15, "max_order_eur": 10,
+        })
+    ]
+    adapter = Adapter(
+        prices={"BTC-EUR": "74100"},
+        rules={"BTC-EUR": market_rule(base_min="0.00005", quantity_decimals=8)},
+        open_orders={"BTC-EUR": [{
+            "market": "BTC-EUR",
+            "clientOrderId": "manual-or-unknown",
+            "orderId": "oid-unknown",
+            "side": "sell",
+            "status": "new",
+        }]},
+        journal=journal,
+    )
+    report = validate_bitvavo_live_strategies(strategies, adapter)
+    assert report["passed"] is False
+    assert report["resume_safe"] is False
+    assert report["unmanaged_open_order_count"] == 1
+    assert "unmanaged_exchange_open_orders_present" in report["strategies"][0]["errors"]
+
+
+def test_preflight_blocks_orphaned_nonterminal_journal_order():
+    journal = FakeJournal([{
+        "client_order_id": "cid-orphan",
+        "exchange_order_id": "oid-orphan",
+        "market": "BTC-EUR",
+        "side": "sell",
+        "status": "new",
+    }])
+    strategies = [
+        Strategy("MarketMaker", {
+            "enabled": True, "live_capable": True, "exchange": "bitvavo",
+            "symbol": "BTC-EUR", "order_size": 0.0001,
+            "allocation_eur": 15, "max_order_eur": 10,
+        })
+    ]
+    adapter = Adapter(
+        prices={"BTC-EUR": "74100"},
+        rules={"BTC-EUR": market_rule(base_min="0.00005", quantity_decimals=8)},
+        open_orders={"BTC-EUR": []},
+        journal=journal,
+    )
+    report = validate_bitvavo_live_strategies(strategies, adapter)
+    assert report["passed"] is False
+    assert report["journal_inflight_safe"] is False
+    assert report["unmatched_journal_inflight_count"] == 1

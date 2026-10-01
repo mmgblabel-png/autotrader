@@ -10,6 +10,10 @@ _ORDER_TYPE_BY_STRATEGY = {
     "SniperBot": "market",
 }
 
+_TERMINAL_ORDER_STATES = {
+    "filled", "canceled", "cancelled", "rejected", "error", "expired", "shadow", "blocked",
+}
+
 
 def _order_type_for_strategy(name: str) -> str | None:
     if name.startswith("GridRunner"):
@@ -29,18 +33,50 @@ def _round_amount_down(amount: Decimal, quantity_decimals: int) -> Decimal:
     return amount.quantize(quantum, rounding=ROUND_DOWN)
 
 
+def _managed_exchange_order(order: dict[str, Any], market: str, journal: Any) -> bool:
+    """Return True only when an exchange-open order matches a durable bot order."""
+    if journal is None or not hasattr(journal, "get"):
+        return False
+    client_id = str(order.get("clientOrderId") or "").strip()
+    if not client_id:
+        return False
+    try:
+        local = journal.get(client_id)
+    except Exception:
+        return False
+    if not isinstance(local, dict):
+        return False
+    if str(local.get("market") or "").upper() != market.upper():
+        return False
+    if str(local.get("status") or "").lower() in _TERMINAL_ORDER_STATES:
+        return False
+    exchange_order_id = str(order.get("orderId") or "").strip()
+    local_exchange_order_id = str(local.get("exchange_order_id") or "").strip()
+    if exchange_order_id and local_exchange_order_id and exchange_order_id != local_exchange_order_id:
+        return False
+    exchange_side = str(order.get("side") or "").lower().strip()
+    local_side = str(local.get("side") or "").lower().strip()
+    if exchange_side and local_side and exchange_side != local_side:
+        return False
+    return True
+
+
 def validate_bitvavo_live_strategies(
     strategies: Iterable[Any],
     adapter: Any,
 ) -> dict[str, Any]:
-    """Validate configured live strategies against current Bitvavo market rules.
+    """Validate live strategies and prove restart-resume ownership of open orders.
 
-    This function only performs read-only market and open-order requests.
+    The function is read-only. Existing exchange orders do not automatically
+    block a restart resume when every open order can be matched to the durable
+    local journal and every nonterminal journal order is still open at Bitvavo.
+    Unknown/manual orders remain fail-closed.
     """
-    rows: list[dict[str, Any]] = []
-    total_open_orders = 0
+    strategy_list = list(strategies)
+    eligible: list[tuple[Any, dict[str, Any], str, str, str | None]] = []
+    active_markets: set[str] = set()
 
-    for strategy in strategies:
+    for strategy in strategy_list:
         config = getattr(strategy, "_config", {}) or {}
         if not bool(getattr(strategy, "is_enabled", False)):
             continue
@@ -48,11 +84,79 @@ def validate_bitvavo_live_strategies(
             continue
         if str(config.get("exchange", "bitvavo")).lower() != "bitvavo":
             continue
-
         strategy_name = str(getattr(strategy, "name", type(strategy).__name__))
         market = str(config.get("symbol", "")).upper().strip()
         order_type = _order_type_for_strategy(strategy_name)
+        eligible.append((strategy, config, strategy_name, market, order_type))
+        if market:
+            active_markets.add(market)
 
+    journal = getattr(adapter, "journal", None)
+    journal_inflight: list[dict[str, Any]] = []
+    journal_check_error: str | None = None
+    if journal is not None and hasattr(journal, "inflight"):
+        try:
+            journal_inflight = list(journal.inflight())
+        except Exception as exc:
+            journal_check_error = getattr(exc, "category", type(exc).__name__)
+
+    markets_to_check = set(active_markets)
+    for item in journal_inflight:
+        market = str(item.get("market") or "").upper().strip()
+        if market:
+            markets_to_check.add(market)
+
+    open_orders_by_market: dict[str, list[dict[str, Any]]] = {}
+    open_order_check_errors: dict[str, str] = {}
+    for market in sorted(markets_to_check):
+        try:
+            open_orders_by_market[market] = list(adapter.open_orders(market))
+        except Exception as exc:
+            open_order_check_errors[market] = getattr(exc, "category", type(exc).__name__)
+            open_orders_by_market[market] = []
+
+    managed_client_ids: set[str] = set()
+    managed_by_market: dict[str, int] = {}
+    unmanaged_by_market: dict[str, int] = {}
+    total_open_orders = 0
+    managed_open_order_count = 0
+    unmanaged_open_order_count = 0
+
+    for market, orders in open_orders_by_market.items():
+        managed_here = 0
+        unmanaged_here = 0
+        for order in orders:
+            total_open_orders += 1
+            if _managed_exchange_order(order, market, journal):
+                managed_here += 1
+                managed_open_order_count += 1
+                client_id = str(order.get("clientOrderId") or "").strip()
+                if client_id:
+                    managed_client_ids.add(client_id)
+            else:
+                unmanaged_here += 1
+                unmanaged_open_order_count += 1
+        managed_by_market[market] = managed_here
+        unmanaged_by_market[market] = unmanaged_here
+
+    unmatched_journal = []
+    for item in journal_inflight:
+        client_id = str(item.get("client_order_id") or "").strip()
+        if not client_id or client_id not in managed_client_ids:
+            unmatched_journal.append(item)
+
+    exchange_open_orders_safe = (
+        not open_order_check_errors
+        and unmanaged_open_order_count == 0
+    )
+    journal_inflight_safe = (
+        journal_check_error is None
+        and len(unmatched_journal) == 0
+    )
+    resume_safe = exchange_open_orders_safe and journal_inflight_safe
+
+    rows: list[dict[str, Any]] = []
+    for _strategy, config, strategy_name, market, order_type in eligible:
         row: dict[str, Any] = {
             "strategy": strategy_name,
             "market": market,
@@ -105,11 +209,12 @@ def validate_bitvavo_live_strategies(
             if allocation_eur > 0 and notional > allocation_eur:
                 row["errors"].append("above_strategy_allocation")
 
-            open_count = len(adapter.open_orders(market))
-            total_open_orders += open_count
-            if open_count:
-                row["errors"].append("exchange_open_orders_present")
+            if market in open_order_check_errors:
+                row["errors"].append("open_orders_check_failed")
+            if unmanaged_by_market.get(market, 0) > 0:
+                row["errors"].append("unmanaged_exchange_open_orders_present")
 
+            open_count = len(open_orders_by_market.get(market, []))
             row.update({
                 "status": status,
                 "min_order_base": str(min_base),
@@ -119,6 +224,8 @@ def validate_bitvavo_live_strategies(
                 "planned_amount": str(amount),
                 "planned_notional_eur": str(notional.quantize(Decimal("0.0001"))),
                 "open_order_count": open_count,
+                "managed_open_order_count": managed_by_market.get(market, 0),
+                "unmanaged_open_order_count": unmanaged_by_market.get(market, 0),
             })
             row["passed"] = not row["errors"]
         except Exception as exc:
@@ -126,8 +233,17 @@ def validate_bitvavo_live_strategies(
         rows.append(row)
 
     return {
-        "passed": bool(rows) and all(row.get("passed") for row in rows),
+        "passed": bool(rows) and all(row.get("passed") for row in rows) and resume_safe,
         "open_orders_clear": total_open_orders == 0,
+        "exchange_open_orders_safe": exchange_open_orders_safe,
+        "journal_inflight_safe": journal_inflight_safe,
+        "resume_safe": resume_safe,
         "total_open_orders": total_open_orders,
+        "managed_open_order_count": managed_open_order_count,
+        "unmanaged_open_order_count": unmanaged_open_order_count,
+        "journal_inflight_count": len(journal_inflight),
+        "unmatched_journal_inflight_count": len(unmatched_journal),
+        "journal_check_error": journal_check_error,
+        "open_order_check_errors": open_order_check_errors,
         "strategies": rows,
     }

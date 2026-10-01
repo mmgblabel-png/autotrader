@@ -946,10 +946,32 @@ def live_readiness():
         live_preflight = _cached_live_preflight()
         live_preflight_passed = bool(live_preflight.get("passed"))
         exchange_open_orders_clear = bool(live_preflight.get("open_orders_clear"))
+        exchange_open_orders_safe = bool(
+            live_preflight.get("exchange_open_orders_safe", exchange_open_orders_clear)
+        )
+        journal_inflight_safe = bool(
+            live_preflight.get("journal_inflight_safe", exchange_open_orders_clear)
+        )
+        resume_safe = bool(
+            live_preflight.get(
+                "resume_safe",
+                exchange_open_orders_safe and journal_inflight_safe,
+            )
+        )
     except Exception:
-        live_preflight = {"passed": False, "open_orders_clear": False, "strategies": []}
+        live_preflight = {
+            "passed": False,
+            "open_orders_clear": False,
+            "exchange_open_orders_safe": False,
+            "journal_inflight_safe": False,
+            "resume_safe": False,
+            "strategies": [],
+        }
         live_preflight_passed = False
         exchange_open_orders_clear = False
+        exchange_open_orders_safe = False
+        journal_inflight_safe = False
+        resume_safe = False
     agent = get_agent()
     strategy_states = agent.list_strategies()
     approved_live = [
@@ -978,6 +1000,11 @@ def live_readiness():
         int(state.get("nonterminal_count", -1)) == 0
         for state in journal_states.values()
     )
+    journal_state_reconciled = journal_nonterminal_clear or (
+        bool(journal_states)
+        and journal_inflight_safe
+        and resume_safe
+    )
     required_entry_edge_pct = float(agent.profit_supervisor.policy.required_entry_edge_pct)
     profit_policy_satisfied = bool(target_edges) and all(
         edge >= required_entry_edge_pct for edge in target_edges.values()
@@ -993,8 +1020,8 @@ def live_readiness():
         "bitvavo_credentials_present": credentials,
         "bitvavo_security_passed": bitvavo_security_passed,
         "live_market_preflight_passed": live_preflight_passed,
-        "exchange_open_orders_clear": exchange_open_orders_clear,
-        "journal_nonterminal_clear": journal_nonterminal_clear,
+        "exchange_open_orders_safe": exchange_open_orders_safe,
+        "journal_state_reconciled": journal_state_reconciled,
         "profit_policy_satisfied": profit_policy_satisfied,
         "live_strategy_configured": bool(approved_live),
         "live_strategy_running": any(state.get("running") for state in approved_live),
@@ -1029,7 +1056,20 @@ def live_readiness():
         "ready_to_arm": ready,
         "armed": bool(getattr(app.state, "live_armed", False)),
         "mode": app.state.execution_gateway.mode.value,
+        "resume_mode": bool(
+            ready
+            and not exchange_open_orders_clear
+            and exchange_open_orders_safe
+            and journal_state_reconciled
+        ),
         "gates": gates,
+        "diagnostics": {
+            "exchange_open_orders_clear": exchange_open_orders_clear,
+            "journal_nonterminal_clear": journal_nonterminal_clear,
+            "exchange_open_orders_safe": exchange_open_orders_safe,
+            "journal_inflight_safe": journal_inflight_safe,
+            "resume_safe": resume_safe,
+        },
         "journal": journal_state,
         "journals": journal_states,
         "preflight": live_preflight,
@@ -1037,7 +1077,15 @@ def live_readiness():
             "required_entry_edge_pct": required_entry_edge_pct,
             "target_edges_pct": target_edges,
         },
-        "action": "Resolve failed gates first." if not ready else "Ready for explicit runtime activation.",
+        "action": (
+            "Resolve failed gates first."
+            if not ready
+            else (
+                "Existing bot-owned orders are reconciled; ready for explicit runtime resume."
+                if not exchange_open_orders_clear
+                else "Ready for explicit runtime activation."
+            )
+        ),
         "warning": "Activation is runtime-only and never changes Railway variables.",
     }
 

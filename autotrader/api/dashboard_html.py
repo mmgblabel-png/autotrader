@@ -268,9 +268,14 @@ function setSectionError(label,error){$('apierror').textContent=label+': '+(erro
 async function refreshLiveReadiness(){
  try{
   let d=await get('/api/live/readiness');
-  $('liveready').textContent=d.ready?'READY':'NOT READY';
+  const resume=!!d.resume_mode;
+  $('liveready').textContent=d.ready?(resume?'READY TO RESUME':'READY'):'NOT READY';
   $('liveready').className=d.ready?'green':'amber';
-  $('livecheck').textContent=d.ready?'Alle server-side voorwaarden zijn aanwezig. Activeren blijft een expliciete operatoractie.':'Nog niet klaar: '+Object.entries(d.gates).filter(([_,v])=>!v).map(([k])=>k).join(', ');
+  $('livecheck').textContent=d.ready
+    ? (resume
+      ? 'Bestaande Bitvavo-orders zijn aantoonbaar bot-owned en met het duurzame journal gereconcileerd. Hervatten blijft een expliciete operatoractie.'
+      : 'Alle server-side voorwaarden zijn aanwezig. Activeren blijft een expliciete operatoractie.')
+    : 'Nog niet klaar: '+Object.entries(d.gates).filter(([_,v])=>!v).map(([k])=>k).join(', ');
   const armed=!!d.armed; $('livebtn').disabled=!d.ready||armed; $('liveaction').disabled=!d.ready||armed; $('livestop').style.display=armed?'inline-block':'none'; if(armed){$('liveready').textContent='ARMED';$('liveready').className='red';$('livecheck').textContent='Live execution is actief voor dit proces. Stoppen zet nieuwe orders direct uit.';}
  }catch(e){$('liveready').textContent='ONBEKEND';$('livecheck').textContent=e.message;$('livebtn').disabled=true;$('liveaction').disabled=true}
 }
