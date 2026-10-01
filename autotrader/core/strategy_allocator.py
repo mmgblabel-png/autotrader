@@ -98,7 +98,11 @@ class StrategyAllocator:
             return AllocationDecision(False, "strategy is not approved for live execution")
         if allocation.allocation_eur <= 0:
             return AllocationDecision(False, "strategy allocation is zero")
-        if allocation.symbols and order.symbol.upper() not in allocation.symbols:
+        if (
+            allocation.symbols
+            and "*" not in allocation.symbols
+            and order.symbol.upper() not in allocation.symbols
+        ):
             return AllocationDecision(False, "symbol is outside strategy allocation")
 
         active = [o for o in active_orders if o.order_id != order.order_id and o.is_active]
