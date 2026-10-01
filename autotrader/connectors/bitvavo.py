@@ -50,7 +50,7 @@ class BitvavoAdapter:
         self.journal.backfill_execution_ledger()
         self.gateway = gateway or ExecutionGateway()
         self.gateway.restore_daily_state(
-            exposure_eur=self.journal.daily_execution_exposure_utc()
+            exposure_eur=self.journal.current_execution_exposure_eur()
         )
         self.is_armed = is_armed or (lambda: False)
 
@@ -353,6 +353,12 @@ class BitvavoAdapter:
         observed = self.ticker_price(market)
         expected = price or observed
         notional_eur = amount * expected if side == "buy" else amount * observed
+        # Refresh the hard capital-at-risk counter from durable bot state.
+        # This releases headroom after confirmed sells/cancels without raising
+        # the configured exposure cap.
+        self.gateway.restore_daily_state(
+            exposure_eur=self.journal.current_execution_exposure_eur()
+        )
         proposal = {"venue": "bitvavo", "market": market, "side": side, "orderType": order_type, "amount": str(amount), "price": str(price) if price else None, "clientOrderId": client_order_id}
         new_intent = self.journal.record_intent(client_order_id=client_order_id, market=market, side=side, order_type=order_type, amount=str(amount), price=str(price) if price else None)
         if not new_intent:
@@ -380,7 +386,8 @@ class BitvavoAdapter:
         if os.getenv("LIVE_EXECUTION_APPROVED") != "true" or os.getenv("LIVE_EXECUTION_ADAPTER_INSTALLED") != "true" or os.getenv("EMERGENCY_STOP", "true") == "true" or os.getenv("LIVE_TRADING_CONFIRMATION") != "I_UNDERSTAND_LIVE_ORDERS":
             self.journal.update(client_order_id, "blocked", proposal, error="live_gates_not_satisfied")
             raise BitvavoError("Live gates are not satisfied; no order was sent")
-        self.journal.record_execution_acceptance(client_order_id, str(notional_eur))
+        if side == "buy":
+            self.journal.record_execution_acceptance(client_order_id, str(notional_eur))
         body: dict[str, Any] = {"market": market, "side": side, "orderType": order_type, "operatorId": operator_id if operator_id > 0 else int(os.getenv("BITVAVO_OPERATOR_ID", "1")), "clientOrderId": client_order_id, "amount": str(amount), "responseRequired": True}
         if order_type == "limit":
             body.update({"price": str(price), "timeInForce": "GTC", "postOnly": True})
@@ -390,9 +397,15 @@ class BitvavoAdapter:
             for fill in response.get("fills") or []:
                 if isinstance(fill, dict):
                     self.journal.record_fill(client_order_id, fill)
+            self.gateway.restore_daily_state(
+                exposure_eur=self.journal.current_execution_exposure_eur()
+            )
             return response
         except BitvavoError as exc:
             self.journal.update(client_order_id, "error", {"category": exc.category}, error=exc.category)
+            self.gateway.restore_daily_state(
+                exposure_eur=self.journal.current_execution_exposure_eur()
+            )
             raise
 
     def cancel_order(self, market: str, order_id: str) -> dict[str, Any]:
@@ -407,4 +420,7 @@ class BitvavoAdapter:
         for record in self.journal.inflight():
             if record.get("exchange_order_id") == order_id:
                 self.journal.update(record["client_order_id"], "canceled", response, exchange_order_id=order_id)
+        self.gateway.restore_daily_state(
+            exposure_eur=self.journal.current_execution_exposure_eur()
+        )
         return response
