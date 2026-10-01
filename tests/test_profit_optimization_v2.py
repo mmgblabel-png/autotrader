@@ -60,6 +60,8 @@ def test_opportunity_router_is_read_only_and_ranks_markets():
     assert "orderbook_imbalance_pct" in first
     assert "snapshot_age_seconds" in first
     assert "expected_slippage_bps" in first
+    assert 0 <= first["signal_strength"] <= 100
+    assert first["signal_direction"] in {"NEUTRAL", "LONG", "WAIT", "RANGE", "MEAN_REVERT"}
 
 
 def test_execution_v2_recommends_only_safe_advisory_reprice():
@@ -272,6 +274,9 @@ def test_shared_portfolio_goal_never_changes_risk():
     assert status["target_equity_eur"] == 25000
     assert status["current_equity_estimate_eur"] == 75
     assert status["next_milestone_eur"] == 100
+    assert status["target_days"] == 365
+    assert status["required_daily_linear_eur"] > 0
+    assert status["required_daily_compound_pct"] > 0
     assert status["risk_policy"]["goal_is_risk_input"] is False
     assert status["risk_policy"]["increase_risk_to_catch_up"] is False
     assert status["risk_policy"]["increase_leverage_to_catch_up"] is False
