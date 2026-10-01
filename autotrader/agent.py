@@ -246,6 +246,10 @@ class AutoTrader:
                     price=price,
                     fee=fee,
                     fee_currency=str(raw.get("feeCurrency") or ""),
+                    quote_to_eur=float(
+                        row.get("quote_to_eur")
+                        or (1.0 if str(row.get("market") or "").upper().endswith("-EUR") else 0.0)
+                    ),
                     fill_key=str(row.get("fill_key") or ""),
                     timestamp=timestamp,
                 )
@@ -258,8 +262,7 @@ class AutoTrader:
             ):
                 loss = -realized
                 self._rm.record_loss(strategy, loss)
-                if str(row.get("market") or "").upper().endswith("-EUR"):
-                    self._bitvavo.gateway.record_loss(Decimal(str(loss)))
+                self._bitvavo.gateway.record_loss(Decimal(str(loss)))
 
     def _setup_risk(self) -> None:
         for key, strat_cfg in self._config.get("strategies", {}).items():
