@@ -255,8 +255,15 @@ def _fee_margin_payload_from_account(agent: AutoTrader, account: dict[str, objec
             "required_gross_edge_pct": round(configured_required_edge_pct, 5),
         },
         "strategy_routes": routes,
-        "live_profit_gates_changed": False,
-        "note": "Telemetry only. Live profit gates are not changed automatically.",
+        "live_profit_gates_changed": bool(
+            (agent._config.get("profit_policy", {}) or {}).get(
+                "use_live_fee_tier_for_route_gates", False
+            )
+            and maker_pct is not None
+            and taker_pct is not None
+        ),
+        "fallback_required_gross_edge_pct": round(configured_required_edge_pct, 5),
+        "note": "Route-specific live fee gates use the private account tier when available; missing fee data falls back to the configured conservative policy.",
     }
 
 
@@ -1193,6 +1200,11 @@ def live_pnl():
             "required_entry_edge_pct": float(agent.profit_supervisor.policy.required_entry_edge_pct),
             "future_exit_cost_pct": float(agent.profit_supervisor.policy.future_exit_cost_pct),
             "min_expected_net_edge_pct": float(agent.profit_supervisor.policy.min_expected_net_edge_pct),
+            "route_specific_live_fee_gates": bool(
+                (agent._config.get("profit_policy", {}) or {}).get(
+                    "use_live_fee_tier_for_route_gates", False
+                )
+            ),
         },
         "strategies": rows,
         "note": "Unrealized values are estimates after configured exit fee/slippage; profit is never guaranteed.",
