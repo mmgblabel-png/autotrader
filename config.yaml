@@ -67,6 +67,8 @@ shadow_lab:
   promotion_min_net_pnl_eur: 0.15
   promotion_max_drawdown_pct: 6.0
   dynamic_markets_per_strategy: 12
+  backfill_candles: 120
+  backfill_interval: 1m
   strategies:
     mean_reversion:
       enabled: true
