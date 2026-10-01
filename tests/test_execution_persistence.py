@@ -149,3 +149,28 @@ def test_canceled_buy_releases_current_exposure_but_keeps_turnover(tmp_path):
     assert journal.current_execution_exposure_eur() == Decimal("0")
     assert journal.daily_execution_exposure_utc() == Decimal("6")
     journal.close()
+
+
+
+def test_three_hour_activity_converts_base_fee_to_eur(tmp_path):
+    import time
+    journal = OrderJournal(str(tmp_path / "orders.sqlite3"))
+    cid = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
+    journal.record_intent(
+        client_order_id=cid, market="BTC-EUR", side="buy",
+        order_type="limit", amount="0.0001", price="70000",
+    )
+    journal.set_strategy(cid, "MarketMaker")
+    journal.update(cid, "filled")
+    journal.record_fill(cid, {
+        "id": "fee-fill",
+        "amount": "0.0001",
+        "price": "70000",
+        "fee": "0.00000015",
+        "feeCurrency": "BTC",
+    })
+    summary = journal.activity_summary_since(time.time() - 60)
+    assert summary["fills"] == 1
+    assert summary["fees_eur"] == pytest.approx(0.0105)
+    assert summary["unpriced_fee_count"] == 0
+    journal.close()
