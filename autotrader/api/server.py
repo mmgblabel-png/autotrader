@@ -814,6 +814,15 @@ async def _shadow_strategy_loop(app: FastAPI, agent: AutoTrader) -> None:
                 if updated_names:
                     app.state.shadow_strategy_engine.flush()
                 app.state.shadow_dynamic_configs = dynamic_configs
+                candidate_count = len(updated_names)
+                previous_count = getattr(app.state, "shadow_last_candidate_count", None)
+                if candidate_count != previous_count:
+                    log.info(
+                        "Shadow fast lane candidates=%d base_strategies=%d live_orders_sent=False",
+                        candidate_count,
+                        len(strategies),
+                    )
+                    app.state.shadow_last_candidate_count = candidate_count
 
                 risk_cfg = agent._config.get("leverage_martingale_risk_lab", {}) or {}
                 if bool(risk_cfg.get("enabled", False)):
@@ -998,6 +1007,7 @@ async def _lifespan(app: FastAPI):
     app.state.shadow_strategy_error = None
     app.state.shadow_dynamic_configs = {}
     app.state.shadow_backfill_attempted = set()
+    app.state.shadow_last_candidate_count = None
     app.state.allocator_v2 = StrategyAllocatorV2(agent._config.get("allocator_v2", {}) or {})
     universe_cfg = agent._config.get("market_universe", {}) or {}
     app.state.market_universe = MultiExchangeMarketUniverse(
