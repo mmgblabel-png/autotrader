@@ -76,6 +76,15 @@ class GridRunner(BaseStrategy):
             )
             return
 
+        last_sell_fill = max(0.0, float(cfg.get("_last_bot_sell_fill_at", 0.0) or 0.0))
+        cycle_cooldown = max(0.0, float(cfg.get("cycle_cooldown_seconds", 60.0) or 60.0))
+        if last_sell_fill > 0 and time.time() - last_sell_fill < cycle_cooldown:
+            log.info(
+                "GRID cooldown: BUY paused for %.1fs after confirmed SELL fill.",
+                max(0.0, cycle_cooldown - (time.time() - last_sell_fill)),
+            )
+            return
+
         required_edge = max(0.0, float(cfg.get("_required_entry_edge_pct", 0.0)))
         target_edge = exit_markup * 100
         if required_edge > 0 and target_edge < required_edge:
