@@ -55,6 +55,7 @@ class StrategyAllocatorV2:
         name_map = {
             "market_maker": "MarketMaker",
             "grid": "GridRunner",
+            "grid_eth": "GridRunnerETH",
             "sniper": "SniperBot",
             "arbitrage": "ArbitrageHunter",
             "mean_reversion": "MeanReversionShadow",
