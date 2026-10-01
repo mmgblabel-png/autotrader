@@ -333,6 +333,21 @@ class OpportunityRouter:
             direction = "MEAN_REVERT"
         return max(0.0, min(100.0, value)), direction
 
+    def market_snapshot(self, market: str) -> dict[str, Any] | None:
+        snap = self._latest.get(str(market or "").upper())
+        if snap is None:
+            return None
+        return {
+            "market": snap.market,
+            "base": snap.base,
+            "quote": snap.quote,
+            "pair_type": snap.pair_type,
+            "quote_to_eur": snap.quote_to_eur,
+            "mid": snap.mid,
+            "observed_at": snap.observed_at,
+            "age_seconds": max(0.0, time.time() - snap.observed_at),
+        }
+
     def rankings(self) -> dict[str, Any]:
         profiles = {
             "market_maker": {"spread_quality": 0.25, "liquidity": 0.25, "volatility_quality": 0.15, "book_balance_quality": 0.15, "freshness": 0.10, "slippage_quality": 0.10},
@@ -360,7 +375,8 @@ class OpportunityRouter:
                     "quote": snap.quote,
                     "pair_type": snap.pair_type,
                     "quote_to_eur": round(snap.quote_to_eur, 12),
-                    "live_execution_supported_now": snap.quote == "EUR",
+                    "live_execution_supported_now": snap.quote_to_eur > 0,
+                    "execution_accounting": "quote_aware_eur_v1",
                     "score": round(score, 2),
                     "signal_strength": round(signal_strength, 2),
                     "signal_direction": signal_direction,
