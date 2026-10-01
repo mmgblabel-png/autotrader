@@ -69,19 +69,30 @@ class CoinbaseAdvancedMarketData:
         url = self.BASE_URL + path
         if params:
             url += "?" + urllib.parse.urlencode(params)
+        headers = {
+            "Accept": "application/json",
+            "User-Agent": "autotrader-coinbase-marketdata/1.0",
+        }
+        # Coinbase public endpoints allow authentication and the official SDK
+        # recommends it for higher rate limits. Fall back to unauthenticated
+        # public access if credentials are absent or malformed.
+        try:
+            if bool(self._credential_format().get("format_compatible")):
+                headers["Authorization"] = f"Bearer {self._build_rest_jwt('GET', path)}"
+        except Exception:
+            pass
         request = urllib.request.Request(
             url,
             method="GET",
-            headers={
-                "Accept": "application/json",
-                "User-Agent": "autotrader-coinbase-marketdata/1.0",
-            },
+            headers=headers,
         )
         try:
             with urllib.request.urlopen(request, timeout=self.timeout) as response:
                 return json.loads(response.read().decode("utf-8"))
         except Exception as exc:
-            raise CoinbaseMarketDataError("Coinbase public market-data request failed") from exc
+            raise CoinbaseMarketDataError(
+                f"Coinbase public market-data request failed: {type(exc).__name__}"
+            ) from exc
 
     @staticmethod
     def _credential_format() -> dict[str, object]:

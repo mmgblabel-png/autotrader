@@ -89,3 +89,48 @@ def test_universe_overlap_includes_non_eur_pairs():
     markets = {row["market"] for row in overlap["rows"]}
     assert {"BTC-EUR", "ETH-BTC", "SOL-USDC"} <= markets
     assert overlap["live_orders_sent"] is False
+
+
+class BrokenCoinbase(FakeCoinbase):
+    def list_spot_products(self):
+        raise RuntimeError("coinbase unavailable")
+
+
+class BrokenBitvavo(FakeBitvavo):
+    def markets(self):
+        raise RuntimeError("bitvavo unavailable")
+
+
+def test_coinbase_failure_does_not_zero_bitvavo_universe():
+    universe = MultiExchangeMarketUniverse(
+        FakeBitvavo(),
+        BrokenCoinbase(),
+        {"coinbase_book_batch_size": 10},
+    )
+    universe.refresh()
+    status = universe.status()
+    assert status["bitvavo"]["tradable"] == 4
+    assert status["coinbase"]["tradable"] == 0
+    assert "coinbase" in status["venue_errors"]
+    assert status["live_orders_sent"] is False
+
+
+def test_bitvavo_failure_does_not_zero_coinbase_catalogue():
+    universe = MultiExchangeMarketUniverse(
+        BrokenBitvavo(),
+        FakeCoinbase(),
+        {"coinbase_book_batch_size": 10},
+    )
+    universe.refresh()
+    status = universe.status()
+    assert status["bitvavo"]["tradable"] == 0
+    assert status["coinbase"]["tradable"] == 3
+    assert "bitvavo" in status["venue_errors"]
+    # Without the Bitvavo conversion graph, crypto-quoted rows remain
+    # discoverable but are not falsely valued as EUR.
+    eth_btc = next(
+        row for row in universe.markets(venue="coinbase")["rows"]
+        if row["market"] == "ETH-BTC"
+    )
+    assert eth_btc["quote_to_eur"] is None
+    assert eth_btc["live_execution_supported_now"] is False
