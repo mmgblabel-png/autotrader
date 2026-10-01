@@ -488,3 +488,34 @@ def test_wildcard_market_universe_accepts_router_candidate():
     assert row["desired_market"] == "AAVE-EUR"
     assert row["signal_strength"] == 90
     assert row["quality_ok"] is True
+
+
+def test_below_minimum_recommendation_does_not_switch_or_mutate_order_value():
+    agent = _agent()
+    before = agent._strategies["sniper"]._config["order_value_eur"]
+    payload = _router()
+    risk = _risk()
+    for row in risk["rows"]:
+        if row["strategy"] == "SniperBot":
+            row["recommended_order_eur"] = 3.90
+    engine = AutonomousDecisionEngine({
+        "enabled": True,
+        "apply_live": True,
+        "min_score": 68,
+        "min_confidence": 0.62,
+        "minimum_live_order_eur": 5.0,
+        "strategy_markets": {
+            "market_maker": ["BTC-EUR"],
+            "grid": ["SOL-EUR", "ETH-EUR"],
+            "sniper": ["XRP-EUR", "ADA-EUR"],
+        },
+    })
+    plan = engine.plan(agent=agent, router_payload=payload, risk_payload=risk, armed=True)
+    row = next(x for x in plan["rows"] if x["strategy"] == "SniperBot")
+    assert row["minimum_order_ok"] is False
+    assert row["entry_allowed"] is False
+    assert row["may_switch"] is False
+    assert row["reason"] == "order_below_exchange_minimum"
+    engine.apply(agent=agent, plan=plan, armed=True)
+    assert agent._strategies["sniper"]._config["order_value_eur"] == before
+    assert agent._strategies["sniper"]._config["symbol"] == "XRP-EUR"
