@@ -210,6 +210,8 @@ opportunity_router:
   history_size: 48
   min_top_depth_eur: 25
   max_spread_bps: 35
+  probe_order_eur: 6
+  max_snapshot_age_seconds: 30
   auto_discover_eur: true
   max_markets: 60
   discovery_refresh_seconds: 1800
