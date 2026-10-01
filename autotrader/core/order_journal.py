@@ -272,6 +272,48 @@ class OrderJournal:
             ).fetchall()
         return [dict(row) for row in rows]
 
+    def activity_summary_since(self, since: float) -> dict[str, Any]:
+        """Return compact execution activity for a rolling dashboard window."""
+        cutoff = float(since)
+        with self._lock:
+            order_rows = self._db.execute(
+                """
+                SELECT status, COUNT(*) AS n
+                FROM orders
+                WHERE created_at>=?
+                GROUP BY status
+                """,
+                (cutoff,),
+            ).fetchall()
+            fill_row = self._db.execute(
+                """
+                SELECT COUNT(*) AS n,
+                       COALESCE(SUM(CAST(NULLIF(fee,'') AS REAL)),0) AS fees
+                FROM fills
+                WHERE observed_at>=?
+                """,
+                (cutoff,),
+            ).fetchone()
+            open_row = self._db.execute(
+                """
+                SELECT COUNT(*) AS n
+                FROM orders
+                WHERE status NOT IN ('filled','canceled','cancelled','rejected','error','expired','shadow','blocked')
+                """
+            ).fetchone()
+        counts = {str(row["status"]): int(row["n"] or 0) for row in order_rows}
+        error_count = sum(
+            counts.get(key, 0) for key in ("rejected", "error", "blocked")
+        )
+        return {
+            "orders_created": sum(counts.values()),
+            "status_counts": counts,
+            "error_orders": error_count,
+            "fills": int((fill_row or {})["n"] or 0) if fill_row else 0,
+            "fees_eur": float((fill_row or {})["fees"] or 0.0) if fill_row else 0.0,
+            "open_orders_now": int((open_row or {})["n"] or 0) if open_row else 0,
+        }
+
     def inflight(self) -> list[dict[str, Any]]:
         with self._lock:
             rows = self._db.execute("SELECT * FROM orders WHERE status NOT IN ('filled','canceled','cancelled','rejected','error','expired','shadow','blocked') ORDER BY created_at").fetchall()
