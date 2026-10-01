@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import time
 from typing import TYPE_CHECKING, Dict, Optional
 
 from autotrader.core.logger import get_logger
@@ -37,6 +38,7 @@ class RiskManager:
         self._error_counts: Dict[str, int] = {}
         self._killed: Dict[str, bool] = {}
         self._pe: Optional["ProfitEngine"] = profit_engine
+        self._day_key = self._utc_day_key()
 
     # ------------------------------------------------------------------
     # Public API
@@ -49,8 +51,18 @@ class RiskManager:
         """Wire up the profit engine for event forwarding (avoids circular imports)."""
         self._pe = pe
 
-    def check_order(self, strategy: str, notional: float, slippage_pct: float = 0.0) -> bool:
-        """Return True if the order is allowed; False if it must be rejected."""
+    def check_order(
+        self,
+        strategy: str,
+        notional: float,
+        slippage_pct: float = 0.0,
+        *,
+        risk_reducing: bool = False,
+    ) -> bool:
+        """Return True if the order is allowed; exits can bypass entry kill gates."""
+        self._ensure_current_day()
+        if risk_reducing:
+            return True
         if self.is_killed(strategy):
             log.warning("[%s] Kill-switch active – order rejected.", strategy)
             return False
@@ -76,6 +88,7 @@ class RiskManager:
 
     def record_loss(self, strategy: str, amount: float) -> None:
         """Accumulate realised loss (positive = loss)."""
+        self._ensure_current_day()
         self._daily_loss[strategy] = self._daily_loss.get(strategy, 0.0) + amount
         cfg = self._get_cfg(strategy)
         if self._daily_loss[strategy] >= cfg.max_daily_loss:
@@ -83,19 +96,22 @@ class RiskManager:
 
     def record_error(self, strategy: str) -> None:
         """Increment error counter; trigger kill-switch when threshold is reached."""
+        self._ensure_current_day()
         self._error_counts[strategy] = self._error_counts.get(strategy, 0) + 1
         cfg = self._get_cfg(strategy)
         if self._error_counts[strategy] >= cfg.max_consecutive_errors:
             self._trigger_kill(strategy, "too many errors")
 
     def reset_daily(self) -> None:
-        """Reset counters – call at midnight."""
+        """Reset counters for a new UTC trading day."""
         self._daily_loss.clear()
         self._error_counts.clear()
         self._killed.clear()
+        self._day_key = self._utc_day_key()
         log.info("RiskManager daily counters reset.")
 
     def is_killed(self, strategy: str) -> bool:
+        self._ensure_current_day()
         return self._killed.get(strategy, False)
 
     def status(self) -> dict:
@@ -109,6 +125,7 @@ class RiskManager:
             ``any_killed``      – same as ``kill_switch`` (alias).
             ``strategies``      – per-strategy breakdown.
         """
+        self._ensure_current_day()
         strategies: Dict[str, dict] = {}
         for key, cfg in self._configs.items():
             strategies[key] = {
@@ -136,6 +153,21 @@ class RiskManager:
     # ------------------------------------------------------------------
     # Private helpers
     # ------------------------------------------------------------------
+
+    @staticmethod
+    def _utc_day_key() -> tuple[int, int]:
+        now = time.gmtime()
+        return now.tm_year, now.tm_yday
+
+    def _ensure_current_day(self) -> None:
+        current = self._utc_day_key()
+        if current == self._day_key:
+            return
+        self._daily_loss.clear()
+        self._error_counts.clear()
+        self._killed.clear()
+        self._day_key = current
+        log.info("RiskManager rolled over to a new UTC trading day.")
 
     def _get_cfg(self, strategy: str) -> StrategyRiskConfig:
         return self._configs.get(strategy, StrategyRiskConfig())
