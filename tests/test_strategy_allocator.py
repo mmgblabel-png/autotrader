@@ -131,3 +131,23 @@ def test_allocator_accepts_distinct_eth_grid_without_raising_global_budget():
     assert allocator.global_budget_eur == Decimal("50")
     assert allocator.allocation_for("GridRunner").allocation_eur == Decimal("8")
     assert allocator.allocation_for("GridRunnerETH").allocation_eur == Decimal("7")
+
+
+def test_allocator_wildcard_accepts_router_selected_market_with_same_caps():
+    cfg = config()
+    cfg["autonomous_execution"] = {
+        "strategy_markets": {
+            "grid_eth": ["*"],
+        }
+    }
+    allocator = StrategyAllocator(cfg)
+    order = Order(
+        "bitvavo", "PEPE-EUR", OrderSide.BUY, OrderType.LIMIT,
+        1790000, 0.0000039, strategy="GridRunnerETH",
+    )
+    decision = allocator.evaluate(
+        order, [], observed_price=Decimal("0.0000039")
+    )
+    assert decision.accepted
+    assert allocator.allocation_for("GridRunnerETH").max_order_eur == Decimal("7")
+    assert allocator.global_budget_eur == Decimal("50")
