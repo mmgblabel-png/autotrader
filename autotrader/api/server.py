@@ -2068,19 +2068,32 @@ def three_hour_report() -> dict[str, object]:
     }
     opportunities = []
     rankings = router.get("rankings", {}) if isinstance(router, dict) else {}
+    autonomy_rows = {
+        str(row.get("strategy") or ""): row
+        for row in (getattr(app.state, "autonomous_plan", {}) or {}).get("rows", [])
+    }
     for key, label in profiles.items():
         rows = rankings.get(key, []) or []
         best = next((row for row in rows if row.get("eligible")), rows[0] if rows else None)
         if best:
+            gate = autonomy_rows.get(label, {}) or {}
+            target_edge = float(gate.get("target_edge_pct") or 0.0)
+            required_edge = float(gate.get("required_entry_edge_pct") or 0.0)
             opportunities.append({
                 "strategy": label,
-                "market": best.get("market"),
-                "score": best.get("score"),
-                "signal_strength": best.get("signal_strength"),
-                "signal_direction": best.get("signal_direction"),
+                "market": gate.get("desired_market") or best.get("market"),
+                "score": gate.get("market_score", best.get("score")),
+                "signal_strength": gate.get("signal_strength", best.get("signal_strength")),
+                "signal_direction": gate.get("signal_direction", best.get("signal_direction")),
                 "spread_bps": best.get("spread_bps"),
                 "momentum_pct": best.get("momentum_pct"),
                 "liquidity_eur": best.get("liquidity_eur"),
+                "target_edge_pct": target_edge or None,
+                "required_entry_edge_pct": required_edge or None,
+                "margin_buffer_pct": round(target_edge - required_edge, 4)
+                if target_edge > 0 and required_edge > 0 else None,
+                "entry_allowed": gate.get("entry_allowed"),
+                "decision_reason": gate.get("reason"),
             })
     execution = app.state.execution_gateway.status()
     return {
