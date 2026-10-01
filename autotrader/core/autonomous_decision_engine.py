@@ -94,6 +94,7 @@ class AutonomousDecisionEngine:
         router_payload: dict[str, Any],
         risk_payload: dict[str, Any],
         armed: bool,
+        available_balances: dict[str, float] | None = None,
     ) -> dict[str, Any]:
         strategy_key_map = {
             "market_maker": ("MarketMaker", "market_maker"),
@@ -106,6 +107,10 @@ class AutonomousDecisionEngine:
             for x in (risk_payload.get("rows", []) if isinstance(risk_payload, dict) else [])
         }
         rankings = router_payload.get("rankings", {}) if isinstance(router_payload, dict) else {}
+        balances = {
+            str(asset).upper(): max(0.0, float(value or 0.0))
+            for asset, value in (available_balances or {}).items()
+        }
         now = time.time()
         rows: list[dict[str, Any]] = []
         gateway = getattr(getattr(agent, "_bitvavo", None), "gateway", None)
@@ -161,11 +166,17 @@ class AutonomousDecisionEngine:
             )
             allowed = set(self._allowed_markets(key, current))
             allow_any = "*" in allowed
-            candidates = [
+            research_candidates = [
                 row for row in rankings.get(router_key, [])
                 if bool(row.get("eligible"))
                 and (allow_any or str(row.get("market", "")).upper() in allowed)
                 and str(row.get("market", "")).upper() not in reserved_markets
+            ]
+            # Full spot discovery includes crypto/crypto. Live selection still
+            # requires quote-aware EUR accounting plus real quote funding.
+            candidates = [
+                row for row in research_candidates
+                if bool(row.get("live_execution_supported_now", True))
             ]
             risk = risk_rows.get(display, {})
             confidence = float(risk.get("confidence") or 0.0)
@@ -248,11 +259,26 @@ class AutonomousDecisionEngine:
                 if key in {"market_maker", "grid", "grid_eth", "sniper"} and flat
                 else True
             )
+            candidate_quote = str(best.get("quote") or "") if best else ""
+            if not candidate_quote and desired and "-" in desired:
+                candidate_quote = desired.rsplit("-", 1)[1]
+            candidate_quote_to_eur = float(best.get("quote_to_eur") or 0.0) if best else 0.0
+            if candidate_quote == "EUR" and candidate_quote_to_eur <= 0:
+                candidate_quote_to_eur = 1.0
+            available_quote = balances.get(candidate_quote, 0.0) if balances else 0.0
+            available_quote_eur = available_quote * candidate_quote_to_eur
+            funding_ok = True
+            if balances and flat and key in {"market_maker", "grid", "grid_eth", "sniper"}:
+                funding_ok = (
+                    candidate_quote_to_eur > 0
+                    and available_quote_eur + 1e-9 >= suggested_eur
+                )
 
             entry_allowed = (
                 quality_ok
                 and exposure_headroom_ok
                 and minimum_order_ok
+                and funding_ok
                 and entry_runtime_ready
                 and not risk_killed
                 and flat
@@ -277,6 +303,8 @@ class AutonomousDecisionEngine:
                 reason = "daily_exposure_headroom_low"
             elif not minimum_order_ok:
                 reason = "order_below_exchange_minimum"
+            elif not funding_ok:
+                reason = "quote_balance_low"
             elif risk_killed:
                 reason = "risk_kill_switch"
             elif not entry_runtime_ready and flat:
@@ -294,9 +322,17 @@ class AutonomousDecisionEngine:
 
             rows.append({
                 "strategy_key": key,
+                "research_candidate_count": len(research_candidates),
+                "research_crypto_crypto_count": sum(
+                    1 for item in research_candidates
+                    if str(item.get("pair_type") or "") == "crypto_crypto"
+                ),
                 "strategy": display,
                 "current_market": current,
                 "desired_market": desired,
+                "pair_type": str(best.get("pair_type") or "") if best else "",
+                "quote": str(best.get("quote") or "") if best else "",
+                "quote_to_eur": round(float(best.get("quote_to_eur") or 0.0), 12) if best else 0.0,
                 "market_score": round(score, 2),
                 "signal_strength": round(signal_strength, 2),
                 "signal_direction": signal_direction,
@@ -322,6 +358,9 @@ class AutonomousDecisionEngine:
                 "exposure_safety_buffer_eur": round(self.exposure_safety_buffer_eur, 2),
                 "exposure_headroom_ok": exposure_headroom_ok,
                 "minimum_order_ok": minimum_order_ok,
+                "funding_ok": funding_ok,
+                "available_quote": round(available_quote, 12),
+                "available_quote_eur": round(available_quote_eur, 4),
                 "minimum_live_order_eur": round(minimum_live_order_eur, 2),
                 "pre_headroom_recommended_order_eur": round(pre_headroom_suggested_eur, 2),
                 "allowed_markets": sorted(allowed),
@@ -396,13 +435,16 @@ class AutonomousDecisionEngine:
                 try:
                     rules_rows = agent._bitvavo.markets(desired)
                     rules = rules_rows[0] if rules_rows else {}
-                    required_type = "limit" if key in {"grid", "grid_eth"} else "market"
+                    required_type = "limit" if key in {"market_maker", "grid", "grid_eth"} else "market"
                     supported = {str(x).lower() for x in (rules.get("orderTypes") or [])}
                     min_quote = float(rules.get("minOrderInQuoteAsset") or 0.0)
+                    quote_to_eur = float(row.get("quote_to_eur") or 0.0)
+                    min_order_eur = min_quote * quote_to_eur
                     if (
                         str(rules.get("status") or "").lower() != "trading"
                         or required_type not in supported
-                        or (order_eur > 0 and min_quote > order_eur)
+                        or quote_to_eur <= 0
+                        or (order_eur > 0 and min_order_eur > order_eur)
                     ):
                         continue
                 except Exception:
@@ -411,13 +453,14 @@ class AutonomousDecisionEngine:
                 try:
                     cfg["symbol"] = desired
                     strategy.on_market_switch(previous, desired)
+                    cfg["_quote_to_eur"] = float(row.get("quote_to_eur") or 0.0)
                 except Exception:
                     cfg["symbol"] = previous
                     continue
                 self._last_switch[strategy.name] = time.time()
 
             if (
-                key in {"grid", "grid_eth", "sniper"}
+                key in {"market_maker", "grid", "grid_eth", "sniper"}
                 and order_eur > 0
                 and bool(row.get("entry_allowed", False))
             ):
@@ -426,8 +469,7 @@ class AutonomousDecisionEngine:
                     float(cfg.get("max_order_eur", order_eur)),
                 )
                 cfg["order_value_eur"] = min(order_eur, hard_cap)
-            # MarketMaker remains fixed-size until venue metadata/precision-aware
-            # multi-instrument sizing is independently validated.
+                cfg["_quote_to_eur"] = float(row.get("quote_to_eur") or cfg.get("_quote_to_eur", 0.0) or 0.0)
             changes.append({
                 "strategy": strategy.name,
                 "market": str(cfg.get("symbol", "")).upper(),

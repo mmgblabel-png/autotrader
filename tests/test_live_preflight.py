@@ -250,3 +250,39 @@ def test_preflight_blocks_orphaned_nonterminal_journal_order():
     assert report["passed"] is False
     assert report["journal_inflight_safe"] is False
     assert report["unmatched_journal_inflight_count"] == 1
+
+
+def test_preflight_converts_crypto_quote_order_budget_to_eur():
+    class CryptoAdapter(Adapter):
+        def quote_to_eur(self, market):
+            assert market == "ETH-BTC"
+            return Decimal("70000")
+
+    strategies = [
+        Strategy("GridRunner", {
+            "enabled": True,
+            "live_capable": True,
+            "exchange": "bitvavo",
+            "symbol": "ETH-BTC",
+            "order_value_eur": 6,
+            "allocation_eur": 8,
+            "max_order_eur": 7,
+        })
+    ]
+    adapter = CryptoAdapter(
+        prices={"ETH-BTC": "0.05"},
+        rules={
+            "ETH-BTC": market_rule(
+                base_min="0.001",
+                quote_min="0.00005",
+                quantity_decimals=6,
+                tick_size="0.000001",
+            )
+        },
+    )
+    report = validate_bitvavo_live_strategies(strategies, adapter)
+    row = report["strategies"][0]
+    assert report["passed"] is True
+    assert Decimal(row["planned_notional_quote"]) < Decimal("0.001")
+    assert Decimal(row["planned_notional_eur"]) <= Decimal("6")
+    assert Decimal(row["quote_to_eur"]) == Decimal("70000")

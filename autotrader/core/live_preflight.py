@@ -21,10 +21,14 @@ def _order_type_for_strategy(name: str) -> str | None:
     return _ORDER_TYPE_BY_STRATEGY.get(name)
 
 
-def _planned_amount(config: dict[str, Any], price: Decimal) -> Decimal:
+def _planned_amount(
+    config: dict[str, Any],
+    price: Decimal,
+    quote_to_eur: Decimal,
+) -> Decimal:
     order_value = Decimal(str(config.get("order_value_eur", "0") or "0"))
-    if order_value > 0 and price > 0:
-        return order_value / price
+    if order_value > 0 and price > 0 and quote_to_eur > 0:
+        return order_value / quote_to_eur / price
     return Decimal(str(config.get("order_size", "0") or "0"))
 
 
@@ -188,8 +192,23 @@ def validate_bitvavo_live_strategies(
             min_quote = Decimal(str(rules.get("minOrderInQuoteAsset", "0") or "0"))
             tick_size = Decimal(str(rules.get("tickSize", "0") or "0"))
             price = Decimal(str(adapter.ticker_price(market)))
-            amount = _round_amount_down(_planned_amount(config, price), quantity_decimals)
-            notional = amount * price
+            quote = market.rsplit("-", 1)[1] if "-" in market else ""
+            if quote == "EUR":
+                quote_to_eur = Decimal("1")
+            elif hasattr(adapter, "quote_to_eur"):
+                quote_to_eur = Decimal(str(adapter.quote_to_eur(market)))
+            else:
+                quote_to_eur = Decimal("0")
+            if quote_to_eur <= 0 or not quote_to_eur.is_finite():
+                row["errors"].append("quote_to_eur_unavailable")
+                rows.append(row)
+                continue
+            amount = _round_amount_down(
+                _planned_amount(config, price, quote_to_eur),
+                quantity_decimals,
+            )
+            notional_quote = amount * price
+            notional_eur = notional_quote * quote_to_eur
 
             if status != "trading":
                 row["errors"].append("market_not_trading")
@@ -199,14 +218,14 @@ def validate_bitvavo_live_strategies(
                 row["errors"].append("planned_amount_non_positive")
             if amount < min_base:
                 row["errors"].append("below_min_base")
-            if notional < min_quote:
+            if notional_quote < min_quote:
                 row["errors"].append("below_min_quote")
 
             max_order_eur = Decimal(str(config.get("max_order_eur", "0") or "0"))
             allocation_eur = Decimal(str(config.get("allocation_eur", "0") or "0"))
-            if max_order_eur > 0 and notional > max_order_eur:
+            if max_order_eur > 0 and notional_eur > max_order_eur:
                 row["errors"].append("above_strategy_max_order")
-            if allocation_eur > 0 and notional > allocation_eur:
+            if allocation_eur > 0 and notional_eur > allocation_eur:
                 row["errors"].append("above_strategy_allocation")
 
             if market in open_order_check_errors:
@@ -222,7 +241,9 @@ def validate_bitvavo_live_strategies(
                 "quantity_decimals": quantity_decimals,
                 "tick_size": str(tick_size),
                 "planned_amount": str(amount),
-                "planned_notional_eur": str(notional.quantize(Decimal("0.0001"))),
+                "quote_to_eur": str(quote_to_eur),
+                "planned_notional_quote": str(notional_quote),
+                "planned_notional_eur": str(notional_eur.quantize(Decimal("0.0001"))),
                 "open_order_count": open_count,
                 "managed_open_order_count": managed_by_market.get(market, 0),
                 "unmanaged_open_order_count": unmanaged_by_market.get(market, 0),

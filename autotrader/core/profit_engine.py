@@ -26,6 +26,7 @@ class Trade:
     price: float
     fee: float = 0.0
     fee_currency: str = ""
+    quote_to_eur: float = 1.0
     fill_key: str = ""
     timestamp: float = field(default_factory=time.time)
     _recorded_order: int = field(default=-1, init=False, repr=False, compare=False)
@@ -44,6 +45,8 @@ class Trade:
             "notional": self.notional,
             "fee": self.fee,
             "fee_currency": self.fee_currency,
+            "quote_to_eur": self.quote_to_eur,
+            "notional_eur": self.notional * self.quote_to_eur,
             "timestamp": self.timestamp,
         }
 
@@ -129,7 +132,16 @@ class ProfitEngine:
                     trade.strategy,
                     f"Fee currency {fee_currency} for {symbol} could not be converted to quote currency.",
                 )
-        stats.total_fees += fee_quote
+        quote_to_eur = max(0.0, float(trade.quote_to_eur or 0.0))
+        if quote_to_eur <= 0:
+            self._add_event(
+                "accounting",
+                trade.strategy,
+                f"Missing quote-to-EUR conversion for {symbol}; fill excluded from EUR PnL.",
+            )
+            return 0.0
+        fee_eur = fee_quote * quote_to_eur
+        stats.total_fees += fee_eur
 
         key = (trade.strategy, symbol)
         position = self._positions.setdefault(key, PositionCost())
@@ -163,23 +175,25 @@ class ProfitEngine:
                 if position.quantity <= 1e-15:
                     position.quantity = 0.0
                     position.cost = 0.0
-                stats.realized_pnl += realized
-                if realized > 0:
+                realized_eur = realized * quote_to_eur
+                stats.realized_pnl += realized_eur
+                if realized_eur > 0:
                     stats.wins += 1
-                elif realized < 0:
+                elif realized_eur < 0:
                     stats.losses += 1
-                if abs(realized) >= _LARGE_PNL_THRESHOLD:
+                if abs(realized_eur) >= _LARGE_PNL_THRESHOLD:
                     self._add_event(
                         "large_pnl",
                         trade.strategy,
-                        f"Large realized PnL movement: {realized:+.4f} quote units.",
+                        f"Large realized PnL movement: {realized_eur:+.4f} EUR.",
                     )
 
-        risk_pnl_delta = realized - fee_quote
+        realized_eur = realized * quote_to_eur
+        risk_pnl_delta = realized_eur - fee_eur
         log.info(
             "[%s] Trade recorded: %s %s %.8f @ %.4f (fee=%.8f %s realized=%+.4f risk_delta=%+.4f)",
             trade.strategy, trade.side, trade.symbol, trade.quantity, trade.price,
-            trade.fee, fee_currency, realized, risk_pnl_delta,
+            trade.fee, fee_currency, realized_eur, risk_pnl_delta,
         )
         return risk_pnl_delta
 
@@ -199,14 +213,20 @@ class ProfitEngine:
     def update_unrealized_pnl(self, strategy: str, pnl: float) -> None:
         self._ensure(strategy).unrealized_pnl = pnl
 
-    def mark_to_market(self, strategy: str, symbol: str, price: float) -> float:
-        """Update unrealized PnL for one strategy/symbol from a live mark."""
+    def mark_to_market(
+        self,
+        strategy: str,
+        symbol: str,
+        price: float,
+        quote_to_eur: float = 1.0,
+    ) -> float:
+        """Update unrealized PnL in EUR for one strategy/symbol from a live mark."""
         key = (strategy, symbol.upper().replace("/", "-"))
         position = self._positions.get(key)
         if position is None or position.quantity <= 0 or price <= 0:
             self._ensure(strategy).unrealized_pnl = 0.0
             return 0.0
-        pnl = position.quantity * (float(price) - position.average_price)
+        pnl = position.quantity * (float(price) - position.average_price) * max(0.0, float(quote_to_eur))
         self._ensure(strategy).unrealized_pnl = pnl
         return pnl
 

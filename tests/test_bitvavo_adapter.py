@@ -187,3 +187,30 @@ def test_ticker_books_skips_invalid_decimal_rows(monkeypatch):
     books = adapter.ticker_books()
     assert list(books) == ["BTC-EUR"]
     assert books["BTC-EUR"]["bid"] == Decimal("73000")
+
+
+def test_quote_to_eur_bridges_crypto_quote_through_bulk_books(monkeypatch):
+    adapter = BitvavoAdapter(api_key="key", api_secret="secret")
+    monkeypatch.setattr(
+        adapter,
+        "ticker_books",
+        lambda: {
+            "BTC-EUR": {
+                "market": "BTC-EUR",
+                "bid": Decimal("70000"),
+                "ask": Decimal("70010"),
+                "bid_size": Decimal("1"),
+                "ask_size": Decimal("1"),
+            },
+            "ETH-BTC": {
+                "market": "ETH-BTC",
+                "bid": Decimal("0.05"),
+                "ask": Decimal("0.0501"),
+                "bid_size": Decimal("10"),
+                "ask_size": Decimal("10"),
+            },
+        },
+    )
+    rate = adapter.quote_to_eur("ETH-BTC")
+    assert rate > Decimal("70000")
+    assert rate < Decimal("70010")

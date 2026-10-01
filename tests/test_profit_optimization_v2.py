@@ -52,7 +52,7 @@ def test_opportunity_router_is_read_only_and_ranks_markets():
     for _ in range(8):
         router.refresh()
     payload = router.rankings()
-    assert payload["mode"] == "read_only_shadow"
+    assert payload["mode"] == "read_only_full_spot_screen"
     assert payload["live_orders_sent"] is False
     assert payload["markets_scanned"] == 3
     assert payload["rankings"]["market_maker"][0]["eligible"] is True
@@ -379,3 +379,47 @@ def test_execution_v2_respects_post_fill_delay():
     assert row["post_fill_delay_active"] is True
     assert row["recommend_reprice"] is False
     assert row["reason"] == "post_fill_delay_active"
+
+
+def test_opportunity_router_scans_crypto_crypto_with_eur_bridge():
+    class FullSpotAdapter:
+        def markets(self):
+            return [
+                {"market": "BTC-EUR", "status": "trading"},
+                {"market": "ETH-BTC", "status": "trading"},
+                {"market": "USDC-EUR", "status": "trading"},
+                {"market": "SOL-USDC", "status": "trading"},
+            ]
+
+        def ticker_books(self):
+            return {
+                "BTC-EUR": {"bid": 70000.0, "ask": 70010.0, "bid_size": 1.0, "ask_size": 1.0},
+                "ETH-BTC": {"bid": 0.05, "ask": 0.0501, "bid_size": 10.0, "ask_size": 10.0},
+                "USDC-EUR": {"bid": 0.99, "ask": 1.00, "bid_size": 10000.0, "ask_size": 10000.0},
+                "SOL-USDC": {"bid": 100.0, "ask": 100.1, "bid_size": 100.0, "ask_size": 100.0},
+            }
+
+        def ticker_book(self, market):
+            return self.ticker_books()[market]
+
+    router = OpportunityRouter(
+        FullSpotAdapter(),
+        {
+            "markets": [],
+            "auto_discover_all_spot": True,
+            "max_markets": 500,
+            "min_top_depth_eur": 25,
+            "max_spread_bps": 50,
+        },
+    )
+    router.refresh()
+    payload = router.rankings()
+    assert payload["markets_scanned"] == 4
+    assert payload["crypto_crypto_scanned"] == 2
+    rows = {row["market"]: row for row in payload["rankings"]["grid"]}
+    assert rows["ETH-BTC"]["pair_type"] == "crypto_crypto"
+    assert rows["ETH-BTC"]["quote_to_eur"] > 1000
+    assert rows["ETH-BTC"]["liquidity_eur"] > 25
+    assert rows["ETH-BTC"]["live_execution_supported_now"] is True
+    assert rows["SOL-USDC"]["quote_to_eur"] > 0
+    assert rows["BTC-EUR"]["live_execution_supported_now"] is True

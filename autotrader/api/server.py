@@ -334,6 +334,26 @@ def _strategy_route_fee_policy(agent: AutoTrader, strategy_name: str) -> tuple[f
 
 def _strategy_profit_snapshot(agent: AutoTrader, market: str, strategy_name: str, mark_price: float) -> dict[str, object]:
     entry_fee, exit_fee, source = _strategy_route_fee_policy(agent, strategy_name)
+    strategy = next(
+        (item for item in agent._strategies.values() if item.name == strategy_name),
+        None,
+    )
+    quote = market.rsplit("-", 1)[1] if "-" in market else ""
+    quote_to_eur = (
+        float(strategy._config.get("_quote_to_eur", 0.0) or 0.0)
+        if strategy is not None
+        else 0.0
+    )
+    if quote_to_eur <= 0:
+        if quote == "EUR":
+            quote_to_eur = 1.0
+        else:
+            try:
+                quote_to_eur = float(
+                    agent._bitvavo.journal.latest_quote_to_eur(market, strategy_name)
+                )
+            except Exception:
+                quote_to_eur = 0.0
     return agent.profit_supervisor.strategy_snapshot(
         market,
         strategy_name,
@@ -341,6 +361,7 @@ def _strategy_profit_snapshot(agent: AutoTrader, market: str, strategy_name: str
         entry_fee_pct=entry_fee,
         exit_fee_pct=exit_fee,
         fee_policy_source=source,
+        quote_to_eur=quote_to_eur,
     )
 
 
@@ -608,6 +629,9 @@ async def _tick_loop(app: FastAPI, agent: AutoTrader) -> None:
                             router_payload=app.state.opportunity_router.rankings(),
                             risk_payload=risk_payload,
                             armed=bool(getattr(app.state, "live_armed", False)),
+                            available_balances=dict(
+                                getattr(app.state, "bitvavo_balances", {}) or {}
+                            ),
                         )
                         app.state.autonomous_plan = plan
                         app.state.autonomous_apply = app.state.autonomous_decision_engine.apply(
@@ -678,14 +702,43 @@ async def _tick_loop(app: FastAPI, agent: AutoTrader) -> None:
                         for strategy in agent._strategies.values():
                             if strategy.is_running:
                                 strategy._config["_market_switch_pending"] = False
+                router_rates: dict[str, float] = {}
+                try:
+                    router_payload = app.state.opportunity_router.rankings()
+                    for row in (router_payload.get("rankings", {}) or {}).get("market_maker", []):
+                        market = str(row.get("market") or "").upper()
+                        rate = float(row.get("quote_to_eur") or 0.0)
+                        if market and rate > 0:
+                            router_rates[market] = rate
+                except Exception:
+                    router_rates = {}
                 for strategy in agent._strategies.values():
                     if strategy.is_running and strategy._config.get("exchange", "bitvavo").lower() == "bitvavo":
                         symbol = str(strategy._config.get("symbol", "BTC-EUR")).upper()
                         price = float(agent._bitvavo.ticker_price(symbol))
+                        base, _, quote = symbol.partition("-")
+                        quote_to_eur = float(router_rates.get(symbol, 0.0) or 0.0)
+                        if quote_to_eur <= 0:
+                            if quote == "EUR":
+                                quote_to_eur = 1.0
+                            else:
+                                try:
+                                    quote_to_eur = float(
+                                        agent._bitvavo.journal.latest_quote_to_eur(
+                                            symbol, strategy.name
+                                        )
+                                    )
+                                except Exception:
+                                    quote_to_eur = 0.0
+                        strategy._config["_quote_to_eur"] = quote_to_eur
                         strategy._config["_mid_price"] = price
                         strategy._config["_current_price"] = price
-                        agent.profit_engine.mark_to_market(strategy.name, symbol, price)
-                        base, _, quote = symbol.partition("-")
+                        agent.profit_engine.mark_to_market(
+                            strategy.name,
+                            symbol,
+                            price,
+                            quote_to_eur=quote_to_eur,
+                        )
                         balances = getattr(app.state, "bitvavo_balances", {})
                         strategy._config["_live_balance_snapshot_ready"] = bool(
                             getattr(app.state, "bitvavo_balance_snapshot_ready", False)
@@ -743,13 +796,33 @@ async def _shadow_strategy_loop(app: FastAPI, agent: AutoTrader) -> None:
                     symbol = str(strat_cfg.get("symbol", "")).upper().strip()
                     if not symbol:
                         continue
-                    price = float(await asyncio.to_thread(agent._bitvavo.ticker_price, symbol))
+                    router_snap = app.state.opportunity_router.market_snapshot(symbol)
+                    if (
+                        router_snap
+                        and float(router_snap.get("mid") or 0.0) > 0
+                        and float(router_snap.get("age_seconds") or 9999.0) <= 30.0
+                    ):
+                        price = float(router_snap["mid"])
+                    else:
+                        price = float(
+                            await asyncio.to_thread(agent._bitvavo.ticker_price, symbol)
+                        )
                     app.state.shadow_strategy_engine.update(name, price, strat_cfg)
                     updated_names.append(name)
                 risk_cfg = agent._config.get("leverage_martingale_risk_lab", {}) or {}
                 if bool(risk_cfg.get("enabled", False)):
                     risk_symbol = str(risk_cfg.get("symbol", "BTC-EUR")).upper().strip()
-                    risk_price = float(await asyncio.to_thread(agent._bitvavo.ticker_price, risk_symbol))
+                    risk_snap = app.state.opportunity_router.market_snapshot(risk_symbol)
+                    if (
+                        risk_snap
+                        and float(risk_snap.get("mid") or 0.0) > 0
+                        and float(risk_snap.get("age_seconds") or 9999.0) <= 30.0
+                    ):
+                        risk_price = float(risk_snap["mid"])
+                    else:
+                        risk_price = float(
+                            await asyncio.to_thread(agent._bitvavo.ticker_price, risk_symbol)
+                        )
                     app.state.leverage_martingale_risk_lab.update(risk_price)
                 first_success = getattr(app.state, "shadow_strategy_last_at", 0.0) == 0.0
                 app.state.shadow_strategy_last_at = time.time()
@@ -777,11 +850,11 @@ async def _opportunity_router_loop(app: FastAPI) -> None:
             previous = getattr(app.state, "opportunity_router_last_logged_count", None)
             if previous != (configured, scanned):
                 log.info(
-                    "Opportunity router active: configured=%d scanned=%d cap=%d auto_discover=%s live_orders_sent=%s",
+                    "Opportunity router active: configured=%d scanned=%d cap=%d full_spot=%s live_orders_sent=%s",
                     configured,
                     scanned,
                     int(payload.get("max_markets", 0) or 0),
-                    bool(payload.get("auto_discover_eur")),
+                    bool(payload.get("auto_discover_all_spot")),
                     bool(payload.get("live_orders_sent")),
                 )
                 app.state.opportunity_router_last_logged_count = (configured, scanned)
@@ -1305,6 +1378,11 @@ def risk_status():
                 continue
             entry = float(inventory["average_entry_price"])
             mark = float(strategy._config.get("_current_price") or entry or 0)
+            quote = symbol.rsplit("-", 1)[1] if "-" in symbol else ""
+            quote_to_eur = float(
+                strategy._config.get("_quote_to_eur", 1.0 if quote == "EUR" else 0.0)
+                or 0.0
+            )
             positions.append({
                 "symbol": symbol,
                 "strategy": strategy.name,
@@ -1312,8 +1390,9 @@ def risk_status():
                 "quantity": quantity,
                 "entry_price": entry,
                 "mark_price": mark if mark > 0 else None,
-                "notional_eur": quantity * mark if mark > 0 else None,
-                "pnl_eur": quantity * (mark - entry) if mark > 0 and entry > 0 else None,
+                "quote_to_eur": quote_to_eur if quote_to_eur > 0 else None,
+                "notional_eur": quantity * mark * quote_to_eur if mark > 0 and quote_to_eur > 0 else None,
+                "pnl_eur": quantity * (mark - entry) * quote_to_eur if mark > 0 and entry > 0 and quote_to_eur > 0 else None,
             })
     status["open_positions"] = positions
     status["slippage_alerts"] = []

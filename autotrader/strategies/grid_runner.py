@@ -34,7 +34,14 @@ class GridRunner(BaseStrategy):
         symbol = str(cfg.get("symbol", "SOL-EUR")).upper()
         exchange = str(cfg.get("exchange", "bitvavo")).lower()
         order_value = float(cfg.get("order_value_eur", 6.0))
-        size = float(cfg.get("order_size", 0.0)) or (order_value / current_price)
+        quote = symbol.rsplit("-", 1)[1] if "-" in symbol else ""
+        quote_to_eur = float(cfg.get("_quote_to_eur", 1.0 if quote == "EUR" else 0.0) or 0.0)
+        if quote_to_eur <= 0:
+            return
+        quote_budget = order_value / quote_to_eur if order_value > 0 else 0.0
+        size = float(cfg.get("order_size", 0.0)) or (
+            quote_budget / current_price if quote_budget > 0 else 0.0
+        )
         entry_offset = max(0.0001, float(cfg.get("entry_offset_pct", 0.6)) / 100)
         exit_markup = max(0.0001, float(cfg.get("exit_markup_pct", 0.8)) / 100)
 
@@ -54,8 +61,9 @@ class GridRunner(BaseStrategy):
                 entry_price * (1 + exit_markup),
                 min_profit_exit_price,
             )
-            notional = sell_size * current_price
-            if not self._rm.check_order(self.name, notional, risk_reducing=True):
+            notional_quote = sell_size * current_price
+            notional_eur = notional_quote * quote_to_eur
+            if not self._rm.check_order(self.name, notional_eur, risk_reducing=True):
                 return
             self._om.register(Order(
                 exchange=exchange,
@@ -63,8 +71,10 @@ class GridRunner(BaseStrategy):
                 side=OrderSide.SELL,
                 order_type=OrderType.LIMIT,
                 quantity=sell_size,
-                price=round(price, 8),
+                price=price,
                 strategy=self.name,
+                quote_to_eur=quote_to_eur,
+                notional_eur=notional_eur,
             ))
             log.info("GRID SELL %s %.8f @ %.8f", symbol, sell_size, price)
             return
@@ -95,11 +105,12 @@ class GridRunner(BaseStrategy):
             )
             return
         buy_price = current_price * (1 - entry_offset)
-        buy_size = order_value / buy_price if order_value > 0 else size
-        notional = buy_size * buy_price
-        if live_snapshot and available_quote < notional:
+        buy_size = quote_budget / buy_price if quote_budget > 0 else size
+        notional_quote = buy_size * buy_price
+        notional_eur = notional_quote * quote_to_eur
+        if live_snapshot and available_quote < notional_quote:
             return
-        if not self._rm.check_order(self.name, notional):
+        if not self._rm.check_order(self.name, notional_eur):
             return
         self._om.register(Order(
             exchange=exchange,
@@ -107,10 +118,12 @@ class GridRunner(BaseStrategy):
             side=OrderSide.BUY,
             order_type=OrderType.LIMIT,
             quantity=buy_size,
-            price=round(buy_price, 8),
+            price=buy_price,
             strategy=self.name,
+            quote_to_eur=quote_to_eur,
+            notional_eur=notional_eur,
         ))
-        log.info("GRID BUY %s %.8f @ %.8f", symbol, buy_size, buy_price)
+        log.info("GRID BUY %s %.8f @ %.8f (eur=%.2f)", symbol, buy_size, buy_price, notional_eur)
 
     def on_order_failure(self, order: Order, category: str, reason: str) -> None:
         cooldown = max(5.0, float(self._config.get("failure_cooldown_seconds", 60.0)))

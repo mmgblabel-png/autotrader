@@ -158,7 +158,7 @@ autonomous_execution:
   switch_cooldown_seconds: 120
   strategy_markets:
     market_maker:
-      - BTC-EUR
+      - "*"
     grid:
       - "*"
     grid_eth:
@@ -198,8 +198,9 @@ opportunity_router:
   probe_order_eur: 6
   max_snapshot_age_seconds: 30
   auto_discover_eur: true
-  max_markets: 60
-  discovery_refresh_seconds: 1800
+  auto_discover_all_spot: true
+  max_markets: 500
+  discovery_refresh_seconds: 300
   markets:
     - BTC-EUR
     - ETH-EUR
@@ -244,6 +245,7 @@ strategies:
     exclusive_symbol: true
     symbol: BTC-EUR
     exchange: bitvavo
+    order_value_eur: 6.0
     order_size: 0.0001
     min_order_size: 0.0001
     max_order_size: 0.0001

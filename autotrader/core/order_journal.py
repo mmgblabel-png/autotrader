@@ -51,6 +51,8 @@ class OrderJournal:
         columns = {row["name"] for row in self._db.execute("PRAGMA table_info(orders)").fetchall()}
         if "strategy" not in columns:
             self._db.execute("ALTER TABLE orders ADD COLUMN strategy TEXT NOT NULL DEFAULT ''")
+        if "quote_to_eur" not in columns:
+            self._db.execute("ALTER TABLE orders ADD COLUMN quote_to_eur TEXT NOT NULL DEFAULT '1'")
         self._db.commit()
         self._repair_fully_filled_error_orders()
 
@@ -110,12 +112,22 @@ class OrderJournal:
         with self._lock:
             self._db.close()
 
-    def record_intent(self, *, client_order_id: str, market: str, side: str, order_type: str, amount: str, price: str | None) -> bool:
+    def record_intent(
+        self,
+        *,
+        client_order_id: str,
+        market: str,
+        side: str,
+        order_type: str,
+        amount: str,
+        price: str | None,
+        quote_to_eur: str = "1",
+    ) -> bool:
         now = time.time()
         with self._lock:
             cursor = self._db.execute(
-                "INSERT OR IGNORE INTO orders(client_order_id,market,side,order_type,amount,price,status,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?)",
-                (client_order_id, market, side, order_type, amount, price, "intent", now, now),
+                "INSERT OR IGNORE INTO orders(client_order_id,market,side,order_type,amount,price,status,created_at,updated_at,quote_to_eur) VALUES(?,?,?,?,?,?,?,?,?,?)",
+                (client_order_id, market, side, order_type, amount, price, "intent", now, now, str(quote_to_eur)),
             )
             inserted = cursor.rowcount == 1
             if inserted:
@@ -289,10 +301,10 @@ class OrderJournal:
                 remaining = max(Decimal("0"), amount - filled)
                 if remaining <= 0:
                     continue
-                if row["price"] not in {None, ""}:
-                    total += remaining * Decimal(str(row["price"]))
-                elif row["notional_eur"] not in {None, ""} and amount > 0:
+                if row["notional_eur"] not in {None, ""} and amount > 0:
                     total += Decimal(str(row["notional_eur"])) * (remaining / amount)
+                elif row["price"] not in {None, ""}:
+                    total += remaining * Decimal(str(row["price"]))
             except Exception:
                 continue
         return max(total, Decimal("0"))
@@ -302,7 +314,7 @@ class OrderJournal:
         with self._lock:
             rows = self._db.execute(
                 """
-                SELECT client_order_id, amount, price, created_at
+                SELECT client_order_id, amount, price, created_at, quote_to_eur
                 FROM orders
                 WHERE price IS NOT NULL
                   AND lower(side)='buy'
@@ -312,7 +324,8 @@ class OrderJournal:
             inserted = 0
             for row in rows:
                 try:
-                    notional = Decimal(str(row["amount"])) * Decimal(str(row["price"]))
+                    quote_to_eur = Decimal(str(row["quote_to_eur"] or "1"))
+                    notional = Decimal(str(row["amount"])) * Decimal(str(row["price"])) * quote_to_eur
                 except Exception:
                     continue
                 cursor = self._db.execute(
@@ -329,7 +342,7 @@ class OrderJournal:
             rows = self._db.execute(
                 """
                 SELECT f.fill_key, f.amount, f.price, f.fee, f.observed_at, f.raw_json,
-                       o.market, o.side, o.strategy
+                       o.market, o.side, o.strategy, o.quote_to_eur
                 FROM fills AS f
                 JOIN orders AS o ON o.client_order_id=f.client_order_id
                 WHERE o.strategy<>''
@@ -433,7 +446,7 @@ class OrderJournal:
             ).fetchall()
             fill_rows = self._db.execute(
                 """
-                SELECT f.fee, f.price, f.raw_json, o.market
+                SELECT f.fee, f.price, f.raw_json, o.market, o.quote_to_eur
                 FROM fills AS f
                 JOIN orders AS o ON o.client_order_id=f.client_order_id
                 WHERE f.observed_at>=?
@@ -460,10 +473,11 @@ class OrderJournal:
                 base, _, quote = str(row["market"] or "").upper().partition("-")
                 payload = json.loads(row["raw_json"] or "{}")
                 fee_currency = str(payload.get("feeCurrency") or quote).upper()
+                quote_to_eur = Decimal(str(row["quote_to_eur"] or "1"))
                 if fee_currency == quote or not fee_currency:
-                    fees_eur += fee
+                    fees_eur += fee * quote_to_eur
                 elif fee_currency == base and price > 0:
-                    fees_eur += fee * price
+                    fees_eur += fee * price * quote_to_eur
                 elif fee > 0:
                     unpriced_fee_count += 1
             except Exception:
@@ -579,21 +593,14 @@ class OrderJournal:
         *,
         mark_price: Decimal | None = None,
         estimated_exit_cost_pct: Decimal = Decimal("0"),
+        quote_to_eur: Decimal = Decimal("1"),
     ) -> dict[str, Decimal | int]:
-        """Return durable fee-aware performance for one strategy/market.
-
-        Accounting uses average cost and actual recorded fills. BUY quote fees
-        are embedded in inventory cost, base fees reduce received inventory,
-        SELL quote fees reduce proceeds, and base fees increase inventory
-        consumed by the exit. Unrealized net PnL assumes the entire current
-        inventory could be exited at mark_price after configured future exit
-        friction.
-        """
+        """Return durable fee-aware performance in EUR across any quote asset."""
         base, _, quote = market.upper().partition("-")
         with self._lock:
             rows = self._db.execute(
                 """
-                SELECT o.side, f.amount, f.price, f.fee, f.raw_json
+                SELECT o.side, o.quote_to_eur, f.amount, f.price, f.fee, f.raw_json
                 FROM fills AS f
                 JOIN orders AS o ON o.client_order_id=f.client_order_id
                 WHERE o.market=? AND o.strategy=?
@@ -603,11 +610,12 @@ class OrderJournal:
             ).fetchall()
 
         quantity = Decimal("0")
-        inventory_cost = Decimal("0")
-        realized_net = Decimal("0")
-        fees_quote = Decimal("0")
-        buy_cash_out = Decimal("0")
-        sell_cash_in = Decimal("0")
+        inventory_cost_quote = Decimal("0")
+        inventory_cost_eur = Decimal("0")
+        realized_net_eur = Decimal("0")
+        fees_eur = Decimal("0")
+        buy_cash_out_eur = Decimal("0")
+        sell_cash_in_eur = Decimal("0")
         profitable_exits = 0
         losing_exits = 0
         unpriced_fee_count = 0
@@ -616,7 +624,8 @@ class OrderJournal:
             amount = abs(Decimal(str(row["amount"] or "0")))
             price = abs(Decimal(str(row["price"] or "0")))
             fee = abs(Decimal(str(row["fee"] or "0")))
-            if amount <= 0 or price <= 0:
+            rate = Decimal(str(row["quote_to_eur"] or "1"))
+            if amount <= 0 or price <= 0 or rate <= 0 or not rate.is_finite():
                 continue
             try:
                 payload = json.loads(row["raw_json"] or "{}")
@@ -631,69 +640,110 @@ class OrderJournal:
                 fee_quote = Decimal("0")
                 if fee > 0:
                     unpriced_fee_count += 1
-            fees_quote += fee_quote
+            fees_eur += fee_quote * rate
 
             side = str(row["side"] or "").lower()
             if side == "buy":
                 received = amount - (fee if fee_currency == base else Decimal("0"))
-                cash_cost = amount * price + (fee if fee_currency == quote else Decimal("0"))
+                cash_cost_quote = amount * price + (
+                    fee if fee_currency == quote else Decimal("0")
+                )
                 if received > 0:
                     quantity += received
-                    inventory_cost += cash_cost
-                    buy_cash_out += cash_cost
+                    inventory_cost_quote += cash_cost_quote
+                    inventory_cost_eur += cash_cost_quote * rate
+                    buy_cash_out_eur += cash_cost_quote * rate
             elif side == "sell":
                 base_fee = fee if fee_currency == base else Decimal("0")
                 outgoing = min(quantity, amount + base_fee) if quantity > 0 else Decimal("0")
-                proceeds = amount * price - (fee if fee_currency == quote else Decimal("0"))
-                sell_cash_in += proceeds
+                proceeds_quote = amount * price - (
+                    fee if fee_currency == quote else Decimal("0")
+                )
+                proceeds_eur = proceeds_quote * rate
+                sell_cash_in_eur += proceeds_eur
                 if outgoing <= 0 or quantity <= 0:
                     continue
-                avg_cost = inventory_cost / quantity
-                removed_cost = avg_cost * outgoing
-                exit_pnl = proceeds - removed_cost
-                realized_net += exit_pnl
-                if exit_pnl > 0:
+                avg_cost_quote = inventory_cost_quote / quantity
+                avg_cost_eur = inventory_cost_eur / quantity
+                removed_cost_quote = avg_cost_quote * outgoing
+                removed_cost_eur = avg_cost_eur * outgoing
+                exit_pnl_eur = proceeds_eur - removed_cost_eur
+                realized_net_eur += exit_pnl_eur
+                if exit_pnl_eur > 0:
                     profitable_exits += 1
-                elif exit_pnl < 0:
+                elif exit_pnl_eur < 0:
                     losing_exits += 1
                 quantity -= outgoing
-                inventory_cost -= removed_cost
+                inventory_cost_quote -= removed_cost_quote
+                inventory_cost_eur -= removed_cost_eur
                 if quantity <= Decimal("0.000000000000000001"):
                     quantity = Decimal("0")
-                    inventory_cost = Decimal("0")
+                    inventory_cost_quote = Decimal("0")
+                    inventory_cost_eur = Decimal("0")
 
-        avg_entry = inventory_cost / quantity if quantity > 0 else Decimal("0")
+        avg_entry = inventory_cost_quote / quantity if quantity > 0 else Decimal("0")
         mark = max(Decimal("0"), Decimal(str(mark_price or "0")))
+        current_rate = max(Decimal("0"), Decimal(str(quote_to_eur or "0")))
         exit_cost_ratio = max(Decimal("0"), Decimal(str(estimated_exit_cost_pct))) / Decimal("100")
         if exit_cost_ratio >= Decimal("1"):
             exit_cost_ratio = Decimal("0.999999")
 
-        expected_exit_proceeds = Decimal("0")
-        unrealized_net = Decimal("0")
+        expected_exit_proceeds_eur = Decimal("0")
+        unrealized_net_eur = Decimal("0")
         break_even_exit = Decimal("0")
-        if quantity > 0 and mark > 0:
-            expected_exit_proceeds = quantity * mark * (Decimal("1") - exit_cost_ratio)
-            unrealized_net = expected_exit_proceeds - inventory_cost
-        if quantity > 0:
-            break_even_exit = avg_entry / (Decimal("1") - exit_cost_ratio)
+        if quantity > 0 and mark > 0 and current_rate > 0:
+            expected_exit_proceeds_eur = (
+                quantity * mark * (Decimal("1") - exit_cost_ratio) * current_rate
+            )
+            unrealized_net_eur = expected_exit_proceeds_eur - inventory_cost_eur
+        if quantity > 0 and current_rate > 0:
+            break_even_exit = (
+                inventory_cost_eur / quantity / current_rate
+            ) / (Decimal("1") - exit_cost_ratio)
 
         return {
             "quantity": max(quantity, Decimal("0")),
-            "inventory_cost_eur": max(inventory_cost, Decimal("0")),
+            "inventory_cost_eur": max(inventory_cost_eur, Decimal("0")),
+            "inventory_cost_quote": max(inventory_cost_quote, Decimal("0")),
             "average_entry_price": max(avg_entry, Decimal("0")),
-            "realized_net_pnl_eur": realized_net,
-            "fees_quote_equivalent_eur": fees_quote,
-            "buy_cash_out_eur": buy_cash_out,
-            "sell_cash_in_eur": sell_cash_in,
+            "quote_to_eur": current_rate,
+            "realized_net_pnl_eur": realized_net_eur,
+            "fees_quote_equivalent_eur": fees_eur,
+            "buy_cash_out_eur": buy_cash_out_eur,
+            "sell_cash_in_eur": sell_cash_in_eur,
             "mark_price": mark,
-            "estimated_exit_proceeds_eur": expected_exit_proceeds,
-            "unrealized_net_pnl_eur": unrealized_net,
-            "economic_pnl_eur": realized_net + unrealized_net,
+            "estimated_exit_proceeds_eur": expected_exit_proceeds_eur,
+            "unrealized_net_pnl_eur": unrealized_net_eur,
+            "economic_pnl_eur": realized_net_eur + unrealized_net_eur,
             "break_even_exit_price": break_even_exit,
             "profitable_exits": profitable_exits,
             "losing_exits": losing_exits,
             "unpriced_fee_count": unpriced_fee_count,
         }
+
+    def latest_quote_to_eur(self, market: str, strategy: str | None = None) -> Decimal:
+        """Return the latest durable quote→EUR conversion for a market."""
+        params: list[Any] = [market.upper()]
+        strategy_clause = ""
+        if strategy:
+            strategy_clause = " AND strategy=?"
+            params.append(strategy)
+        with self._lock:
+            row = self._db.execute(
+                f"""
+                SELECT quote_to_eur FROM orders
+                WHERE market=?{strategy_clause}
+                ORDER BY created_at DESC LIMIT 1
+                """,
+                tuple(params),
+            ).fetchone()
+        if not row:
+            return Decimal("1") if market.upper().endswith("-EUR") else Decimal("0")
+        try:
+            rate = Decimal(str(row["quote_to_eur"] or "0"))
+        except Exception:
+            rate = Decimal("0")
+        return rate if rate.is_finite() and rate > 0 else Decimal("0")
 
     def latest_fill_time(self, market: str, strategy: str, side: str | None = None) -> float:
         """Return the latest locally observed fill time for a strategy/market."""

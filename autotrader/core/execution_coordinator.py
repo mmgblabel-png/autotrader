@@ -43,6 +43,16 @@ class ExecutionCoordinator:
         return float(payload.get("averagePrice") or payload.get("price") or fallback or 0)
 
     def _record_fills(self, order: Order, payload: dict) -> None:
+        journal_row = {}
+        try:
+            journal_row = self.adapter.journal.get(order.order_id) or {}
+        except Exception:
+            journal_row = {}
+        quote_to_eur = float(
+            journal_row.get("quote_to_eur")
+            or getattr(order, "quote_to_eur", 0.0)
+            or (1.0 if order.symbol.upper().endswith("-EUR") else 0.0)
+        )
         for fill in payload.get("fills") or []:
             if not isinstance(fill, dict):
                 continue
@@ -67,6 +77,7 @@ class ExecutionCoordinator:
                         price=price,
                         fee=float(fill.get("fee") or 0),
                         fee_currency=str(fill.get("feeCurrency") or ""),
+                        quote_to_eur=quote_to_eur,
                         fill_key=key,
                         timestamp=timestamp,
                     )
@@ -76,7 +87,7 @@ class ExecutionCoordinator:
                     if self.risk_manager is not None:
                         self.risk_manager.record_loss(order.strategy or "MarketMaker", loss)
                     gateway = getattr(self.adapter, "gateway", None)
-                    if order.symbol.upper().endswith("-EUR") and gateway is not None:
+                    if gateway is not None:
                         gateway.record_loss(Decimal(str(loss)))
             if self.fill_handler is not None:
                 self.fill_handler(order, fill, realized)
@@ -99,6 +110,18 @@ class ExecutionCoordinator:
                 order_id=client_order_id,
                 status=OrderStatus.OPEN,
                 strategy=str(record.get("strategy") or "MarketMaker"),
+                quote_to_eur=float(
+                    record.get("quote_to_eur")
+                    or (1.0 if str(record.get("market") or "").upper().endswith("-EUR") else 0.0)
+                ),
+                notional_eur=(
+                    float(record.get("amount") or 0.0)
+                    * float(record.get("price") or 0.0)
+                    * float(
+                        record.get("quote_to_eur")
+                        or (1.0 if str(record.get("market") or "").upper().endswith("-EUR") else 0.0)
+                    )
+                ),
             )
             return self.om.register(order)
         except (KeyError, TypeError, ValueError):

@@ -79,7 +79,7 @@ def test_full_universe_includes_crypto_crypto_and_bridges_to_eur():
     assert eth_btc["quote_to_eur"] is not None
     assert eth_btc["top_depth_eur"] is not None
     assert eth_btc["pair_type"] == "crypto_crypto"
-    assert eth_btc["live_execution_supported_now"] is False
+    assert eth_btc["live_execution_supported_now"] is True
 
 
 def test_universe_overlap_includes_non_eur_pairs():

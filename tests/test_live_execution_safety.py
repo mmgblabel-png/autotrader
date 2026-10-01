@@ -311,3 +311,40 @@ def test_market_maker_cooldown_blocks_immediate_rebuy(monkeypatch):
     strategy.start()
     strategy.tick()
     assert list(om._orders.values()) == []
+
+
+def test_market_maker_sizes_crypto_quote_buy_from_eur_budget():
+    om = OrderManager()
+    strategy = MarketMaker(
+        order_manager=om,
+        risk_manager=AllowRisk(),
+        profit_engine=DummyProfit(),
+        config={
+            "enabled": True,
+            "symbol": "ETH-BTC",
+            "exchange": "bitvavo",
+            "order_value_eur": 6.0,
+            "order_size": 0.0,
+            "target_spread": 0.80,
+            "estimated_fee_pct": 0.25,
+            "estimated_slippage_pct": 0.05,
+            "quote_refresh_seconds": 0,
+            "inventory_cycle_mode": True,
+            "_mid_price": 0.05,
+            "_quote_to_eur": 70000.0,
+            "_live_balance_snapshot_ready": True,
+            "_available_quote": 0.001,
+            "_available_base": 0.0,
+            "_bot_base_inventory": 0.0,
+        },
+    )
+    strategy.start()
+    strategy.tick()
+    orders = list(om._orders.values())
+    assert len(orders) == 1
+    order = orders[0]
+    assert order.side is OrderSide.BUY
+    assert order.symbol == "ETH-BTC"
+    assert 5.9 < order.notional_eur < 6.1
+    assert order.quote_to_eur == 70000.0
+    assert order.quantity * order.price < 0.001
