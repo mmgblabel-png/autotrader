@@ -334,6 +334,26 @@ def _strategy_route_fee_policy(agent: AutoTrader, strategy_name: str) -> tuple[f
 
 def _strategy_profit_snapshot(agent: AutoTrader, market: str, strategy_name: str, mark_price: float) -> dict[str, object]:
     entry_fee, exit_fee, source = _strategy_route_fee_policy(agent, strategy_name)
+    strategy = next(
+        (item for item in agent._strategies.values() if item.name == strategy_name),
+        None,
+    )
+    quote = market.rsplit("-", 1)[1] if "-" in market else ""
+    quote_to_eur = (
+        float(strategy._config.get("_quote_to_eur", 0.0) or 0.0)
+        if strategy is not None
+        else 0.0
+    )
+    if quote_to_eur <= 0:
+        if quote == "EUR":
+            quote_to_eur = 1.0
+        else:
+            try:
+                quote_to_eur = float(
+                    agent._bitvavo.journal.latest_quote_to_eur(market, strategy_name)
+                )
+            except Exception:
+                quote_to_eur = 0.0
     return agent.profit_supervisor.strategy_snapshot(
         market,
         strategy_name,
@@ -341,6 +361,7 @@ def _strategy_profit_snapshot(agent: AutoTrader, market: str, strategy_name: str
         entry_fee_pct=entry_fee,
         exit_fee_pct=exit_fee,
         fee_policy_source=source,
+        quote_to_eur=quote_to_eur,
     )
 
 
@@ -678,14 +699,43 @@ async def _tick_loop(app: FastAPI, agent: AutoTrader) -> None:
                         for strategy in agent._strategies.values():
                             if strategy.is_running:
                                 strategy._config["_market_switch_pending"] = False
+                router_rates: dict[str, float] = {}
+                try:
+                    router_payload = app.state.opportunity_router.rankings()
+                    for row in (router_payload.get("rankings", {}) or {}).get("market_maker", []):
+                        market = str(row.get("market") or "").upper()
+                        rate = float(row.get("quote_to_eur") or 0.0)
+                        if market and rate > 0:
+                            router_rates[market] = rate
+                except Exception:
+                    router_rates = {}
                 for strategy in agent._strategies.values():
                     if strategy.is_running and strategy._config.get("exchange", "bitvavo").lower() == "bitvavo":
                         symbol = str(strategy._config.get("symbol", "BTC-EUR")).upper()
                         price = float(agent._bitvavo.ticker_price(symbol))
+                        base, _, quote = symbol.partition("-")
+                        quote_to_eur = float(router_rates.get(symbol, 0.0) or 0.0)
+                        if quote_to_eur <= 0:
+                            if quote == "EUR":
+                                quote_to_eur = 1.0
+                            else:
+                                try:
+                                    quote_to_eur = float(
+                                        agent._bitvavo.journal.latest_quote_to_eur(
+                                            symbol, strategy.name
+                                        )
+                                    )
+                                except Exception:
+                                    quote_to_eur = 0.0
+                        strategy._config["_quote_to_eur"] = quote_to_eur
                         strategy._config["_mid_price"] = price
                         strategy._config["_current_price"] = price
-                        agent.profit_engine.mark_to_market(strategy.name, symbol, price)
-                        base, _, quote = symbol.partition("-")
+                        agent.profit_engine.mark_to_market(
+                            strategy.name,
+                            symbol,
+                            price,
+                            quote_to_eur=quote_to_eur,
+                        )
                         balances = getattr(app.state, "bitvavo_balances", {})
                         strategy._config["_live_balance_snapshot_ready"] = bool(
                             getattr(app.state, "bitvavo_balance_snapshot_ready", False)
@@ -1305,6 +1355,11 @@ def risk_status():
                 continue
             entry = float(inventory["average_entry_price"])
             mark = float(strategy._config.get("_current_price") or entry or 0)
+            quote = symbol.rsplit("-", 1)[1] if "-" in symbol else ""
+            quote_to_eur = float(
+                strategy._config.get("_quote_to_eur", 1.0 if quote == "EUR" else 0.0)
+                or 0.0
+            )
             positions.append({
                 "symbol": symbol,
                 "strategy": strategy.name,
@@ -1312,8 +1367,9 @@ def risk_status():
                 "quantity": quantity,
                 "entry_price": entry,
                 "mark_price": mark if mark > 0 else None,
-                "notional_eur": quantity * mark if mark > 0 else None,
-                "pnl_eur": quantity * (mark - entry) if mark > 0 and entry > 0 else None,
+                "quote_to_eur": quote_to_eur if quote_to_eur > 0 else None,
+                "notional_eur": quantity * mark * quote_to_eur if mark > 0 and quote_to_eur > 0 else None,
+                "pnl_eur": quantity * (mark - entry) * quote_to_eur if mark > 0 and entry > 0 and quote_to_eur > 0 else None,
             })
     status["open_positions"] = positions
     status["slippage_alerts"] = []
