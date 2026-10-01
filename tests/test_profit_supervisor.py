@@ -109,3 +109,81 @@ def test_profit_snapshot_can_use_route_specific_fee_tier(tmp_path):
     assert fallback["required_entry_edge_pct"] == 0.75
     assert fallback["fee_policy_source"] == "configured_conservative"
     journal.close()
+
+
+def test_crypto_quote_round_trip_reports_eur_pnl(tmp_path):
+    journal = OrderJournal(str(tmp_path / "orders.sqlite3"))
+    journal.record_intent(
+        client_order_id="eth-btc-buy",
+        market="ETH-BTC",
+        side="buy",
+        order_type="limit",
+        amount="0.002",
+        price="0.05",
+        quote_to_eur="70000",
+    )
+    journal.set_strategy("eth-btc-buy", "GridRunner")
+    journal.update("eth-btc-buy", "filled", {"status": "filled"})
+    journal.record_fill("eth-btc-buy", {
+        "fillId": "eth-btc-buy-fill",
+        "amount": "0.002",
+        "price": "0.05",
+        "fee": "0.00000025",
+        "feeCurrency": "BTC",
+    })
+
+    journal.record_intent(
+        client_order_id="eth-btc-sell",
+        market="ETH-BTC",
+        side="sell",
+        order_type="limit",
+        amount="0.002",
+        price="0.051",
+        quote_to_eur="71000",
+    )
+    journal.set_strategy("eth-btc-sell", "GridRunner")
+    journal.update("eth-btc-sell", "filled", {"status": "filled"})
+    journal.record_fill("eth-btc-sell", {
+        "fillId": "eth-btc-sell-fill",
+        "amount": "0.002",
+        "price": "0.051",
+        "fee": "0.000000255",
+        "feeCurrency": "BTC",
+    })
+
+    perf = journal.strategy_performance(
+        "ETH-BTC",
+        "GridRunner",
+        quote_to_eur=Decimal("71000"),
+    )
+    assert perf["quantity"] == Decimal("0")
+    assert perf["realized_net_pnl_eur"] > Decimal("0")
+    assert perf["fees_quote_equivalent_eur"] > Decimal("0")
+    assert perf["buy_cash_out_eur"] > Decimal("6")
+    assert perf["sell_cash_in_eur"] > perf["buy_cash_out_eur"]
+    journal.close()
+
+
+def test_crypto_quote_open_inventory_counts_as_eur_exposure(tmp_path):
+    journal = OrderJournal(str(tmp_path / "orders.sqlite3"))
+    journal.record_intent(
+        client_order_id="eth-btc-buy-open",
+        market="ETH-BTC",
+        side="buy",
+        order_type="limit",
+        amount="0.002",
+        price="0.05",
+        quote_to_eur="70000",
+    )
+    journal.set_strategy("eth-btc-buy-open", "GridRunner")
+    journal.update("eth-btc-buy-open", "filled", {"status": "filled"})
+    journal.record_fill("eth-btc-buy-open", {
+        "fillId": "eth-btc-open-fill",
+        "amount": "0.002",
+        "price": "0.05",
+        "fee": "0",
+        "feeCurrency": "BTC",
+    })
+    exposure = journal.current_execution_exposure_eur()
+    assert exposure == Decimal("7.00000")
+    journal.close()
