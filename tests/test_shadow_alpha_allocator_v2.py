@@ -235,3 +235,7 @@ def test_dashboard_contains_shadow_lab_and_allocator():
     assert "Entry-turnover vandaag" in html
     assert "60-market scanner" in html
     assert "LIVE MANAGER" in html
+    assert "Fee & Margin Reality" in html
+    assert "/api/fees/live" in html
+    assert 'id="actualmakerfee"' in html
+    assert 'id="feerealityrows"' in html

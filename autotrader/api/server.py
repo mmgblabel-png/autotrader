@@ -119,6 +119,7 @@ def _tick_interval() -> float:
 
 _bitvavo_security_lock = threading.Lock()
 _live_preflight_lock = threading.Lock()
+_bitvavo_fee_lock = threading.Lock()
 
 
 def _bitvavo_security_ttl_seconds() -> float:
@@ -179,6 +180,124 @@ def _cached_live_preflight(*, force: bool = False) -> dict[str, object]:
         app.state.live_preflight_cache_at = now
         return dict(report)
 
+
+
+def _fee_rate_pct(value: object) -> float | None:
+    """Normalize Bitvavo decimal fee rates (0.0015) to percentage points (0.15)."""
+    try:
+        rate = float(value)
+    except (TypeError, ValueError):
+        return None
+    if rate < 0:
+        return None
+    return rate * 100.0 if rate <= 1.0 else rate
+
+
+def _fee_margin_payload_from_account(agent: AutoTrader, account: dict[str, object]) -> dict[str, object]:
+    """Build read-only fee/margin telemetry; never mutates execution policy."""
+    fees = account.get("fees") if isinstance(account, dict) else None
+    fees = fees if isinstance(fees, dict) else {}
+    maker_pct = _fee_rate_pct(fees.get("maker"))
+    taker_pct = _fee_rate_pct(fees.get("taker"))
+    try:
+        volume_30d = float(fees.get("volume") or 0.0)
+    except (TypeError, ValueError):
+        volume_30d = 0.0
+
+    policy = agent._config.get("profit_policy", {}) or {}
+    entry_fee_pct = max(0.0, float(policy.get("estimated_entry_fee_pct", 0.25)))
+    exit_fee_pct = max(0.0, float(policy.get("estimated_exit_fee_pct", 0.25)))
+    slippage_each_leg_pct = max(0.0, float(policy.get("estimated_slippage_each_leg_pct", 0.05)))
+    min_net_edge_pct = max(0.0, float(policy.get("min_expected_net_edge_pct", 0.15)))
+    configured_cost_floor_pct = (
+        entry_fee_pct + exit_fee_pct + 2.0 * slippage_each_leg_pct
+    )
+    configured_required_edge_pct = configured_cost_floor_pct + min_net_edge_pct
+
+    route_specs = [
+        ("MarketMaker", "limit + postOnly", "maker", maker_pct),
+        ("GridRunner", "limit + postOnly", "maker", maker_pct),
+        ("GridRunnerETH", "limit + postOnly", "maker", maker_pct),
+        ("SniperBot", "market", "taker", taker_pct),
+    ]
+    routes = []
+    for strategy, order_mode, fee_class, rate_pct in route_specs:
+        if rate_pct is None:
+            fee_floor = None
+            cost_floor = None
+            required_edge = None
+        else:
+            fee_floor = 2.0 * rate_pct
+            cost_floor = fee_floor + 2.0 * slippage_each_leg_pct
+            required_edge = cost_floor + min_net_edge_pct
+        routes.append({
+            "strategy": strategy,
+            "order_mode": order_mode,
+            "fee_class": fee_class,
+            "fee_rate_pct_each_leg": round(rate_pct, 5) if rate_pct is not None else None,
+            "two_leg_fee_floor_pct": round(fee_floor, 5) if fee_floor is not None else None,
+            "cost_floor_with_configured_slippage_pct": round(cost_floor, 5) if cost_floor is not None else None,
+            "research_required_gross_edge_pct": round(required_edge, 5) if required_edge is not None else None,
+        })
+
+    return {
+        "source": "bitvavo_private_account",
+        "read_only": True,
+        "maker_fee_pct": round(maker_pct, 5) if maker_pct is not None else None,
+        "taker_fee_pct": round(taker_pct, 5) if taker_pct is not None else None,
+        "volume_30d_eur": round(volume_30d, 2),
+        "configured_policy": {
+            "entry_fee_pct": round(entry_fee_pct, 5),
+            "exit_fee_pct": round(exit_fee_pct, 5),
+            "slippage_each_leg_pct": round(slippage_each_leg_pct, 5),
+            "min_expected_net_edge_pct": round(min_net_edge_pct, 5),
+            "cost_floor_pct": round(configured_cost_floor_pct, 5),
+            "required_gross_edge_pct": round(configured_required_edge_pct, 5),
+        },
+        "strategy_routes": routes,
+        "live_profit_gates_changed": False,
+        "note": "Telemetry only. Live profit gates are not changed automatically.",
+    }
+
+
+def _bitvavo_fee_ttl_seconds() -> float:
+    try:
+        return max(60.0, float(os.getenv("BITVAVO_FEE_CACHE_SECONDS", "300")))
+    except ValueError:
+        return 300.0
+
+
+def _cached_bitvavo_fee_margin(*, force: bool = False) -> dict[str, object]:
+    """Cache one private account fee read so 5-second dashboard polling is cheap."""
+    now = time.monotonic()
+    cached = getattr(app.state, "bitvavo_fee_cache", None)
+    cached_at = float(getattr(app.state, "bitvavo_fee_cache_at", 0.0))
+    ttl = _bitvavo_fee_ttl_seconds()
+    if not force and isinstance(cached, dict) and now - cached_at < ttl:
+        return dict(cached)
+
+    with _bitvavo_fee_lock:
+        now = time.monotonic()
+        cached = getattr(app.state, "bitvavo_fee_cache", None)
+        cached_at = float(getattr(app.state, "bitvavo_fee_cache_at", 0.0))
+        if not force and isinstance(cached, dict) and now - cached_at < ttl:
+            return dict(cached)
+        agent = get_agent()
+        try:
+            account = agent._bitvavo.account()
+            payload = _fee_margin_payload_from_account(agent, account)
+            payload["error"] = None
+        except BitvavoError as exc:
+            payload = _fee_margin_payload_from_account(agent, {})
+            payload["error"] = exc.category
+        except Exception as exc:
+            payload = _fee_margin_payload_from_account(agent, {})
+            payload["error"] = type(exc).__name__
+        payload["cache_seconds"] = ttl
+        payload["updated_at"] = time.time()
+        app.state.bitvavo_fee_cache = dict(payload)
+        app.state.bitvavo_fee_cache_at = now
+        return dict(payload)
 
 def _paper_report(agent: AutoTrader) -> dict:
     """Return the dashboard-ready paper report and track process-local equity peak."""
@@ -701,6 +820,8 @@ async def _lifespan(app: FastAPI):
     app.state.bitvavo_security_cache_at = 0.0
     app.state.live_preflight_cache = None
     app.state.live_preflight_cache_at = 0.0
+    app.state.bitvavo_fee_cache = None
+    app.state.bitvavo_fee_cache_at = 0.0
     try:
         app.state.arbitrage_shadow_interval_seconds = max(
             10.0,
@@ -1537,6 +1658,12 @@ def optimization_opportunities() -> dict[str, object]:
 @app.get("/api/optimization/fee-efficiency", tags=["optimization"])
 def optimization_fee_efficiency() -> dict[str, object]:
     return fee_efficiency_rows(_live_profit_snapshots(get_agent()))
+
+
+@app.get("/api/fees/live", tags=["optimization"])
+def live_fee_margin_telemetry() -> dict[str, object]:
+    """Read actual account fee tier; never changes strategy or risk settings."""
+    return _cached_bitvavo_fee_margin()
 
 
 @app.get("/api/optimization/calculated-risk", tags=["optimization"])
