@@ -255,8 +255,15 @@ def _fee_margin_payload_from_account(agent: AutoTrader, account: dict[str, objec
             "required_gross_edge_pct": round(configured_required_edge_pct, 5),
         },
         "strategy_routes": routes,
-        "live_profit_gates_changed": False,
-        "note": "Telemetry only. Live profit gates are not changed automatically.",
+        "live_profit_gates_changed": bool(
+            (agent._config.get("profit_policy", {}) or {}).get(
+                "use_live_fee_tier_for_route_gates", False
+            )
+            and maker_pct is not None
+            and taker_pct is not None
+        ),
+        "fallback_required_gross_edge_pct": round(configured_required_edge_pct, 5),
+        "note": "Route-specific live fee gates use the private account tier when available; missing fee data falls back to the configured conservative policy.",
     }
 
 
@@ -298,6 +305,43 @@ def _cached_bitvavo_fee_margin(*, force: bool = False) -> dict[str, object]:
         app.state.bitvavo_fee_cache = dict(payload)
         app.state.bitvavo_fee_cache_at = now
         return dict(payload)
+
+def _strategy_route_fee_policy(agent: AutoTrader, strategy_name: str) -> tuple[float | None, float | None, str]:
+    """Use the account fee tier per execution route; fail closed to config."""
+    cfg = agent._config.get("profit_policy", {}) or {}
+    if not bool(cfg.get("use_live_fee_tier_for_route_gates", False)):
+        return None, None, "configured_conservative"
+    payload = getattr(app.state, "bitvavo_fee_cache", None)
+    if not isinstance(payload, dict) or payload.get("error"):
+        return None, None, "configured_conservative"
+    if strategy_name in {"MarketMaker", "GridRunner", "GridRunnerETH"}:
+        raw = payload.get("maker_fee_pct")
+        source = "bitvavo_account_maker_post_only"
+    elif strategy_name == "SniperBot":
+        raw = payload.get("taker_fee_pct")
+        source = "bitvavo_account_taker_market"
+    else:
+        return None, None, "configured_conservative"
+    try:
+        rate = float(raw)
+    except (TypeError, ValueError):
+        return None, None, "configured_conservative"
+    if rate < 0 or rate > 2.0:
+        return None, None, "configured_conservative"
+    return rate, rate, source
+
+
+def _strategy_profit_snapshot(agent: AutoTrader, market: str, strategy_name: str, mark_price: float) -> dict[str, object]:
+    entry_fee, exit_fee, source = _strategy_route_fee_policy(agent, strategy_name)
+    return agent.profit_supervisor.strategy_snapshot(
+        market,
+        strategy_name,
+        mark_price,
+        entry_fee_pct=entry_fee,
+        exit_fee_pct=exit_fee,
+        fee_policy_source=source,
+    )
+
 
 def _paper_report(agent: AutoTrader) -> dict:
     """Return the dashboard-ready paper report and track process-local equity peak."""
@@ -446,8 +490,8 @@ def _manage_stale_bot_orders(app: FastAPI, agent: AutoTrader) -> dict[str, objec
                 continue
             try:
                 mark = float(agent._bitvavo.ticker_price(market))
-                snap = agent.profit_supervisor.strategy_snapshot(
-                    market, strategy_name, mark
+                snap = _strategy_profit_snapshot(
+                    agent, market, strategy_name, mark
                 )
                 min_exit = float(snap.get("min_profit_exit_price") or 0.0)
             except Exception:
@@ -599,6 +643,10 @@ async def _tick_loop(app: FastAPI, agent: AutoTrader) -> None:
                     agent.live_reconcile()
                 if sync_due:
                     try:
+                        await asyncio.to_thread(_cached_bitvavo_fee_margin)
+                    except Exception as fee_exc:
+                        log.warning("Bitvavo fee-tier refresh failed safely: %s", type(fee_exc).__name__)
+                    try:
                         balance_rows = agent._bitvavo.balance()
                         app.state.bitvavo_balances = {
                             str(row.get("symbol", "")).upper(): float(row.get("available") or 0)
@@ -646,8 +694,8 @@ async def _tick_loop(app: FastAPI, agent: AutoTrader) -> None:
                         inventory = agent._bitvavo.journal.inventory_cost_basis(symbol, strategy.name)
                         strategy._config["_bot_base_inventory"] = float(inventory["quantity"])
                         strategy._config["_bot_average_entry_price"] = float(inventory["average_entry_price"])
-                        profit_snapshot = agent.profit_supervisor.strategy_snapshot(
-                            symbol, strategy.name, price
+                        profit_snapshot = _strategy_profit_snapshot(
+                            agent, symbol, strategy.name, price
                         )
                         strategy._config["_profit_snapshot"] = profit_snapshot
                         strategy._config["_required_entry_edge_pct"] = float(
@@ -1120,7 +1168,7 @@ def _live_profit_snapshots(agent: AutoTrader) -> list[dict[str, object]]:
                 mark = float(agent._bitvavo.ticker_price(symbol))
             except Exception:
                 mark = 0.0
-        rows.append(agent.profit_supervisor.strategy_snapshot(symbol, strategy.name, mark))
+        rows.append(_strategy_profit_snapshot(agent, symbol, strategy.name, mark))
     return rows
 
 
@@ -1152,6 +1200,11 @@ def live_pnl():
             "required_entry_edge_pct": float(agent.profit_supervisor.policy.required_entry_edge_pct),
             "future_exit_cost_pct": float(agent.profit_supervisor.policy.future_exit_cost_pct),
             "min_expected_net_edge_pct": float(agent.profit_supervisor.policy.min_expected_net_edge_pct),
+            "route_specific_live_fee_gates": bool(
+                (agent._config.get("profit_policy", {}) or {}).get(
+                    "use_live_fee_tier_for_route_gates", False
+                )
+            ),
         },
         "strategies": rows,
         "note": "Unrealized values are estimates after configured exit fee/slippage; profit is never guaranteed.",
@@ -1716,7 +1769,7 @@ def optimization_execution_v2() -> dict[str, object]:
                 mark = float(agent._bitvavo.ticker_price(symbol))
             except Exception:
                 mark = 0.0
-        snap = agent.profit_supervisor.strategy_snapshot(symbol, strategy.name, mark)
+        snap = _strategy_profit_snapshot(agent, symbol, strategy.name, mark)
         min_exit[strategy.name] = float(snap.get("min_profit_exit_price") or 0.0)
         last_fill_at[strategy.name] = float(
             agent._bitvavo.journal.latest_fill_time(symbol, strategy.name)
@@ -2015,19 +2068,32 @@ def three_hour_report() -> dict[str, object]:
     }
     opportunities = []
     rankings = router.get("rankings", {}) if isinstance(router, dict) else {}
+    autonomy_rows = {
+        str(row.get("strategy") or ""): row
+        for row in (getattr(app.state, "autonomous_plan", {}) or {}).get("rows", [])
+    }
     for key, label in profiles.items():
         rows = rankings.get(key, []) or []
         best = next((row for row in rows if row.get("eligible")), rows[0] if rows else None)
         if best:
+            gate = autonomy_rows.get(label, {}) or {}
+            target_edge = float(gate.get("target_edge_pct") or 0.0)
+            required_edge = float(gate.get("required_entry_edge_pct") or 0.0)
             opportunities.append({
                 "strategy": label,
-                "market": best.get("market"),
-                "score": best.get("score"),
-                "signal_strength": best.get("signal_strength"),
-                "signal_direction": best.get("signal_direction"),
+                "market": gate.get("desired_market") or best.get("market"),
+                "score": gate.get("market_score", best.get("score")),
+                "signal_strength": gate.get("signal_strength", best.get("signal_strength")),
+                "signal_direction": gate.get("signal_direction", best.get("signal_direction")),
                 "spread_bps": best.get("spread_bps"),
                 "momentum_pct": best.get("momentum_pct"),
                 "liquidity_eur": best.get("liquidity_eur"),
+                "target_edge_pct": target_edge or None,
+                "required_entry_edge_pct": required_edge or None,
+                "margin_buffer_pct": round(target_edge - required_edge, 4)
+                if target_edge > 0 and required_edge > 0 else None,
+                "entry_allowed": gate.get("entry_allowed"),
+                "decision_reason": gate.get("reason"),
             })
     execution = app.state.execution_gateway.status()
     return {

@@ -86,3 +86,26 @@ def test_profit_snapshot_reports_fee_aware_minimum_exit(tmp_path):
     assert snapshot["required_entry_edge_pct"] == 0.75
     assert snapshot["min_profit_exit_price"] > snapshot["break_even_exit_price"]
     journal.close()
+
+
+def test_profit_snapshot_can_use_route_specific_fee_tier(tmp_path):
+    journal = OrderJournal(str(tmp_path / "orders.sqlite3"))
+    supervisor = ProfitSupervisor(journal, {
+        "estimated_entry_fee_pct": 0.25,
+        "estimated_exit_fee_pct": 0.25,
+        "estimated_slippage_each_leg_pct": 0.05,
+        "min_expected_net_edge_pct": 0.15,
+    })
+    maker = supervisor.strategy_snapshot(
+        "SOL-EUR", "GridRunner", 100,
+        entry_fee_pct=0.15,
+        exit_fee_pct=0.15,
+        fee_policy_source="bitvavo_account_maker_post_only",
+    )
+    assert maker["required_entry_edge_pct"] == 0.55
+    assert maker["required_exit_markup_from_cost_pct"] == 0.35
+    assert maker["fee_policy_source"] == "bitvavo_account_maker_post_only"
+    fallback = supervisor.strategy_snapshot("SOL-EUR", "GridRunner", 100)
+    assert fallback["required_entry_edge_pct"] == 0.75
+    assert fallback["fee_policy_source"] == "configured_conservative"
+    journal.close()

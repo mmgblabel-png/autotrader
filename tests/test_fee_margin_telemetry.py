@@ -13,6 +13,7 @@ def _agent():
                 "estimated_exit_fee_pct": 0.25,
                 "estimated_slippage_each_leg_pct": 0.05,
                 "min_expected_net_edge_pct": 0.15,
+                "use_live_fee_tier_for_route_gates": True,
             }
         }
     )
@@ -28,7 +29,7 @@ def test_fee_margin_payload_uses_actual_maker_and_taker_rates_without_mutating_p
     assert payload["taker_fee_pct"] == pytest.approx(0.25)
     assert payload["volume_30d_eur"] == pytest.approx(1234.56)
     assert payload["configured_policy"]["required_gross_edge_pct"] == pytest.approx(0.75)
-    assert payload["live_profit_gates_changed"] is False
+    assert payload["live_profit_gates_changed"] is True
 
     routes = {row["strategy"]: row for row in payload["strategy_routes"]}
     assert routes["MarketMaker"]["order_mode"] == "limit + postOnly"
@@ -46,3 +47,9 @@ def test_fee_margin_payload_fails_read_only_when_account_fee_fields_missing():
     assert payload["maker_fee_pct"] is None
     assert payload["taker_fee_pct"] is None
     assert payload["live_profit_gates_changed"] is False
+
+
+def test_fee_margin_payload_missing_account_fee_keeps_live_gate_fallback():
+    payload = _fee_margin_payload_from_account(_agent(), {})
+    assert payload["live_profit_gates_changed"] is False
+    assert payload["fallback_required_gross_edge_pct"] == pytest.approx(0.75)

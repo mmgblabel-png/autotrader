@@ -60,12 +60,46 @@ class ProfitSupervisor:
     def entry_has_edge(self, target_edge_pct: float | Decimal) -> bool:
         return Decimal(str(target_edge_pct)) >= self.policy.required_entry_edge_pct
 
-    def strategy_snapshot(self, market: str, strategy: str, mark_price: float | Decimal) -> dict[str, Any]:
+    def strategy_snapshot(
+        self,
+        market: str,
+        strategy: str,
+        mark_price: float | Decimal,
+        *,
+        entry_fee_pct: float | Decimal | None = None,
+        exit_fee_pct: float | Decimal | None = None,
+        fee_policy_source: str = "configured_conservative",
+    ) -> dict[str, Any]:
+        """Return a fee-aware strategy snapshot.
+
+        Optional fee overrides are used only for route-specific live economics.
+        When absent, the configured conservative policy remains the fallback.
+        """
+        entry_fee = (
+            self.policy.estimated_entry_fee_pct
+            if entry_fee_pct is None
+            else max(Decimal("0"), Decimal(str(entry_fee_pct)))
+        )
+        exit_fee = (
+            self.policy.estimated_exit_fee_pct
+            if exit_fee_pct is None
+            else max(Decimal("0"), Decimal(str(exit_fee_pct)))
+        )
+        future_exit_cost_pct = exit_fee + self.policy.estimated_slippage_each_leg_pct
+        required_entry_edge_pct = (
+            entry_fee
+            + exit_fee
+            + (Decimal("2") * self.policy.estimated_slippage_each_leg_pct)
+            + self.policy.min_expected_net_edge_pct
+        )
+        required_exit_markup_from_cost_pct = (
+            future_exit_cost_pct + self.policy.min_expected_net_edge_pct
+        )
         perf = self.journal.strategy_performance(
             market,
             strategy,
             mark_price=Decimal(str(mark_price)),
-            estimated_exit_cost_pct=self.policy.future_exit_cost_pct,
+            estimated_exit_cost_pct=future_exit_cost_pct,
         )
         quantity = Decimal(str(perf["quantity"]))
         realized = Decimal(str(perf["realized_net_pnl_eur"]))
@@ -104,8 +138,11 @@ class ProfitSupervisor:
             "fees_quote_equivalent_eur": number(perf["fees_quote_equivalent_eur"]),
             "break_even_exit_price": number(break_even),
             "min_profit_exit_price": number(target_exit),
-            "required_entry_edge_pct": number(self.policy.required_entry_edge_pct),
-            "required_exit_markup_from_cost_pct": number(self.policy.required_exit_markup_from_cost_pct),
+            "required_entry_edge_pct": number(required_entry_edge_pct),
+            "required_exit_markup_from_cost_pct": number(required_exit_markup_from_cost_pct),
+            "entry_fee_pct": number(entry_fee),
+            "exit_fee_pct": number(exit_fee),
+            "fee_policy_source": fee_policy_source,
             "profitable_exits": int(perf["profitable_exits"]),
             "losing_exits": int(perf["losing_exits"]),
             "unpriced_fee_count": int(perf["unpriced_fee_count"]),
