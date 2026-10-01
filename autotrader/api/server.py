@@ -293,6 +293,9 @@ def _manage_stale_bot_orders(app: FastAPI, agent: AutoTrader) -> dict[str, objec
         for row in (getattr(app.state, "autonomous_plan", {}) or {}).get("rows", [])
     }
     canceled: list[dict[str, object]] = []
+    errors: list[dict[str, object]] = []
+    retry_at = dict(getattr(app.state, "execution_v2_cancel_retry_at", {}) or {})
+    retry_seconds = max(30.0, float(advisor.config.get("cancel_retry_seconds", 60.0)))
     now = time.time()
 
     for record in list(agent._bitvavo.journal.inflight()):
@@ -302,6 +305,8 @@ def _manage_stale_bot_orders(app: FastAPI, agent: AutoTrader) -> dict[str, objec
         market = str(record.get("market") or "").upper().strip()
         side = str(record.get("side") or "").lower().strip()
         if not client_order_id or not exchange_order_id or not strategy_name or not market:
+            continue
+        if now_mono < float(retry_at.get(client_order_id, 0.0) or 0.0):
             continue
 
         age = max(0.0, now - float(record.get("created_at") or now))
@@ -358,7 +363,50 @@ def _manage_stale_bot_orders(app: FastAPI, agent: AutoTrader) -> dict[str, objec
                 age,
                 cancel_reason,
             )
+        except BitvavoError as exc:
+            retry_at[client_order_id] = now_mono + retry_seconds
+            try:
+                agent.live_reconcile()
+            except Exception:
+                pass
+            refreshed = agent._bitvavo.journal.get(client_order_id) or {}
+            refreshed_status = str(refreshed.get("status") or "").lower()
+            if refreshed_status in agent._bitvavo.journal.TERMINAL:
+                canceled.append({
+                    "strategy": strategy_name,
+                    "market": market,
+                    "side": side,
+                    "age_seconds": round(age, 1),
+                    "reason": "reconciled_terminal_after_cancel_reject",
+                })
+                retry_at.pop(client_order_id, None)
+            else:
+                errors.append({
+                    "strategy": strategy_name,
+                    "market": market,
+                    "side": side,
+                    "category": exc.category,
+                    "status": exc.status,
+                    "error_code": exc.error_code,
+                    "retry_after_seconds": round(retry_seconds, 1),
+                })
+            log.warning(
+                "Execution v2 stale cancel failed safely: strategy=%s market=%s category=%s status=%s code=%s",
+                strategy_name,
+                market,
+                exc.category,
+                exc.status,
+                exc.error_code,
+            )
         except Exception as exc:
+            retry_at[client_order_id] = now_mono + retry_seconds
+            errors.append({
+                "strategy": strategy_name,
+                "market": market,
+                "side": side,
+                "category": type(exc).__name__,
+                "retry_after_seconds": round(retry_seconds, 1),
+            })
             log.warning(
                 "Execution v2 stale cancel failed safely: strategy=%s market=%s category=%s",
                 strategy_name,
@@ -366,10 +414,12 @@ def _manage_stale_bot_orders(app: FastAPI, agent: AutoTrader) -> dict[str, objec
                 type(exc).__name__,
             )
 
+    app.state.execution_v2_cancel_retry_at = retry_at
     result = {
         "applied": True,
         "reason": "managed",
         "canceled": canceled,
+        "errors": errors,
         "live_orders_changed": bool(canceled),
     }
     app.state.execution_v2_live_actions = result
@@ -1050,6 +1100,11 @@ def risk_status():
 def execution_status():
     """Expose non-secret execution mode, gates and limits for the dashboard."""
     status = app.state.execution_gateway.status()
+    agent = get_agent()
+    status["daily_entry_turnover_eur"] = str(
+        agent._bitvavo.journal.daily_execution_exposure_utc()
+    )
+    status["exposure_model"] = "current_bot_capital_at_risk"
     status["armed"] = bool(getattr(app.state, "live_armed", False))
     status["emergency_stop"] = os.getenv("EMERGENCY_STOP", "true").strip().lower() == "true"
     status["bitvavo_credentials_present"] = bool(
@@ -1576,7 +1631,7 @@ def markets_overview():
     for strategy_key, values in strategy_markets.items():
         for value in values or []:
             market = str(value).upper().strip()
-            if market:
+            if market and market != "*":
                 usage.setdefault(market, set()).add(str(strategy_key))
     for strategy_key, strategy in agent._strategies.items():
         market = str(strategy._config.get("symbol", "")).upper().strip()
@@ -1812,6 +1867,59 @@ def order_activity(limit: int = 100) -> dict[str, object]:
         "total_returned": len(activity),
         "status_counts": counts,
         "orders": activity,
+    }
+
+
+@app.get("/api/report/three-hour", tags=["reporting"])
+def three_hour_report() -> dict[str, object]:
+    """Rolling three-hour execution report for operator decisions."""
+    agent = get_agent()
+    now = time.time()
+    since = now - 3 * 3600
+    activity = agent._bitvavo.journal.activity_summary_since(since)
+    live = live_pnl()
+    router = app.state.opportunity_router.rankings()
+    profiles = {
+        "market_maker": "MarketMaker",
+        "grid": "GridRunner",
+        "sniper": "SniperBot",
+        "mean_reversion": "MeanReversionShadow",
+        "volatility_breakout": "VolatilityBreakoutShadow",
+    }
+    opportunities = []
+    rankings = router.get("rankings", {}) if isinstance(router, dict) else {}
+    for key, label in profiles.items():
+        rows = rankings.get(key, []) or []
+        best = next((row for row in rows if row.get("eligible")), rows[0] if rows else None)
+        if best:
+            opportunities.append({
+                "strategy": label,
+                "market": best.get("market"),
+                "score": best.get("score"),
+                "signal_strength": best.get("signal_strength"),
+                "signal_direction": best.get("signal_direction"),
+                "spread_bps": best.get("spread_bps"),
+                "momentum_pct": best.get("momentum_pct"),
+                "liquidity_eur": best.get("liquidity_eur"),
+            })
+    execution = app.state.execution_gateway.status()
+    return {
+        "window_hours": 3,
+        "from_ts": since,
+        "to_ts": now,
+        "activity": activity,
+        "pnl_now": live.get("totals", {}),
+        "active_exposure_eur": execution.get("daily_exposure_eur"),
+        "remaining_exposure_eur": execution.get("remaining_daily_exposure_eur"),
+        "daily_entry_turnover_eur": str(agent._bitvavo.journal.daily_execution_exposure_utc()),
+        "armed": bool(getattr(app.state, "live_armed", False)),
+        "router_scanned": int(router.get("markets_scanned", 0) or 0) if isinstance(router, dict) else 0,
+        "opportunities": opportunities,
+        "execution_v2": getattr(
+            app.state,
+            "execution_v2_live_actions",
+            {"applied": False, "reason": "startup", "canceled": [], "errors": []},
+        ),
     }
 
 
