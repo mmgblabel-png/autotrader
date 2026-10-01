@@ -290,6 +290,7 @@ strategies:
     order_size: 0.0
     entry_offset_pct: 0.60
     exit_markup_pct: 0.80
+    cycle_cooldown_seconds: 60
     max_daily_loss: 25.0
     max_position_size: 300.0
     max_slippage_pct: 0.5
@@ -309,6 +310,7 @@ strategies:
     order_size: 0.0
     entry_offset_pct: 0.60
     exit_markup_pct: 0.80
+    cycle_cooldown_seconds: 60
     max_daily_loss: 20.0
     max_position_size: 300.0
     max_slippage_pct: 0.5
