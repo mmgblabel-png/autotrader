@@ -71,7 +71,7 @@ from autotrader.core.profit_optimization import (
 )
 from autotrader.core.autonomous_decision_engine import AutonomousDecisionEngine
 from autotrader.core.risk_lab import LeverageMartingaleRiskLab
-from autotrader.connectors.bitvavo import BitvavoAdapter
+from autotrader.connectors.bitvavo import BitvavoAdapter, BitvavoError
 from autotrader.connectors.coinbase_advanced import CoinbaseAdvancedMarketData, CoinbaseMarketDataError
 from autotrader.connectors.bitpanda_fusion import BitpandaFusionAdapter
 from autotrader.api.dashboard_html import dashboard_html
