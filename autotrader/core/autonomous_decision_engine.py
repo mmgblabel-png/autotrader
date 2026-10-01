@@ -222,13 +222,20 @@ class AutonomousDecisionEngine:
             entry_runtime_ready = failure_cooldown_until <= time.time()
             headroom_before = virtual_headroom_eur
             exposure_headroom_ok = True
+            pre_headroom_suggested_eur = suggested_eur
             if key in {"market_maker", "grid", "grid_eth", "sniper"} and flat and virtual_headroom_eur is not None:
                 suggested_eur = min(suggested_eur, virtual_headroom_eur)
-                exposure_headroom_ok = suggested_eur >= minimum_live_order_eur
+                exposure_headroom_ok = virtual_headroom_eur >= minimum_live_order_eur
+            minimum_order_ok = (
+                suggested_eur >= minimum_live_order_eur
+                if key in {"market_maker", "grid", "grid_eth", "sniper"} and flat
+                else True
+            )
 
             entry_allowed = (
                 quality_ok
                 and exposure_headroom_ok
+                and minimum_order_ok
                 and entry_runtime_ready
                 and flat
                 and not open_local
@@ -237,7 +244,7 @@ class AutonomousDecisionEngine:
             if entry_allowed and virtual_headroom_eur is not None:
                 virtual_headroom_eur = max(0.0, virtual_headroom_eur - suggested_eur)
 
-            may_switch = flat and not open_local and not durable_open and switch_ready and quality_ok
+            may_switch = entry_allowed and switch_ready
             if bool(cfg.get("exclusive_symbol", False)):
                 reserved = current if (not flat or open_local or durable_open) else desired if quality_ok else ""
                 if reserved:
@@ -250,6 +257,8 @@ class AutonomousDecisionEngine:
                 reason = "quality_below_threshold"
             elif not exposure_headroom_ok:
                 reason = "daily_exposure_headroom_low"
+            elif not minimum_order_ok:
+                reason = "order_below_exchange_minimum"
             elif not entry_runtime_ready and flat:
                 reason = "failure_cooldown"
             elif not flat:
@@ -289,6 +298,9 @@ class AutonomousDecisionEngine:
                 "pending_buy_reservation_eur": round(pending_buy_reservation_eur, 2),
                 "exposure_safety_buffer_eur": round(self.exposure_safety_buffer_eur, 2),
                 "exposure_headroom_ok": exposure_headroom_ok,
+                "minimum_order_ok": minimum_order_ok,
+                "minimum_live_order_eur": round(minimum_live_order_eur, 2),
+                "pre_headroom_recommended_order_eur": round(pre_headroom_suggested_eur, 2),
                 "allowed_markets": sorted(allowed),
                 "market_min_score": round(market_score_min, 2),
                 "market_min_confidence": round(market_conf_min, 4),
@@ -381,7 +393,11 @@ class AutonomousDecisionEngine:
                     continue
                 self._last_switch[strategy.name] = time.time()
 
-            if key in {"grid", "grid_eth", "sniper"} and order_eur > 0:
+            if (
+                key in {"grid", "grid_eth", "sniper"}
+                and order_eur > 0
+                and bool(row.get("entry_allowed", False))
+            ):
                 hard_cap = min(
                     float(cfg.get("allocation_eur", order_eur)),
                     float(cfg.get("max_order_eur", order_eur)),
