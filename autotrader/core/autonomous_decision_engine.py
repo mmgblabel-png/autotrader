@@ -95,6 +95,7 @@ class AutonomousDecisionEngine:
         strategy_key_map = {
             "market_maker": ("MarketMaker", "market_maker"),
             "grid": ("GridRunner", "grid"),
+            "grid_eth": ("GridRunnerETH", "grid"),
             "sniper": ("SniperBot", "sniper"),
         }
         risk_rows = {
@@ -120,12 +121,21 @@ class AutonomousDecisionEngine:
         if exposure_headroom_eur is None:
             virtual_headroom_eur = None
         else:
-            virtual_headroom_eur = max(
-                0.0,
-                exposure_headroom_eur
-                - pending_buy_reservation_eur
-                - self.exposure_safety_buffer_eur,
-            )
+            try:
+                from decimal import Decimal
+                virtual_headroom_eur = float(
+                    gateway.remaining_daily_exposure_eur(
+                        pending_reservation_eur=Decimal(str(pending_buy_reservation_eur)),
+                        safety_buffer_eur=Decimal(str(self.exposure_safety_buffer_eur)),
+                    )
+                )
+            except (AttributeError, TypeError, ValueError):
+                virtual_headroom_eur = max(
+                    0.0,
+                    exposure_headroom_eur
+                    - pending_buy_reservation_eur
+                    - self.exposure_safety_buffer_eur,
+                )
 
         for key, (display, router_key) in strategy_key_map.items():
             strategy = agent._strategies.get(key)
@@ -172,7 +182,7 @@ class AutonomousDecisionEngine:
             required_entry_edge = max(0.0, float(cfg.get("_required_entry_edge_pct", 0.0)))
             if key == "market_maker":
                 target_edge = float(cfg.get("cycle_exit_markup_pct", cfg.get("target_spread", 0.0)))
-            elif key == "grid":
+            elif key in {"grid", "grid_eth"}:
                 target_edge = float(cfg.get("exit_markup_pct", 0.0))
             else:
                 target_edge = float(cfg.get("take_profit_pct", 0.0))
@@ -200,7 +210,7 @@ class AutonomousDecisionEngine:
             entry_runtime_ready = failure_cooldown_until <= time.time()
             headroom_before = virtual_headroom_eur
             exposure_headroom_ok = True
-            if key in {"market_maker", "grid", "sniper"} and flat and virtual_headroom_eur is not None:
+            if key in {"market_maker", "grid", "grid_eth", "sniper"} and flat and virtual_headroom_eur is not None:
                 suggested_eur = min(suggested_eur, virtual_headroom_eur)
                 exposure_headroom_ok = suggested_eur >= minimum_live_order_eur
 
@@ -318,7 +328,7 @@ class AutonomousDecisionEngine:
                 try:
                     rules_rows = agent._bitvavo.markets(desired)
                     rules = rules_rows[0] if rules_rows else {}
-                    required_type = "limit" if key == "grid" else "market"
+                    required_type = "limit" if key in {"grid", "grid_eth"} else "market"
                     supported = {str(x).lower() for x in (rules.get("orderTypes") or [])}
                     min_quote = float(rules.get("minOrderInQuoteAsset") or 0.0)
                     if (
@@ -338,7 +348,7 @@ class AutonomousDecisionEngine:
                     continue
                 self._last_switch[strategy.name] = time.time()
 
-            if key in {"grid", "sniper"} and order_eur > 0:
+            if key in {"grid", "grid_eth", "sniper"} and order_eur > 0:
                 hard_cap = min(
                     float(cfg.get("allocation_eur", order_eur)),
                     float(cfg.get("max_order_eur", order_eur)),

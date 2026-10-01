@@ -106,6 +106,27 @@ class ExecutionGateway:
             self.daily_exposure_eur+=request.notional_eur
         return ExecutionDecision(True,self.mode,"validated for execution" if self.mode is ExecutionMode.LIVE else "validated without sending an order",request.client_order_id,request.venue,str(request.notional_eur))
 
+    def remaining_daily_exposure_eur(
+        self,
+        *,
+        pending_reservation_eur: Decimal = Decimal("0"),
+        safety_buffer_eur: Decimal = Decimal("0"),
+    ) -> Decimal:
+        """Return centrally calculated risk-increasing headroom.
+
+        Pending local BUY reservations and a conservative buffer are subtracted
+        from the same hard daily exposure limit used by evaluate().
+        """
+        pending = max(Decimal("0"), pending_reservation_eur)
+        buffer = max(Decimal("0"), safety_buffer_eur)
+        return max(
+            Decimal("0"),
+            self.limits.max_daily_exposure_eur
+            - self.daily_exposure_eur
+            - pending
+            - buffer,
+        )
+
     def record_loss(self,amount_eur:Decimal)->None:
         if amount_eur>0: self.daily_loss_eur+=amount_eur
 
@@ -118,6 +139,7 @@ class ExecutionGateway:
             "live_activation_allowed":live_activation_is_allowed(),
             "live_execution_capability":"bitvavo" if live_activation_is_allowed() else "gated",
             "daily_exposure_eur":str(self.daily_exposure_eur),
+            "remaining_daily_exposure_eur":str(self.remaining_daily_exposure_eur()),
             "daily_loss_eur":str(self.daily_loss_eur),
             "limits":{"max_trade_eur":str(self.limits.max_trade_eur),"max_daily_exposure_eur":str(self.limits.max_daily_exposure_eur),"max_daily_loss_eur":str(self.limits.max_daily_loss_eur),"max_slippage_bps":self.limits.max_slippage_bps},
         }

@@ -56,6 +56,10 @@ def test_opportunity_router_is_read_only_and_ranks_markets():
     assert payload["live_orders_sent"] is False
     assert payload["markets_scanned"] == 3
     assert payload["rankings"]["market_maker"][0]["eligible"] is True
+    first = payload["rankings"]["market_maker"][0]
+    assert "orderbook_imbalance_pct" in first
+    assert "snapshot_age_seconds" in first
+    assert "expected_slippage_bps" in first
 
 
 def test_execution_v2_recommends_only_safe_advisory_reprice():
@@ -338,3 +342,35 @@ def test_calculated_risk_sizer_reduces_size_when_drawdown_or_fees_are_bad():
     assert row["size_multiplier"] < 1.0
     assert row["reason"] == "risk_reduced"
     assert row["recommended_order_eur"] <= 7.0
+
+
+def test_execution_v2_respects_post_fill_delay():
+    advisor = ExecutionV2Advisor({
+        "enabled": True,
+        "apply_live": False,
+        "stale_after_seconds": 30,
+        "order_refresh_tolerance_bps": 4,
+        "max_order_age_seconds": 900,
+        "filled_order_delay_seconds": 60,
+    })
+    now = time.time()
+    activity = [{
+        "strategy": "GridRunner",
+        "market": "SOL-EUR",
+        "side": "buy",
+        "price": 99.0,
+        "status": "new",
+        "created_at": now - 120,
+    }]
+    result = advisor.evaluate(
+        activity,
+        {"SOL-EUR": {"bid": 100.0, "ask": 100.1}},
+        {"GridRunner": 0.0},
+        {"GridRunner": 0.80},
+        required_entry_edge_pct=0.75,
+        last_fill_at_by_strategy={"GridRunner": now - 10},
+    )
+    row = result["orders"][0]
+    assert row["post_fill_delay_active"] is True
+    assert row["recommend_reprice"] is False
+    assert row["reason"] == "post_fill_delay_active"

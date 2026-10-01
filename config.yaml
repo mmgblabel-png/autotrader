@@ -128,7 +128,9 @@ execution_v2:
   apply_live: false
   stale_after_seconds: 180
   min_reprice_move_bps: 4.0
+  order_refresh_tolerance_bps: 4.0
   max_order_age_seconds: 900
+  filled_order_delay_seconds: 60
 
 calculated_risk:
   enabled: true
@@ -156,10 +158,11 @@ autonomous_execution:
       - BTC-EUR
     grid:
       - SOL-EUR
-      - ETH-EUR
       - ADA-EUR
       - LINK-EUR
       - DOGE-EUR
+    grid_eth:
+      - ETH-EUR
     sniper:
       - XRP-EUR
       - SOL-EUR
@@ -192,6 +195,8 @@ opportunity_router:
   history_size: 48
   min_top_depth_eur: 25
   max_spread_bps: 35
+  probe_order_eur: 6
+  max_snapshot_age_seconds: 30
   auto_discover_eur: true
   max_markets: 60
   discovery_refresh_seconds: 1800
@@ -206,6 +211,21 @@ opportunity_router:
     - PEPE-EUR
     - NEX-EUR
     - BILL-EUR
+    - NEAR-EUR
+    - AVAX-EUR
+    - HBAR-EUR
+    - SUI-EUR
+    - XLM-EUR
+    - AAVE-EUR
+    - ALGO-EUR
+    - ONDO-EUR
+    - FET-EUR
+    - DOT-EUR
+    - LTC-EUR
+    - BCH-EUR
+    - UNI-EUR
+    - HYPE-EUR
+    - QNT-EUR
 
 profit_policy:
   estimated_entry_fee_pct: 0.25
@@ -269,7 +289,7 @@ strategies:
   grid:
     enabled: true
     live_capable: true
-    allocation_eur: 15
+    allocation_eur: 8
     max_order_eur: 7
     max_open_orders: 1
     exclusive_symbol: true
@@ -280,6 +300,25 @@ strategies:
     entry_offset_pct: 0.60
     exit_markup_pct: 0.80
     max_daily_loss: 25.0
+    max_position_size: 300.0
+    max_slippage_pct: 0.5
+    max_consecutive_errors: 5
+
+  grid_eth:
+    enabled: true
+    live_capable: true
+    strategy_name: GridRunnerETH
+    allocation_eur: 7
+    max_order_eur: 7
+    max_open_orders: 1
+    exclusive_symbol: true
+    symbol: ETH-EUR
+    exchange: bitvavo
+    order_value_eur: 6.0
+    order_size: 0.0
+    entry_offset_pct: 0.60
+    exit_markup_pct: 0.80
+    max_daily_loss: 20.0
     max_position_size: 300.0
     max_slippage_pct: 0.5
     max_consecutive_errors: 5

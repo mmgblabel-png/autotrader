@@ -19,7 +19,15 @@ def config():
             "grid": {
                 "symbol": "SOL-EUR",
                 "live_capable": True,
-                "allocation_eur": 15,
+                "allocation_eur": 8,
+                "max_order_eur": 7,
+                "max_open_orders": 1,
+                "exclusive_symbol": True,
+            },
+            "grid_eth": {
+                "symbol": "ETH-EUR",
+                "live_capable": True,
+                "allocation_eur": 7,
                 "max_order_eur": 7,
                 "max_open_orders": 1,
                 "exclusive_symbol": True,
@@ -110,3 +118,16 @@ def test_allocator_fails_closed_for_unknown_active_market_notional():
     decision = allocator.evaluate(candidate, [active], observed_price=Decimal("2"))
     assert not decision.accepted
     assert "notional is unknown" in decision.reason
+
+
+def test_allocator_accepts_distinct_eth_grid_without_raising_global_budget():
+    allocator = StrategyAllocator(config())
+    sol = Order("bitvavo", "SOL-EUR", OrderSide.BUY, OrderType.LIMIT, 0.06, 100, strategy="GridRunner")
+    eth = Order("bitvavo", "ETH-EUR", OrderSide.BUY, OrderType.LIMIT, 0.0025, 2400, strategy="GridRunnerETH")
+    first = allocator.evaluate(sol, [], observed_price=Decimal("100"))
+    second = allocator.evaluate(eth, [sol], observed_price=Decimal("2400"))
+    assert first.accepted
+    assert second.accepted
+    assert allocator.global_budget_eur == Decimal("50")
+    assert allocator.allocation_for("GridRunner").allocation_eur == Decimal("8")
+    assert allocator.allocation_for("GridRunnerETH").allocation_eur == Decimal("7")

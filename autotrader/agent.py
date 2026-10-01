@@ -31,6 +31,7 @@ _STRATEGY_REGISTRY: Dict[str, type] = {
     "market_maker": MarketMaker,
     "arbitrage": ArbitrageHunter,
     "grid": GridRunner,
+    "grid_eth": GridRunner,
     "sniper": SniperBot,
 }
 
@@ -272,6 +273,7 @@ class AutoTrader:
                 "market_maker": "MarketMaker",
                 "arbitrage": "ArbitrageHunter",
                 "grid": "GridRunner",
+                "grid_eth": "GridRunnerETH",
                 "sniper": "SniperBot",
             }
             if key in name_map:
@@ -283,6 +285,7 @@ class AutoTrader:
             "market_maker": "MarketMaker",
             "arbitrage": "ArbitrageHunter",
             "grid": "GridRunner",
+            "grid_eth": "GridRunnerETH",
             "sniper": "SniperBot",
         }
         for key, cls in _STRATEGY_REGISTRY.items():
@@ -290,6 +293,9 @@ class AutoTrader:
             self._learner.apply_overrides(name_map.get(key, key), cfg)
             strat = cls(order_manager=self._om, risk_manager=self._rm,
                         profit_engine=self._pe, config=cfg)
+            # Multiple instances of the same strategy class must keep distinct
+            # ownership in risk, journal, PnL and learning state.
+            strat.name = str(cfg.get("strategy_name") or name_map.get(key, strat.name))
             self._strategies[key] = strat
 
     @staticmethod

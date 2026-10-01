@@ -29,6 +29,9 @@ class MarketSnapshot:
     momentum_pct: float
     volatility_pct: float
     liquidity_eur: float
+    imbalance_pct: float
+    observed_at: float
+    expected_slippage_bps: float
 
 
 class OpportunityRouter:
@@ -52,6 +55,10 @@ class OpportunityRouter:
         self.history_size = max(8, min(240, int(self.config.get("history_size", 48))))
         self.min_top_depth_eur = max(5.0, float(self.config.get("min_top_depth_eur", 25.0)))
         self.max_spread_bps = max(1.0, float(self.config.get("max_spread_bps", 35.0)))
+        self.probe_order_eur = max(1.0, float(self.config.get("probe_order_eur", 6.0)))
+        self.max_snapshot_age_seconds = max(
+            1.0, float(self.config.get("max_snapshot_age_seconds", 30.0))
+        )
         self._history: dict[str, deque[float]] = defaultdict(lambda: deque(maxlen=self.history_size))
         self._latest: dict[str, MarketSnapshot] = {}
         self._last_error: dict[str, str] = {}
@@ -112,6 +119,18 @@ class OpportunityRouter:
                     ]
                     volatility_pct = statistics.pstdev(returns[-12:]) if len(returns) >= 2 else 0.0
                 liquidity_eur = min(bid * bid_size, ask * ask_size)
+                size_total = bid_size + ask_size
+                imbalance_pct = (
+                    (bid_size - ask_size) / size_total * 100.0
+                    if size_total > 0 else 0.0
+                )
+                # Conservative top-of-book slippage proxy for the configured
+                # probe notional. It is not a fill prediction.
+                depth_ratio = self.probe_order_eur / max(0.01, liquidity_eur)
+                expected_slippage_bps = max(
+                    0.0,
+                    spread_bps * max(0.0, depth_ratio - 1.0),
+                )
                 latest[market] = MarketSnapshot(
                     market=market,
                     bid=bid,
@@ -123,6 +142,9 @@ class OpportunityRouter:
                     momentum_pct=momentum_pct,
                     volatility_pct=volatility_pct,
                     liquidity_eur=liquidity_eur,
+                    imbalance_pct=imbalance_pct,
+                    observed_at=time.time(),
+                    expected_slippage_bps=expected_slippage_bps,
                 )
             except Exception as exc:
                 errors[market] = type(exc).__name__
@@ -136,12 +158,27 @@ class OpportunityRouter:
         momentum = max(0.0, min(100.0, 50.0 + snap.momentum_pct * 40.0))
         volatility_quality = max(0.0, min(100.0, 100.0 - abs(snap.volatility_pct - 0.18) * 220.0))
         trend = max(0.0, min(100.0, 50.0 + snap.momentum_pct * 55.0))
+        age = max(0.0, time.time() - snap.observed_at)
+        freshness = max(
+            0.0,
+            min(100.0, 100.0 * (1.0 - age / self.max_snapshot_age_seconds)),
+        )
+        balance_quality = max(0.0, 100.0 - abs(snap.imbalance_pct))
+        buy_imbalance = max(0.0, min(100.0, 50.0 + snap.imbalance_pct / 2.0))
+        slippage_quality = max(
+            0.0,
+            min(100.0, 100.0 * (1.0 - snap.expected_slippage_bps / self.max_spread_bps)),
+        )
         return {
             "trend": trend,
             "momentum": momentum,
             "volatility_quality": volatility_quality,
             "liquidity": liquidity,
             "spread_quality": spread_quality,
+            "book_balance_quality": balance_quality,
+            "buy_imbalance": buy_imbalance,
+            "freshness": freshness,
+            "slippage_quality": slippage_quality,
         }
 
     @staticmethod
@@ -150,11 +187,11 @@ class OpportunityRouter:
 
     def rankings(self) -> dict[str, Any]:
         profiles = {
-            "market_maker": {"spread_quality": 0.35, "liquidity": 0.35, "volatility_quality": 0.20, "trend": 0.10},
-            "grid": {"volatility_quality": 0.35, "liquidity": 0.25, "spread_quality": 0.20, "momentum": 0.20},
-            "sniper": {"momentum": 0.40, "trend": 0.30, "liquidity": 0.20, "spread_quality": 0.10},
-            "mean_reversion": {"volatility_quality": 0.35, "liquidity": 0.25, "spread_quality": 0.20, "trend": 0.20},
-            "volatility_breakout": {"momentum": 0.35, "volatility_quality": 0.30, "liquidity": 0.25, "spread_quality": 0.10},
+            "market_maker": {"spread_quality": 0.25, "liquidity": 0.25, "volatility_quality": 0.15, "book_balance_quality": 0.15, "freshness": 0.10, "slippage_quality": 0.10},
+            "grid": {"volatility_quality": 0.25, "liquidity": 0.20, "spread_quality": 0.15, "book_balance_quality": 0.15, "momentum": 0.10, "freshness": 0.05, "slippage_quality": 0.10},
+            "sniper": {"momentum": 0.30, "trend": 0.25, "liquidity": 0.15, "spread_quality": 0.10, "buy_imbalance": 0.10, "freshness": 0.05, "slippage_quality": 0.05},
+            "mean_reversion": {"volatility_quality": 0.25, "liquidity": 0.20, "spread_quality": 0.15, "book_balance_quality": 0.15, "trend": 0.10, "freshness": 0.05, "slippage_quality": 0.10},
+            "volatility_breakout": {"momentum": 0.25, "volatility_quality": 0.20, "liquidity": 0.20, "spread_quality": 0.10, "buy_imbalance": 0.10, "freshness": 0.05, "slippage_quality": 0.10},
         }
         by_strategy: dict[str, list[dict[str, Any]]] = {}
         for strategy, weights in profiles.items():
@@ -173,6 +210,9 @@ class OpportunityRouter:
                     "mid": round(snap.mid, 10),
                     "spread_bps": round(snap.spread_bps, 3),
                     "liquidity_eur": round(snap.liquidity_eur, 2),
+                    "orderbook_imbalance_pct": round(snap.imbalance_pct, 3),
+                    "snapshot_age_seconds": round(max(0.0, time.time() - snap.observed_at), 3),
+                    "expected_slippage_bps": round(snap.expected_slippage_bps, 3),
                     "momentum_pct": round(snap.momentum_pct, 4),
                     "volatility_pct": round(snap.volatility_pct, 4),
                     "features": {k: round(v, 2) for k, v in features.items()},
@@ -429,10 +469,21 @@ class ExecutionV2Advisor:
         self.enabled = bool(self.config.get("enabled", True))
         self.apply_live = bool(self.config.get("apply_live", False))
         self.stale_after_seconds = max(30.0, float(self.config.get("stale_after_seconds", 180.0)))
-        self.min_move_bps = max(0.1, float(self.config.get("min_reprice_move_bps", 4.0)))
+        self.min_move_bps = max(
+            0.1,
+            float(
+                self.config.get(
+                    "order_refresh_tolerance_bps",
+                    self.config.get("min_reprice_move_bps", 4.0),
+                )
+            ),
+        )
         self.max_order_age_seconds = max(
             self.stale_after_seconds,
             float(self.config.get("max_order_age_seconds", 900.0)),
+        )
+        self.filled_order_delay_seconds = max(
+            0.0, float(self.config.get("filled_order_delay_seconds", 60.0))
         )
 
     def evaluate(
@@ -442,8 +493,10 @@ class ExecutionV2Advisor:
         min_profit_exit_by_strategy: dict[str, float],
         target_edge_by_strategy: dict[str, float],
         required_entry_edge_pct: float,
+        last_fill_at_by_strategy: dict[str, float] | None = None,
     ) -> dict[str, Any]:
         now = time.time()
+        last_fill_at_by_strategy = last_fill_at_by_strategy or {}
         rows: list[dict[str, Any]] = []
         for order in activity:
             status = str(order.get("status") or "").lower()
@@ -470,8 +523,21 @@ class ExecutionV2Advisor:
                 profit_ok = target >= min_exit
             stale = age >= self.stale_after_seconds
             too_old = age >= self.max_order_age_seconds
-            should_reprice = stale and move_bps >= self.min_move_bps and profit_ok
-            if not profit_ok:
+            last_fill_at = float(last_fill_at_by_strategy.get(strategy) or 0.0)
+            fill_delay_remaining = max(
+                0.0,
+                self.filled_order_delay_seconds - max(0.0, now - last_fill_at),
+            ) if last_fill_at > 0 else 0.0
+            fill_delay_active = fill_delay_remaining > 0
+            should_reprice = (
+                stale
+                and move_bps >= self.min_move_bps
+                and profit_ok
+                and not fill_delay_active
+            )
+            if fill_delay_active:
+                reason = "post_fill_delay_active"
+            elif not profit_ok:
                 reason = "profit_guard_blocks_reprice"
             elif should_reprice:
                 reason = "maker_reprice_recommended"
@@ -489,6 +555,11 @@ class ExecutionV2Advisor:
                 "move_bps": round(move_bps, 3),
                 "profit_guard_passed": profit_ok,
                 "recommend_reprice": should_reprice,
+                "recommend_cancel_at_max_age": bool(too_old and not should_reprice),
+                "post_fill_delay_active": fill_delay_active,
+                "post_fill_delay_remaining_seconds": round(fill_delay_remaining, 1),
+                "refresh_tolerance_bps": round(self.min_move_bps, 3),
+                "max_order_age_seconds": round(self.max_order_age_seconds, 1),
                 "reason": reason,
             })
         return {

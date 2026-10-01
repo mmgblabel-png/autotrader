@@ -74,7 +74,7 @@ from autotrader.connectors.bitvavo import BitvavoAdapter
 from autotrader.connectors.coinbase_advanced import CoinbaseAdvancedMarketData, CoinbaseMarketDataError
 from autotrader.connectors.bitpanda_fusion import BitpandaFusionAdapter
 from autotrader.api.dashboard_html import dashboard_html
-from autotrader.ml.shadow import walk_forward
+from autotrader.ml.shadow import walk_forward, lookahead_analysis, recursive_analysis
 
 log = get_logger("api.server")
 
@@ -218,16 +218,17 @@ def _calculated_risk_payload(agent: AutoTrader) -> dict[str, object]:
     live_rows = _live_profit_snapshots(agent)
     fee_rows = fee_efficiency_rows(live_rows).get("rows", [])
     display = {
-        "market_maker": "MarketMaker",
-        "grid": "GridRunner",
-        "sniper": "SniperBot",
+        "market_maker": ("MarketMaker", "market_maker"),
+        "grid": ("GridRunner", "grid"),
+        "grid_eth": ("GridRunnerETH", "grid"),
+        "sniper": ("SniperBot", "sniper"),
     }
     opportunities = []
     strategy_markets = (
         (agent._config.get("autonomous_execution", {}) or {}).get("strategy_markets", {}) or {}
     )
-    for key, name in display.items():
-        ranked = opp_payload.get("rankings", {}).get(key, [])
+    for key, (name, router_profile) in display.items():
+        ranked = opp_payload.get("rankings", {}).get(router_profile, [])
         allowed = {
             str(x).upper()
             for x in (strategy_markets.get(key) or [])
@@ -969,7 +970,7 @@ def live_readiness():
                 journal_states[key] = {"nonterminal_count": -1}
         if strategy.name == "MarketMaker":
             target_edges[key] = float(strategy._config.get("cycle_exit_markup_pct", 0.0))
-        elif strategy.name == "GridRunner":
+        elif strategy.name.startswith("GridRunner"):
             target_edges[key] = float(strategy._config.get("exit_markup_pct", 0.0))
         elif strategy.name == "SniperBot":
             target_edges[key] = float(strategy._config.get("take_profit_pct", 0.0))
@@ -1078,6 +1079,17 @@ def adaptive_learning_status():
 def ml_walk_forward(rows: list[dict] = Body(...)):
     """Evaluate the standard-library shadow model; never places an order."""
     return walk_forward(rows)
+
+
+@app.post("/api/ml/validation", tags=["ml"])
+def ml_validation(rows: list[dict] = Body(...)):
+    """Run lookahead and recursive-history guards for shadow research only."""
+    return {
+        "mode": "shadow_validation",
+        "live_orders_sent": False,
+        "lookahead": lookahead_analysis(rows),
+        "recursive": recursive_analysis(rows),
+    }
 
 
 # ── Strategy list & control ───────────────────────────────────────────────────
@@ -1334,6 +1346,7 @@ def optimization_execution_v2() -> dict[str, object]:
 
     min_exit: dict[str, float] = {}
     targets: dict[str, float] = {}
+    last_fill_at: dict[str, float] = {}
     for strategy in agent._strategies.values():
         symbol = str(strategy._config.get("symbol", "")).upper()
         if not symbol:
@@ -1346,9 +1359,12 @@ def optimization_execution_v2() -> dict[str, object]:
                 mark = 0.0
         snap = agent.profit_supervisor.strategy_snapshot(symbol, strategy.name, mark)
         min_exit[strategy.name] = float(snap.get("min_profit_exit_price") or 0.0)
+        last_fill_at[strategy.name] = float(
+            agent._bitvavo.journal.latest_fill_time(symbol, strategy.name)
+        )
         if strategy.name == "MarketMaker":
             targets[strategy.name] = float(strategy._config.get("cycle_exit_markup_pct", 0.0))
-        elif strategy.name == "GridRunner":
+        elif strategy.name.startswith("GridRunner"):
             targets[strategy.name] = float(strategy._config.get("exit_markup_pct", 0.0))
         elif strategy.name == "SniperBot":
             targets[strategy.name] = float(strategy._config.get("take_profit_pct", 0.0))
@@ -1359,6 +1375,7 @@ def optimization_execution_v2() -> dict[str, object]:
         min_exit,
         targets,
         float(agent.profit_supervisor.policy.required_entry_edge_pct),
+        last_fill_at,
     )
 
 
@@ -1453,6 +1470,7 @@ def strategies_status():
         "market_maker": "MarketMaker",
         "arbitrage": "ArbitrageHunter",
         "grid": "GridRunner",
+        "grid_eth": "GridRunnerETH",
         "sniper": "SniperBot",
     }
     active = get_agent().list_strategies()
@@ -1816,11 +1834,12 @@ def bitpanda_fusion_balance_analysis() -> dict[str, object]:
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
-_VALID: Final[set[str]] = {"market_maker", "arbitrage", "grid", "sniper"}
+_VALID: Final[set[str]] = {"market_maker", "arbitrage", "grid", "grid_eth", "sniper"}
 _STRATEGY_DISPLAY_NAMES: Final[dict[str, str]] = {
     "market_maker": "MarketMaker",
     "arbitrage": "ArbitrageHunter",
     "grid": "GridRunner",
+    "grid_eth": "GridRunnerETH",
     "sniper": "SniperBot",
 }
 

@@ -364,6 +364,7 @@ def test_api_strategy_status_compatibility(api_client):
             "MarketMaker": False,
             "ArbitrageHunter": False,
             "GridRunner": False,
+            "GridRunnerETH": False,
             "SniperBot": False,
         }
     }
@@ -454,7 +455,7 @@ def test_api_pnl_summary_matches_dashboard_strategy_shape(api_client):
     assert payload["mode"] == "paper"
     assert isinstance(payload["pnl_per_strategy"], list)
     rows = {row["name"]: row for row in payload["pnl_per_strategy"]}
-    assert set(rows) == {"market_maker", "arbitrage", "grid", "sniper"}
+    assert set(rows) == {"market_maker", "arbitrage", "grid", "grid_eth", "sniper"}
     assert rows["market_maker"]["status"] == "stopped"
     assert "pnl_by_strategy" in payload
 

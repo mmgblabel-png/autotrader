@@ -122,3 +122,21 @@ def test_preflight_rounds_order_value_amount_down():
     report = validate_bitvavo_live_strategies(strategies, adapter)
     assert report["strategies"][0]["planned_amount"] == "2.95"
     assert Decimal(report["strategies"][0]["planned_notional_eur"]) <= Decimal("6")
+
+
+def test_preflight_supports_second_named_grid_runner():
+    strategies = [
+        Strategy("GridRunnerETH", {
+            "enabled": True, "live_capable": True, "exchange": "bitvavo",
+            "symbol": "ETH-EUR", "order_value_eur": 6,
+            "allocation_eur": 7, "max_order_eur": 7,
+        })
+    ]
+    adapter = Adapter(
+        prices={"ETH-EUR": "2400"},
+        rules={"ETH-EUR": market_rule(base_min="0.001", quote_min="5", quantity_decimals=6)},
+    )
+    report = validate_bitvavo_live_strategies(strategies, adapter)
+    assert report["passed"] is True
+    assert report["strategies"][0]["strategy"] == "GridRunnerETH"
+    assert report["strategies"][0]["order_type"] == "limit"

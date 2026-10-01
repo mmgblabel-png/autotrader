@@ -7,9 +7,14 @@ from typing import Any, Iterable
 
 _ORDER_TYPE_BY_STRATEGY = {
     "MarketMaker": "limit",
-    "GridRunner": "limit",
     "SniperBot": "market",
 }
+
+
+def _order_type_for_strategy(name: str) -> str | None:
+    if name.startswith("GridRunner"):
+        return "limit"
+    return _ORDER_TYPE_BY_STRATEGY.get(name)
 
 
 def _planned_amount(config: dict[str, Any], price: Decimal) -> Decimal:
@@ -46,7 +51,7 @@ def validate_bitvavo_live_strategies(
 
         strategy_name = str(getattr(strategy, "name", type(strategy).__name__))
         market = str(config.get("symbol", "")).upper().strip()
-        order_type = _ORDER_TYPE_BY_STRATEGY.get(strategy_name)
+        order_type = _order_type_for_strategy(strategy_name)
 
         row: dict[str, Any] = {
             "strategy": strategy_name,

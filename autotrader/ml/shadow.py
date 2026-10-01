@@ -91,4 +91,78 @@ def signal_from_recent(rows: Iterable[dict], model: OnlineLogistic | None = None
     return ShadowSignal(round(probability, 6), action, round(confidence, 6))
 
 
-__all__ = ["OnlineLogistic", "ShadowSignal", "signal_from_recent", "walk_forward"]
+def lookahead_analysis(rows: Iterable[dict], minimum_prefix: int = 24) -> dict:
+    """Check that overlapping feature samples are invariant to future rows.
+
+    This is a deterministic guard for our own feature pipeline. A failure is a
+    warning to investigate, not proof that a strategy is unusable.
+    """
+    data = list(rows)
+    full = _features(data)
+    checked = 0
+    mismatches = 0
+    first_mismatch_prefix = None
+    start = max(6, int(minimum_prefix))
+    for prefix_len in range(start, len(data) + 1):
+        prefix = _features(data[:prefix_len])
+        if not prefix:
+            continue
+        full_index = prefix_len - 4
+        if full_index < 0 or full_index >= len(full):
+            continue
+        checked += 1
+        if prefix[-1] != full[full_index]:
+            mismatches += 1
+            if first_mismatch_prefix is None:
+                first_mismatch_prefix = prefix_len
+    return {
+        "check": "prefix_feature_invariance",
+        "rows": len(data),
+        "samples": len(full),
+        "checked_prefixes": checked,
+        "mismatches": mismatches,
+        "has_lookahead_warning": mismatches > 0,
+        "first_mismatch_prefix": first_mismatch_prefix,
+        "interpretation": "investigate_if_warning; false positives require review",
+    }
+
+
+def recursive_analysis(rows: Iterable[dict], windows: Iterable[int] = (20, 30, 50, 80)) -> dict:
+    """Measure how sensitive the current shadow signal is to history length."""
+    data = list(rows)
+    reports = []
+    for raw_window in windows:
+        window = max(6, int(raw_window))
+        if len(data) < window:
+            continue
+        signal = signal_from_recent(data[-window:])
+        reports.append({
+            "window": window,
+            "action": signal.action,
+            "probability_up": signal.probability_up,
+            "confidence": signal.confidence,
+        })
+    if not reports:
+        return {
+            "check": "recursive_history_stability",
+            "status": "insufficient_data",
+            "windows": [],
+        }
+    actions = [row["action"] for row in reports]
+    majority = max(set(actions), key=actions.count)
+    agreement = actions.count(majority) / len(actions)
+    probabilities = [float(row["probability_up"]) for row in reports]
+    spread = max(probabilities) - min(probabilities)
+    return {
+        "check": "recursive_history_stability",
+        "status": "ok",
+        "windows": reports,
+        "majority_action": majority,
+        "action_agreement_pct": round(agreement * 100.0, 2),
+        "probability_spread": round(spread, 6),
+        "stable": agreement >= 0.75 and spread <= 0.25,
+        "interpretation": "instability_is_a_review_signal_not_automatic_rejection",
+    }
+
+
+__all__ = ["OnlineLogistic", "ShadowSignal", "signal_from_recent", "walk_forward", "lookahead_analysis", "recursive_analysis"]
