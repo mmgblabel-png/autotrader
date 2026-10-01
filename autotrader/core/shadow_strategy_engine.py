@@ -158,6 +158,10 @@ class ShadowStrategyEngine:
         """Persist all shadow states once after a batch of market updates."""
         self._save()
 
+    def sample_count(self, name: str) -> int:
+        state = self._states.get(name)
+        return len(state.prices) if state is not None else 0
+
     def _buy(self, state: ShadowStats, price: float, cfg: dict[str, Any], signal: str) -> None:
         if state.position_qty > 0:
             return
