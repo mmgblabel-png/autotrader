@@ -59,6 +59,7 @@ class CoinbaseAdvancedMarketData:
 
     BASE_URL = "https://api.coinbase.com"
     BOOK_PATH = "/api/v3/brokerage/market/product_book"
+    PRODUCTS_PATH = "/api/v3/brokerage/market/products"
     ACCOUNTS_PATH = "/api/v3/brokerage/accounts"
 
     def __init__(self, *, timeout: float = 5.0) -> None:
@@ -303,6 +304,84 @@ class CoinbaseAdvancedMarketData:
     @staticmethod
     def normalize_product_id(symbol: str) -> str:
         return symbol.strip().upper().replace("/", "-")
+
+    def list_spot_products(
+        self,
+        *,
+        page_size: int = 250,
+        max_pages: int = 20,
+    ) -> list[dict[str, object]]:
+        """Return the full public Coinbase Advanced SPOT product catalogue.
+
+        Pagination is followed defensively. The returned shape is normalized so
+        callers do not need to depend on every upstream product field.
+        """
+        page_size = max(1, min(1000, int(page_size)))
+        max_pages = max(1, min(100, int(max_pages)))
+        cursor: str | None = None
+        products: list[dict[str, object]] = []
+        seen: set[str] = set()
+
+        for _ in range(max_pages):
+            params = {
+                "limit": str(page_size),
+                "product_type": "SPOT",
+            }
+            if cursor:
+                params["cursor"] = cursor
+            payload = self._get(self.PRODUCTS_PATH, params)
+            rows = payload.get("products") if isinstance(payload, dict) else None
+            if not isinstance(rows, list):
+                raise CoinbaseMarketDataError("Unexpected Coinbase products response")
+
+            for row in rows:
+                if not isinstance(row, dict):
+                    continue
+                product_id = self.normalize_product_id(str(row.get("product_id") or ""))
+                if not product_id or product_id in seen or "-" not in product_id:
+                    continue
+                base, quote = product_id.rsplit("-", 1)
+                trading_disabled = bool(row.get("trading_disabled", False))
+                cancel_only = bool(row.get("cancel_only", False))
+                is_disabled = bool(row.get("is_disabled", False))
+                view_only = bool(row.get("view_only", False))
+                product_type = str(row.get("product_type") or "SPOT").upper()
+                if product_type not in {"SPOT", "UNKNOWN_PRODUCT_TYPE", ""}:
+                    continue
+                seen.add(product_id)
+                products.append({
+                    "product_id": product_id,
+                    "base": str(row.get("base_currency_id") or base).upper(),
+                    "quote": str(row.get("quote_currency_id") or quote).upper(),
+                    "product_type": product_type or "SPOT",
+                    "trading_disabled": trading_disabled,
+                    "cancel_only": cancel_only,
+                    "is_disabled": is_disabled,
+                    "view_only": view_only,
+                    "tradable": not (trading_disabled or cancel_only or is_disabled or view_only),
+                    "price": row.get("price"),
+                    "volume_24h": row.get("volume_24h"),
+                    "price_change_24h_pct": row.get("price_percentage_change_24h"),
+                    "base_increment": row.get("base_increment"),
+                    "quote_increment": row.get("quote_increment"),
+                })
+
+            next_cursor = ""
+            if isinstance(payload, dict):
+                next_cursor = str(
+                    payload.get("cursor")
+                    or (payload.get("pagination") or {}).get("next_cursor")
+                    or ""
+                ).strip()
+                has_next = payload.get("has_next")
+            else:
+                has_next = False
+            if not next_cursor or next_cursor == cursor or has_next is False:
+                break
+            cursor = next_cursor
+
+        products.sort(key=lambda row: str(row["product_id"]))
+        return products
 
     def top_of_book(self, symbol: str) -> CoinbaseTopOfBook:
         product_id = self.normalize_product_id(symbol)
