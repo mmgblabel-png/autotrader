@@ -34,6 +34,7 @@ class AutonomousDecisionEngine:
         self.exposure_safety_buffer_eur = max(
             0.0, float(self.config.get("exposure_safety_buffer_eur", 0.25))
         )
+        self.allow_non_eur_live = bool(self.config.get("allow_non_eur_live", False))
         self._last_switch: dict[str, float] = {}
 
     def _thresholds_for_market(self, market: str) -> tuple[float, float]:
@@ -164,6 +165,10 @@ class AutonomousDecisionEngine:
             candidates = [
                 row for row in rankings.get(router_key, [])
                 if bool(row.get("eligible"))
+                and (
+                    self.allow_non_eur_live
+                    or bool(row.get("live_execution_supported_now", str(row.get("market", "")).upper().endswith("-EUR")))
+                )
                 and (allow_any or str(row.get("market", "")).upper() in allowed)
                 and str(row.get("market", "")).upper() not in reserved_markets
             ]
@@ -351,6 +356,7 @@ class AutonomousDecisionEngine:
                 "can_raise_hard_risk_limits": False,
                 "can_use_leverage": False,
                 "can_use_martingale": False,
+                "allow_non_eur_live": self.allow_non_eur_live,
                 "market_switch_requires_flat": True,
                 "market_switch_requires_no_open_order": True,
             },
