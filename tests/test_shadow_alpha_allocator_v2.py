@@ -189,7 +189,7 @@ def test_allocator_v2_is_advisory_and_bounded():
 def test_dashboard_contains_shadow_lab_and_allocator():
     from autotrader.api.dashboard_html import dashboard_html
     html = dashboard_html()
-    assert "Shadow Alpha Lab" in html
+    assert "Shadow Fast Lane" in html
     assert "Shadow Strategy Scorecard" in html
     assert "<th>W/L</th>" in html
     assert "<th>Score</th>" in html
@@ -221,7 +221,7 @@ def test_dashboard_contains_shadow_lab_and_allocator():
     assert "SET → EXECUTE → LEARN → REPEAT" in html
     assert "/api/autonomy/status" in html
     assert 'id="autonomyrows"' in html
-    assert "50+ Market Opportunity Router" in html
+    assert "Full Market Opportunity Router" in html
     assert 'id="routerconfigured"' in html
     assert 'id="routerscanned"' in html
     assert "/api/risk-lab/leverage-martingale" in html
