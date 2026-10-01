@@ -148,6 +148,40 @@ class BitvavoAdapter:
             "ask_size": ask_size,
         }
 
+    def ticker_books(self) -> dict[str, dict[str, Decimal | str]]:
+        """Return executable top-of-book for all Bitvavo markets in one request."""
+        result = self._public_request("/ticker/book")
+        if isinstance(result, dict):
+            result = [result]
+        if not isinstance(result, list):
+            raise BitvavoError("Unexpected Bitvavo ticker-book response", category="invalid_response")
+        books: dict[str, dict[str, Decimal | str]] = {}
+        for row in result:
+            if not isinstance(row, dict):
+                continue
+            market = str(row.get("market") or "").upper().strip()
+            if not market:
+                continue
+            try:
+                bid = Decimal(str(row["bid"]))
+                ask = Decimal(str(row["ask"]))
+                bid_size = Decimal(str(row["bidSize"]))
+                ask_size = Decimal(str(row["askSize"]))
+            except (KeyError, TypeError, ValueError):
+                continue
+            if min(bid, ask, bid_size, ask_size) <= 0 or ask < bid:
+                continue
+            books[market] = {
+                "market": market,
+                "bid": bid,
+                "ask": ask,
+                "bid_size": bid_size,
+                "ask_size": ask_size,
+            }
+        if not books:
+            raise BitvavoError("Empty Bitvavo ticker-book response", category="invalid_response")
+        return books
+
     def ticker_price(self, market: str) -> Decimal:
         query = urllib.parse.urlencode({"market": market.upper()})
         try:

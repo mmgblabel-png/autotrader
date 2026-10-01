@@ -154,3 +154,19 @@ def test_live_rule_normalization_is_side_conservative(monkeypatch, tmp_path):
     assert amount_sell == Decimal("0.0001")
     assert price_buy == Decimal("74289.60")
     assert price_sell == Decimal("74289.65")
+
+
+def test_ticker_books_parses_bulk_market_books(monkeypatch):
+    adapter = BitvavoAdapter(api_key="key", api_secret="secret")
+    monkeypatch.setattr(
+        adapter,
+        "_public_request",
+        lambda endpoint, query=None: [
+            {"market": "BTC-EUR", "bid": "73000", "ask": "73010", "bidSize": "1.2", "askSize": "1.1"},
+            {"market": "ETH-BTC", "bid": "0.032", "ask": "0.0321", "bidSize": "20", "askSize": "18"},
+        ],
+    )
+    books = adapter.ticker_books()
+    assert books["BTC-EUR"]["bid"] == Decimal("73000")
+    assert books["ETH-BTC"]["ask"] == Decimal("0.0321")
+    assert books["ETH-BTC"]["bid_size"] == Decimal("20")

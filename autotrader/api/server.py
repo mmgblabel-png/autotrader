@@ -59,6 +59,7 @@ from autotrader.core.order_manager import OrderStatus
 from autotrader.core.bitvavo_security import validate_bitvavo_security
 from autotrader.core.live_preflight import validate_bitvavo_live_strategies
 from autotrader.core.market_feed import BitpandaFusionMarketFeed
+from autotrader.core.market_universe import MultiExchangeMarketUniverse
 from autotrader.core.shadow_strategy_engine import ShadowStrategyEngine
 from autotrader.core.strategy_allocator_v2 import StrategyAllocatorV2
 from autotrader.core.profit_optimization import (
@@ -790,6 +791,35 @@ async def _opportunity_router_loop(app: FastAPI) -> None:
         await asyncio.sleep(app.state.opportunity_router_interval_seconds)
 
 
+async def _market_universe_loop(app: FastAPI) -> None:
+    """Refresh the complete Bitvavo + Coinbase spot universe without trading."""
+    while True:
+        try:
+            await asyncio.to_thread(app.state.market_universe.refresh)
+            summary = app.state.market_universe.status()
+            app.state.market_universe_error = summary.get("error")
+            counts = (
+                int((summary.get("bitvavo") or {}).get("tradable", 0)),
+                int((summary.get("coinbase") or {}).get("tradable", 0)),
+                int(summary.get("exact_cross_venue_overlap", 0)),
+            )
+            previous = getattr(app.state, "market_universe_last_logged_counts", None)
+            if counts != previous:
+                log.info(
+                    "Market universe active: bitvavo=%d coinbase=%d overlap=%d crypto_crypto=%d live_orders_sent=False",
+                    counts[0],
+                    counts[1],
+                    counts[2],
+                    int((summary.get("bitvavo") or {}).get("crypto_crypto", 0))
+                    + int((summary.get("coinbase") or {}).get("crypto_crypto", 0)),
+                )
+                app.state.market_universe_last_logged_counts = counts
+        except Exception as exc:
+            app.state.market_universe_error = type(exc).__name__
+            log.warning("Market universe refresh failed safely: %s", type(exc).__name__)
+        await asyncio.sleep(app.state.market_universe_interval_seconds)
+
+
 async def _binance_reference_loop(app: FastAPI) -> None:
     """Refresh one public BTC reference price every second; no auth or orders."""
     while True:
@@ -895,6 +925,20 @@ async def _lifespan(app: FastAPI):
     app.state.shadow_strategy_last_at = 0.0
     app.state.shadow_strategy_error = None
     app.state.allocator_v2 = StrategyAllocatorV2(agent._config.get("allocator_v2", {}) or {})
+    universe_cfg = agent._config.get("market_universe", {}) or {}
+    app.state.market_universe = MultiExchangeMarketUniverse(
+        agent._bitvavo,
+        CoinbaseAdvancedMarketData(),
+        universe_cfg,
+    )
+    try:
+        app.state.market_universe_interval_seconds = max(
+            60.0, float(universe_cfg.get("refresh_seconds", 300.0))
+        )
+    except (TypeError, ValueError):
+        app.state.market_universe_interval_seconds = 300.0
+    app.state.market_universe_error = None
+    app.state.market_universe_last_logged_counts = None
     router_cfg = agent._config.get("opportunity_router", {}) or {}
     app.state.opportunity_router = OpportunityRouter(agent._bitvavo, router_cfg)
     try:
@@ -965,6 +1009,9 @@ async def _lifespan(app: FastAPI):
     app.state.opportunity_router_task = asyncio.create_task(
         _opportunity_router_loop(app), name="autotrader-opportunity-router-loop"
     )
+    app.state.market_universe_task = asyncio.create_task(
+        _market_universe_loop(app), name="autotrader-market-universe-loop"
+    )
     app.state.binance_reference_task = asyncio.create_task(
         _binance_reference_loop(app), name="autotrader-binance-reference-loop"
     )
@@ -985,6 +1032,7 @@ async def _lifespan(app: FastAPI):
         app.state.arbitrage_shadow_task.cancel()
         app.state.shadow_strategy_task.cancel()
         app.state.opportunity_router_task.cancel()
+        app.state.market_universe_task.cancel()
         app.state.binance_reference_task.cancel()
         with contextlib.suppress(asyncio.CancelledError):
             await app.state.tick_task
@@ -994,6 +1042,8 @@ async def _lifespan(app: FastAPI):
             await app.state.shadow_strategy_task
         with contextlib.suppress(asyncio.CancelledError):
             await app.state.opportunity_router_task
+        with contextlib.suppress(asyncio.CancelledError):
+            await app.state.market_universe_task
         with contextlib.suppress(asyncio.CancelledError):
             await app.state.binance_reference_task
         agent.stop()
@@ -1699,6 +1749,42 @@ def portfolio_goal_status() -> dict[str, object]:
 @app.get("/api/reference/binance-btc", tags=["markets"])
 def binance_btc_reference() -> dict[str, object]:
     return app.state.binance_reference.status()
+
+
+@app.get("/api/markets/universe", tags=["markets"])
+def full_market_universe(
+    venue: str | None = Query(default=None, pattern="^(bitvavo|coinbase)$"),
+    pair_type: str | None = Query(default=None, pattern="^(crypto_fiat|crypto_crypto)$"),
+    quote: str | None = Query(default=None, min_length=2, max_length=12),
+    tradable_only: bool = Query(default=True),
+    offset: int = Query(default=0, ge=0),
+    limit: int = Query(default=500, ge=1, le=5000),
+) -> dict[str, object]:
+    """Return the complete discovered spot universe, including crypto/crypto."""
+    return app.state.market_universe.markets(
+        venue=venue,
+        pair_type=pair_type,
+        quote=quote,
+        tradable_only=tradable_only,
+        offset=offset,
+        limit=limit,
+    )
+
+
+@app.get("/api/markets/universe/summary", tags=["markets"])
+def full_market_universe_summary() -> dict[str, object]:
+    """Return counts, overlaps and the strongest market-quality candidates."""
+    payload = app.state.market_universe.status()
+    payload["runtime_error"] = getattr(app.state, "market_universe_error", None)
+    return payload
+
+
+@app.get("/api/markets/universe/overlap", tags=["markets"])
+def full_market_universe_overlap(
+    limit: int = Query(default=500, ge=1, le=5000),
+) -> dict[str, object]:
+    """Return exact Coinbase↔Bitvavo spot-pair overlap for arbitrage research."""
+    return app.state.market_universe.overlaps(limit=limit)
 
 
 @app.get("/api/optimization/opportunities", tags=["optimization"])

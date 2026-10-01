@@ -181,6 +181,14 @@ autonomous_execution:
   allow_leverage: false
   allow_martingale: false
 
+market_universe:
+  enabled: true
+  refresh_seconds: 300
+  coinbase_book_batch_size: 30
+  max_bridge_hops: 3
+  min_top_depth_eur: 25
+  max_spread_bps: 50
+
 opportunity_router:
   enabled: true
   interval_seconds: 15
