@@ -39,6 +39,10 @@ def test_mean_reversion_shadow_round_trip_persists(tmp_path: Path):
     assert row["completed_trades"] == 1
     assert row["realized_net_pnl_eur"] > 0
     assert row["promotable"] is False
+    assert 0 <= row["score"] <= 100
+    assert row["review_status"] == "KEEP"
+    assert "position_qty" in row
+    assert "entry_price" in row
 
     restored = ShadowStrategyEngine({"path": str(path)})
     restored_row = restored.status({"mean_reversion": cfg})["strategies"][0]
@@ -186,6 +190,12 @@ def test_dashboard_contains_shadow_lab_and_allocator():
     from autotrader.api.dashboard_html import dashboard_html
     html = dashboard_html()
     assert "Shadow Alpha Lab" in html
+    assert "Shadow Strategy Scorecard" in html
+    assert "<th>W/L</th>" in html
+    assert "<th>Score</th>" in html
+    assert "<th>Status</th>" in html
+    assert "PROMOTE" in html
+    assert "DROP" in html
     assert "Strategy Allocator v2" in html
     assert "/api/shadow/strategies" in html
     assert "/api/allocator/v2" in html

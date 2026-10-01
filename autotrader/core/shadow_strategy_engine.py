@@ -358,6 +358,40 @@ class ShadowStrategyEngine:
                 and winrate >= self.min_winrate_pct
                 and max_dd_pct <= self.max_drawdown_pct
             )
+
+            # Transparent 0-100 score for comparing shadow candidates only.
+            # It never authorizes live trading and deliberately rewards sample
+            # maturity while penalizing drawdown and negative net performance.
+            sample_score = min(100.0, trades / max(1, self.min_completed_trades) * 100.0)
+            win_score = min(100.0, winrate / max(1.0, self.min_winrate_pct) * 100.0)
+            pnl_scale = max(0.01, abs(self.min_net_pnl_eur))
+            pnl_score = max(
+                0.0,
+                min(100.0, 50.0 + (state.realized_net_pnl_eur / pnl_scale) * 25.0),
+            )
+            drawdown_score = max(
+                0.0,
+                min(100.0, 100.0 - (max_dd_pct / max(0.01, self.max_drawdown_pct)) * 100.0),
+            )
+            score = (
+                sample_score * 0.20
+                + win_score * 0.30
+                + pnl_score * 0.30
+                + drawdown_score * 0.20
+            )
+
+            drop_ready = (
+                trades >= self.min_completed_trades
+                and (
+                    state.realized_net_pnl_eur < 0.0
+                    or winrate < max(0.0, self.min_winrate_pct - 10.0)
+                    or max_dd_pct > self.max_drawdown_pct
+                )
+            )
+            review_status = "PROMOTE" if promotable else ("DROP" if drop_ready else "KEEP")
+            mark_price = state.prices[-1] if state.prices else 0.0
+            position_value_eur = state.position_qty * mark_price if state.position_qty > 0 else 0.0
+
             rows.append({
                 "name": name,
                 "kind": cfg.get("kind", name),
@@ -366,12 +400,18 @@ class ShadowStrategyEngine:
                 "live_capable": False,
                 "samples": len(state.prices),
                 "position_open": state.position_qty > 0,
+                "position_qty": round(state.position_qty, 10),
+                "entry_price": round(state.entry_price, 8),
+                "mark_price": round(mark_price, 8),
+                "position_value_eur": round(position_value_eur, 4),
                 "completed_trades": trades,
                 "wins": state.wins,
                 "losses": state.losses,
                 "winrate_pct": round(winrate, 2),
                 "realized_net_pnl_eur": round(state.realized_net_pnl_eur, 4),
                 "max_drawdown_pct": round(max_dd_pct, 2),
+                "score": round(score, 1),
+                "review_status": review_status,
                 "last_signal": state.last_signal,
                 "strategy_version": state.strategy_version,
                 "adaptive_overrides": (
@@ -389,6 +429,17 @@ class ShadowStrategyEngine:
             "mode": "shadow",
             "live_orders_sent": False,
             "round_trip_cost_pct": round(self.round_trip_cost_pct, 4),
+            "score_method": {
+                "range": "0-100",
+                "weights": {
+                    "sample_maturity": 0.20,
+                    "winrate": 0.30,
+                    "net_pnl": 0.30,
+                    "drawdown": 0.20,
+                },
+                "purpose": "shadow_candidate_comparison_only",
+                "authorizes_live_trading": False,
+            },
             "auto_promotion_policy": {
                 "auto_queue_when_ready": True,
                 "auto_set_live_capable": False,
