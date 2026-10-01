@@ -218,16 +218,17 @@ def _calculated_risk_payload(agent: AutoTrader) -> dict[str, object]:
     live_rows = _live_profit_snapshots(agent)
     fee_rows = fee_efficiency_rows(live_rows).get("rows", [])
     display = {
-        "market_maker": "MarketMaker",
-        "grid": "GridRunner",
-        "sniper": "SniperBot",
+        "market_maker": ("MarketMaker", "market_maker"),
+        "grid": ("GridRunner", "grid"),
+        "grid_eth": ("GridRunnerETH", "grid"),
+        "sniper": ("SniperBot", "sniper"),
     }
     opportunities = []
     strategy_markets = (
         (agent._config.get("autonomous_execution", {}) or {}).get("strategy_markets", {}) or {}
     )
-    for key, name in display.items():
-        ranked = opp_payload.get("rankings", {}).get(key, [])
+    for key, (name, router_profile) in display.items():
+        ranked = opp_payload.get("rankings", {}).get(router_profile, [])
         allowed = {
             str(x).upper()
             for x in (strategy_markets.get(key) or [])
@@ -1348,7 +1349,7 @@ def optimization_execution_v2() -> dict[str, object]:
         min_exit[strategy.name] = float(snap.get("min_profit_exit_price") or 0.0)
         if strategy.name == "MarketMaker":
             targets[strategy.name] = float(strategy._config.get("cycle_exit_markup_pct", 0.0))
-        elif strategy.name == "GridRunner":
+        elif strategy.name.startswith("GridRunner"):
             targets[strategy.name] = float(strategy._config.get("exit_markup_pct", 0.0))
         elif strategy.name == "SniperBot":
             targets[strategy.name] = float(strategy._config.get("take_profit_pct", 0.0))
