@@ -132,9 +132,8 @@ class BitvavoAdapter:
         """Return normalized public OHLCV candles for fast shadow warm-up."""
         safe_limit = max(1, min(1440, int(limit)))
         result = self._public_request(
-            "/candles",
+            f"/{market.upper()}/candles",
             {
-                "market": market.upper(),
                 "interval": str(interval),
                 "limit": str(safe_limit),
             },
