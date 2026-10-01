@@ -34,6 +34,7 @@ class AutonomousDecisionEngine:
         self.exposure_safety_buffer_eur = max(
             0.0, float(self.config.get("exposure_safety_buffer_eur", 0.25))
         )
+        self.allow_non_eur_live = bool(self.config.get("allow_non_eur_live", False))
         self._last_switch: dict[str, float] = {}
 
     def _thresholds_for_market(self, market: str) -> tuple[float, float]:
@@ -164,6 +165,10 @@ class AutonomousDecisionEngine:
             candidates = [
                 row for row in rankings.get(router_key, [])
                 if bool(row.get("eligible"))
+                and (
+                    self.allow_non_eur_live
+                    or bool(row.get("live_execution_supported_now", str(row.get("market", "")).upper().endswith("-EUR")))
+                )
                 and (allow_any or str(row.get("market", "")).upper() in allowed)
                 and str(row.get("market", "")).upper() not in reserved_markets
             ]
@@ -351,6 +356,7 @@ class AutonomousDecisionEngine:
                 "can_raise_hard_risk_limits": False,
                 "can_use_leverage": False,
                 "can_use_martingale": False,
+                "allow_non_eur_live": self.allow_non_eur_live,
                 "market_switch_requires_flat": True,
                 "market_switch_requires_no_open_order": True,
             },
@@ -396,7 +402,7 @@ class AutonomousDecisionEngine:
                 try:
                     rules_rows = agent._bitvavo.markets(desired)
                     rules = rules_rows[0] if rules_rows else {}
-                    required_type = "limit" if key in {"grid", "grid_eth"} else "market"
+                    required_type = "limit" if key in {"market_maker", "grid", "grid_eth"} else "market"
                     supported = {str(x).lower() for x in (rules.get("orderTypes") or [])}
                     min_quote = float(rules.get("minOrderInQuoteAsset") or 0.0)
                     if (
@@ -410,6 +416,8 @@ class AutonomousDecisionEngine:
                 previous = current
                 try:
                     cfg["symbol"] = desired
+                    cfg["_tick_size"] = float(rules.get("tickSize") or 0.0)
+                    cfg["_min_order_base"] = float(rules.get("minOrderInBaseAsset") or 0.0)
                     strategy.on_market_switch(previous, desired)
                 except Exception:
                     cfg["symbol"] = previous
@@ -417,7 +425,7 @@ class AutonomousDecisionEngine:
                 self._last_switch[strategy.name] = time.time()
 
             if (
-                key in {"grid", "grid_eth", "sniper"}
+                key in {"market_maker", "grid", "grid_eth", "sniper"}
                 and order_eur > 0
                 and bool(row.get("entry_allowed", False))
             ):
@@ -426,8 +434,8 @@ class AutonomousDecisionEngine:
                     float(cfg.get("max_order_eur", order_eur)),
                 )
                 cfg["order_value_eur"] = min(order_eur, hard_cap)
-            # MarketMaker remains fixed-size until venue metadata/precision-aware
-            # multi-instrument sizing is independently validated.
+            # All live bots can share the broad EUR universe. Non-EUR routes
+            # remain shadow-only until quote-currency accounting is validated.
             changes.append({
                 "strategy": strategy.name,
                 "market": str(cfg.get("symbol", "")).upper(),

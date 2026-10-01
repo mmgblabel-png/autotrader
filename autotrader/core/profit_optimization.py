@@ -47,6 +47,7 @@ class OpportunityRouter:
         )
         self.markets = [str(x).upper() for x in raw]
         self.auto_discover_eur = bool(self.config.get("auto_discover_eur", False))
+        self.auto_discover_all = bool(self.config.get("auto_discover_all", False))
         self.max_markets = max(1, min(500, int(self.config.get("max_markets", 250))))
         self.discovery_refresh_seconds = max(
             60.0, float(self.config.get("discovery_refresh_seconds", 1800.0))
@@ -65,7 +66,7 @@ class OpportunityRouter:
         self.updated_at = 0.0
 
     def _discover_markets(self) -> None:
-        if not self.auto_discover_eur:
+        if not (self.auto_discover_eur or self.auto_discover_all):
             return
         now = time.time()
         if self._last_discovery_at and now - self._last_discovery_at < self.discovery_refresh_seconds:
@@ -77,7 +78,9 @@ class OpportunityRouter:
                     continue
                 market = str(row.get("market") or row.get("symbol") or "").upper()
                 status = str(row.get("status") or "trading").lower()
-                if market.endswith("-EUR") and status == "trading":
+                if status != "trading":
+                    continue
+                if self.auto_discover_all or market.endswith("-EUR"):
                     discovered.append(market)
         except Exception:
             return
@@ -92,6 +95,46 @@ class OpportunityRouter:
             self.markets = preferred[: self.max_markets]
         self._last_discovery_at = now
 
+    @staticmethod
+    def _market_graph(books: dict[str, Any]) -> dict[str, list[tuple[str, float]]]:
+        graph: dict[str, list[tuple[str, float]]] = defaultdict(list)
+        for market, book in books.items():
+            if "-" not in market or not isinstance(book, dict):
+                continue
+            base, quote = market.rsplit("-", 1)
+            try:
+                bid = float(book["bid"])
+                ask = float(book["ask"])
+            except (KeyError, TypeError, ValueError):
+                continue
+            mid = (bid + ask) / 2.0
+            if mid <= 0 or not math.isfinite(mid):
+                continue
+            graph[base].append((quote, mid))
+            graph[quote].append((base, 1.0 / mid))
+        return graph
+
+    @staticmethod
+    def _quote_to_eur(asset: str, graph: dict[str, list[tuple[str, float]]], max_hops: int = 3) -> float | None:
+        asset = str(asset or "").upper()
+        if asset == "EUR":
+            return 1.0
+        queue = deque([(asset, 1.0, 0)])
+        seen = {asset}
+        while queue:
+            node, rate, hops = queue.popleft()
+            if hops >= max_hops:
+                continue
+            for target, edge in graph.get(node, []):
+                if target in seen:
+                    continue
+                nxt = rate * edge
+                if target == "EUR":
+                    return nxt
+                seen.add(target)
+                queue.append((target, nxt, hops + 1))
+        return None
+
     def refresh(self) -> None:
         self._discover_markets()
         latest: dict[str, MarketSnapshot] = {}
@@ -104,6 +147,7 @@ class OpportunityRouter:
                     bulk_books = raw_books
             except Exception:
                 bulk_books = {}
+        conversion_graph = self._market_graph(bulk_books) if bulk_books else {}
         for market in self.markets:
             try:
                 book = bulk_books.get(market) if bulk_books else None
@@ -128,7 +172,10 @@ class OpportunityRouter:
                         if hist[i - 1] > 0
                     ]
                     volatility_pct = statistics.pstdev(returns[-12:]) if len(returns) >= 2 else 0.0
-                liquidity_eur = min(bid * bid_size, ask * ask_size)
+                quote = market.rsplit("-", 1)[1] if "-" in market else ""
+                quote_to_eur = self._quote_to_eur(quote, conversion_graph)
+                liquidity_quote = min(bid * bid_size, ask * ask_size)
+                liquidity_eur = liquidity_quote * quote_to_eur if quote_to_eur is not None else 0.0
                 size_total = bid_size + ask_size
                 imbalance_pct = (
                     (bid_size - ask_size) / size_total * 100.0
@@ -278,6 +325,9 @@ class OpportunityRouter:
                 )
                 rows.append({
                     "market": snap.market,
+                    "quote": snap.market.rsplit("-", 1)[1] if "-" in snap.market else "",
+                    "pair_type": "crypto_fiat" if snap.market.endswith("-EUR") else "crypto_crypto",
+                    "live_execution_supported_now": snap.market.endswith("-EUR"),
                     "score": round(score, 2),
                     "signal_strength": round(signal_strength, 2),
                     "signal_direction": signal_direction,
@@ -300,6 +350,7 @@ class OpportunityRouter:
             "markets_scanned": len(self._latest),
             "markets_configured": len(self.markets),
             "auto_discover_eur": self.auto_discover_eur,
+            "auto_discover_all": self.auto_discover_all,
             "max_markets": self.max_markets,
             "errors": self._last_error,
             "rankings": by_strategy,

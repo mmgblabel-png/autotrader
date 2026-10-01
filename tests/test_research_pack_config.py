@@ -24,29 +24,20 @@ def test_research_pack_config_is_valid_and_does_not_raise_live_budget():
     assert live["grid_eth"]["strategy_name"] == "GridRunnerETH"
 
 
-def test_research_only_markets_do_not_leak_into_live_allowlists():
+def test_all_live_bots_can_use_broad_safe_market_selection():
     cfg = _config()
     strategy_markets = cfg["autonomous_execution"]["strategy_markets"]
-    research_only = {
-        "NEAR-EUR", "AVAX-EUR", "HBAR-EUR", "SUI-EUR", "XLM-EUR",
-        "AAVE-EUR", "ALGO-EUR", "ONDO-EUR", "FET-EUR", "DOT-EUR",
-        "LTC-EUR", "BCH-EUR", "UNI-EUR", "HYPE-EUR", "QNT-EUR",
-    }
-    live_allowed = {
-        str(market).upper()
-        for markets in strategy_markets.values()
-        for market in (markets or [])
-    }
-    assert research_only.isdisjoint(live_allowed)
-
-    router_markets = {
-        str(market).upper()
-        for market in cfg["opportunity_router"]["markets"]
-    }
-    assert research_only.issubset(router_markets)
+    assert strategy_markets["market_maker"] == ["*"]
+    assert strategy_markets["grid"] == ["*"]
+    assert strategy_markets["grid_eth"] == ["*"]
+    assert strategy_markets["sniper"] == ["*"]
+    assert cfg["autonomous_execution"]["allow_non_eur_live"] is False
 
 
-def test_eth_grid_is_pinned_to_eth_only():
+def test_router_scans_full_bitvavo_universe_but_live_non_eur_stays_blocked():
     cfg = _config()
-    assert cfg["autonomous_execution"]["strategy_markets"]["grid_eth"] == ["ETH-EUR"]
-    assert "ETH-EUR" not in cfg["autonomous_execution"]["strategy_markets"]["grid"]
+    router = cfg["opportunity_router"]
+    assert router["auto_discover_all"] is True
+    assert router["max_markets"] == 500
+    assert cfg["shadow_lab"]["dynamic_markets_per_strategy"] >= 10
+    assert cfg["shadow_lab"]["promotion_min_completed_trades"] == 8

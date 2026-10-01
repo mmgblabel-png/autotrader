@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from decimal import Decimal, ROUND_DOWN
+
 from autotrader.core.logger import get_logger
 from autotrader.core.order_manager import Order, OrderSide, OrderType
 from autotrader.strategies.base import BaseStrategy
@@ -13,6 +15,14 @@ class MarketMaker(BaseStrategy):
     @staticmethod
     def _clamp(value: float, low: float, high: float) -> float:
         return max(low, min(value, high))
+
+    @staticmethod
+    def _round_to_tick(value: float, tick: float) -> float:
+        if tick <= 0:
+            return value
+        d_value = Decimal(str(value))
+        d_tick = Decimal(str(tick))
+        return float((d_value / d_tick).to_integral_value(rounding=ROUND_DOWN) * d_tick)
 
     def _update_adaptive_state(self, mid_price: float) -> tuple[float, float]:
         """Update per-tick EWMA volatility/momentum and return spread + momentum."""
@@ -79,7 +89,14 @@ class MarketMaker(BaseStrategy):
             return
 
         spread_pct, adaptive_momentum = self._update_adaptive_state(mid_price)
-        size: float = cfg.get("order_size", 0.001)
+        order_value_eur = max(0.0, float(cfg.get("order_value_eur", 0.0) or 0.0))
+        if order_value_eur > 0:
+            size = order_value_eur / mid_price
+            min_base = max(0.0, float(cfg.get("_min_order_base", 0.0) or 0.0))
+            if min_base > 0:
+                size = max(size, min_base)
+        else:
+            size = float(cfg.get("order_size", 0.001))
 
         # Never quote more frequently than configured and never stack duplicate
         # active quotes. This reduces churn, fees and accidental order buildup.
@@ -94,8 +111,10 @@ class MarketMaker(BaseStrategy):
             log.info("MM skipped: Bitvavo already has an open BTC-EUR order.")
             return
 
-        # Clamp size
-        size = max(cfg.get("min_order_size", 0.0001), min(size, cfg.get("max_order_size", 1.0)))
+        # Fixed-size mode keeps the legacy clamp. Dynamic EUR sizing relies on
+        # exchange metadata + allocator hard caps instead.
+        if order_value_eur <= 0:
+            size = max(cfg.get("min_order_size", 0.0001), min(size, cfg.get("max_order_size", 1.0)))
 
         # Require the quoted edge to cover an estimated round-trip cost.
         fee_pct = float(cfg.get("estimated_fee_pct", 0.25)) / 100
@@ -106,8 +125,13 @@ class MarketMaker(BaseStrategy):
                      spread_pct * 100, minimum_spread * 100)
             return
 
-        bid_price = round(mid_price * (1 - spread_pct / 2), 2)
-        ask_price = round(mid_price * (1 + spread_pct / 2), 2)
+        tick_size = max(0.0, float(cfg.get("_tick_size", 0.0) or 0.0))
+        if tick_size > 0:
+            bid_price = self._round_to_tick(mid_price * (1 - spread_pct / 2), tick_size)
+            ask_price = self._round_to_tick(mid_price * (1 + spread_pct / 2), tick_size)
+        else:
+            bid_price = round(mid_price * (1 - spread_pct / 2), 8)
+            ask_price = round(mid_price * (1 + spread_pct / 2), 8)
         entry_price = max(0.0, float(cfg.get("_bot_average_entry_price", 0.0)))
         exit_markup_value = float(cfg.get("cycle_exit_markup_pct", cfg.get("target_spread", 0.80)))
         exit_markup_pct = exit_markup_value / 100
@@ -115,7 +139,7 @@ class MarketMaker(BaseStrategy):
         if bool(cfg.get("inventory_cycle_mode", True)) and entry_price > 0:
             ask_price = max(
                 ask_price,
-                round(entry_price * (1 + exit_markup_pct), 2),
+                self._round_to_tick(entry_price * (1 + exit_markup_pct), tick_size) if tick_size > 0 else round(entry_price * (1 + exit_markup_pct), 8),
                 min_profit_exit_price,
             )
         notional = size * mid_price
@@ -132,7 +156,10 @@ class MarketMaker(BaseStrategy):
             available_base = float(cfg.get("_available_base", 0.0))
             cycle_mode = bool(cfg.get("inventory_cycle_mode", True))
             bot_inventory = max(0.0, float(cfg.get("_bot_base_inventory", 0.0)))
-            min_size = float(cfg.get("min_order_size", 0.0001))
+            min_size = max(
+                float(cfg.get("min_order_size", 0.0001)),
+                float(cfg.get("_min_order_base", 0.0) or 0.0),
+            )
             if cycle_mode:
                 if bot_inventory >= min_size:
                     can_bid = False

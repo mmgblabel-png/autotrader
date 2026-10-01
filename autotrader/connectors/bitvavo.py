@@ -122,6 +122,53 @@ class BitvavoAdapter:
         except Exception as exc:
             raise BitvavoError("Bitvavo private request failed", category="bitvavo_error") from exc
 
+    def candles(
+        self,
+        market: str,
+        *,
+        interval: str = "1m",
+        limit: int = 120,
+    ) -> list[dict[str, Decimal | int]]:
+        """Return normalized public OHLCV candles for fast shadow warm-up."""
+        safe_limit = max(1, min(1440, int(limit)))
+        result = self._public_request(
+            "/candles",
+            {
+                "market": market.upper(),
+                "interval": str(interval),
+                "limit": str(safe_limit),
+            },
+        )
+        if not isinstance(result, list):
+            raise BitvavoError("Unexpected Bitvavo candles response", category="invalid_response")
+        rows: list[dict[str, Decimal | int]] = []
+        for item in result:
+            if not isinstance(item, list) or len(item) < 6:
+                continue
+            try:
+                ts = int(item[0])
+                open_price = Decimal(str(item[1]))
+                high = Decimal(str(item[2]))
+                low = Decimal(str(item[3]))
+                close = Decimal(str(item[4]))
+                volume = Decimal(str(item[5]))
+            except (TypeError, ValueError, InvalidOperation):
+                continue
+            if not all(x.is_finite() and x >= 0 for x in (open_price, high, low, close, volume)):
+                continue
+            if close <= 0:
+                continue
+            rows.append({
+                "timestamp": ts,
+                "open": open_price,
+                "high": high,
+                "low": low,
+                "close": close,
+                "volume": volume,
+            })
+        rows.sort(key=lambda row: int(row["timestamp"]))
+        return rows
+
     def ticker_book(self, market: str) -> dict[str, Decimal | str]:
         """Return public executable top-of-book for one Bitvavo market."""
         result = self._public_request("/ticker/book", {"market": market.upper()})

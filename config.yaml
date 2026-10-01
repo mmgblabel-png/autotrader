@@ -49,7 +49,7 @@ leverage_martingale_risk_lab:
 adaptive_learning:
   enabled: true
   path: /data/adaptive_learning.json
-  min_samples: 12
+  min_samples: 8
   lookback: 24
   evaluation_window: 6
   change_cooldown: 4
@@ -59,13 +59,16 @@ adaptive_learning:
 shadow_lab:
   enabled: true
   path: /data/shadow_strategies.json
-  interval_seconds: 15
+  interval_seconds: 5
   fee_pct_each_leg: 0.25
   slippage_pct_each_leg: 0.05
-  promotion_min_completed_trades: 20
-  promotion_min_winrate_pct: 52.0
-  promotion_min_net_pnl_eur: 0.50
-  promotion_max_drawdown_pct: 8.0
+  promotion_min_completed_trades: 8
+  promotion_min_winrate_pct: 55.0
+  promotion_min_net_pnl_eur: 0.15
+  promotion_max_drawdown_pct: 6.0
+  dynamic_markets_per_strategy: 12
+  backfill_candles: 120
+  backfill_interval: 1m
   strategies:
     mean_reversion:
       enabled: true
@@ -158,7 +161,7 @@ autonomous_execution:
   switch_cooldown_seconds: 120
   strategy_markets:
     market_maker:
-      - BTC-EUR
+      - "*"
     grid:
       - "*"
     grid_eth:
@@ -180,6 +183,7 @@ autonomous_execution:
   can_raise_hard_risk_limits: false
   allow_leverage: false
   allow_martingale: false
+  allow_non_eur_live: false
 
 market_universe:
   enabled: true
@@ -191,15 +195,16 @@ market_universe:
 
 opportunity_router:
   enabled: true
-  interval_seconds: 15
+  interval_seconds: 10
   history_size: 48
   min_top_depth_eur: 25
   max_spread_bps: 35
   probe_order_eur: 6
   max_snapshot_age_seconds: 30
   auto_discover_eur: true
-  max_markets: 60
-  discovery_refresh_seconds: 1800
+  auto_discover_all: true
+  max_markets: 500
+  discovery_refresh_seconds: 300
   markets:
     - BTC-EUR
     - ETH-EUR
@@ -244,9 +249,10 @@ strategies:
     exclusive_symbol: true
     symbol: BTC-EUR
     exchange: bitvavo
+    order_value_eur: 6.0
     order_size: 0.0001
-    min_order_size: 0.0001
-    max_order_size: 0.0001
+    min_order_size: 0.00000001
+    max_order_size: 1000000000
     target_spread: 0.80
     quote_refresh_seconds: 5
     cycle_cooldown_seconds: 60

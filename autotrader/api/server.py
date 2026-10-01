@@ -37,7 +37,7 @@ import hmac
 import os
 import threading
 import time
-from typing import Final
+from typing import Any, Final
 
 from fastapi import Body, Depends, FastAPI, Header, HTTPException, Query, Request, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
@@ -729,35 +729,106 @@ async def _tick_loop(app: FastAPI, agent: AutoTrader) -> None:
 
 
 async def _shadow_strategy_loop(app: FastAPI, agent: AutoTrader) -> None:
-    """Run candidate strategies continuously with no exchange order capability."""
+    """Run many candidate strategy/market combinations without sending orders."""
     cfg = agent._config.get("shadow_lab", {}) or {}
     strategies = cfg.get("strategies", {}) or {}
+    dynamic_per_strategy = max(1, int(cfg.get("dynamic_markets_per_strategy", 12)))
+    backfill_limit = max(0, min(720, int(cfg.get("backfill_candles", 120))))
+    backfill_interval = str(cfg.get("backfill_interval", "1m"))
     while True:
         try:
             if bool(cfg.get("enabled", True)):
-                updated_names = []
+                router_payload = app.state.opportunity_router.rankings()
+                rankings = router_payload.get("rankings", {}) if isinstance(router_payload, dict) else {}
+                profile_map = {
+                    "mean_reversion": "mean_reversion",
+                    "volatility_breakout": "volatility_breakout",
+                    "sniper_v2": "sniper",
+                }
+                dynamic_configs: dict[str, dict[str, Any]] = {}
+                updated_names: list[str] = []
                 for name, raw in strategies.items():
-                    strat_cfg = raw or {}
-                    if not bool(strat_cfg.get("enabled", True)):
+                    base_cfg = dict(raw or {})
+                    if not bool(base_cfg.get("enabled", True)):
                         continue
-                    symbol = str(strat_cfg.get("symbol", "")).upper().strip()
-                    if not symbol:
-                        continue
-                    price = float(await asyncio.to_thread(agent._bitvavo.ticker_price, symbol))
-                    app.state.shadow_strategy_engine.update(name, price, strat_cfg)
-                    updated_names.append(name)
+                    profile = profile_map.get(str(base_cfg.get("kind", name)).lower(), "grid")
+                    candidates = [
+                        row for row in (rankings.get(profile, []) or [])
+                        if bool(row.get("eligible"))
+                    ][:dynamic_per_strategy]
+                    if not candidates:
+                        symbol = str(base_cfg.get("symbol", "")).upper().strip()
+                        if symbol:
+                            candidates = [{"market": symbol, "mid": float(await asyncio.to_thread(agent._bitvavo.ticker_price, symbol))}]
+                    for row in candidates:
+                        symbol = str(row.get("market", "")).upper().strip()
+                        price = float(row.get("mid") or 0.0)
+                        if not symbol or price <= 0:
+                            continue
+                        dynamic_name = f"{name}@{symbol}"
+                        strat_cfg = dict(base_cfg)
+                        strat_cfg["symbol"] = symbol
+                        dynamic_configs[dynamic_name] = strat_cfg
+                        attempted = getattr(app.state, "shadow_backfill_attempted", set())
+                        warmup_target = max(
+                            int(strat_cfg.get("lookback", 0) or 0),
+                            int(strat_cfg.get("ema_slow", 0) or 0) * 2,
+                            24,
+                        )
+                        if (
+                            backfill_limit > 0
+                            and dynamic_name not in attempted
+                            and app.state.shadow_strategy_engine.sample_count(dynamic_name) < warmup_target
+                        ):
+                            attempted.add(dynamic_name)
+                            app.state.shadow_backfill_attempted = attempted
+                            try:
+                                candles = await asyncio.to_thread(
+                                    agent._bitvavo.candles,
+                                    symbol,
+                                    interval=backfill_interval,
+                                    limit=backfill_limit,
+                                )
+                                for candle in candles:
+                                    close = float(candle.get("close") or 0.0)
+                                    if close > 0:
+                                        app.state.shadow_strategy_engine.update(
+                                            dynamic_name,
+                                            close,
+                                            strat_cfg,
+                                            persist=False,
+                                        )
+                            except Exception as backfill_exc:
+                                log.info(
+                                    "Shadow candle warm-up skipped: candidate=%s error=%s",
+                                    dynamic_name,
+                                    type(backfill_exc).__name__,
+                                )
+                        app.state.shadow_strategy_engine.update(
+                            dynamic_name,
+                            price,
+                            strat_cfg,
+                            persist=False,
+                        )
+                        updated_names.append(dynamic_name)
+                if updated_names:
+                    app.state.shadow_strategy_engine.flush()
+                app.state.shadow_dynamic_configs = dynamic_configs
+
                 risk_cfg = agent._config.get("leverage_martingale_risk_lab", {}) or {}
                 if bool(risk_cfg.get("enabled", False)):
                     risk_symbol = str(risk_cfg.get("symbol", "BTC-EUR")).upper().strip()
                     risk_price = float(await asyncio.to_thread(agent._bitvavo.ticker_price, risk_symbol))
                     app.state.leverage_martingale_risk_lab.update(risk_price)
+
                 first_success = getattr(app.state, "shadow_strategy_last_at", 0.0) == 0.0
                 app.state.shadow_strategy_last_at = time.time()
                 app.state.shadow_strategy_error = None
                 if first_success:
                     log.info(
-                        "Shadow alpha lab active: strategies=%s live_orders_sent=False",
-                        updated_names,
+                        "Shadow fast lane active: candidates=%d base_strategies=%d live_orders_sent=False",
+                        len(updated_names),
+                        len(strategies),
                     )
         except Exception as exc:
             app.state.shadow_strategy_error = type(exc).__name__
@@ -925,6 +996,8 @@ async def _lifespan(app: FastAPI):
         app.state.shadow_strategy_interval_seconds = 15.0
     app.state.shadow_strategy_last_at = 0.0
     app.state.shadow_strategy_error = None
+    app.state.shadow_dynamic_configs = {}
+    app.state.shadow_backfill_attempted = set()
     app.state.allocator_v2 = StrategyAllocatorV2(agent._config.get("allocator_v2", {}) or {})
     universe_cfg = agent._config.get("market_universe", {}) or {}
     app.state.market_universe = MultiExchangeMarketUniverse(
@@ -1700,7 +1773,8 @@ def coinbase_bitvavo_shadow_scan():
 def shadow_strategy_status() -> dict[str, object]:
     agent = get_agent()
     cfg = agent._config.get("shadow_lab", {}) or {}
-    strategies = cfg.get("strategies", {}) or {}
+    strategies = dict(cfg.get("strategies", {}) or {})
+    strategies.update(getattr(app.state, "shadow_dynamic_configs", {}) or {})
     payload = app.state.shadow_strategy_engine.status(strategies)
     return {
         **payload,
@@ -1713,8 +1787,10 @@ def shadow_strategy_status() -> dict[str, object]:
 def allocator_v2_status() -> dict[str, object]:
     agent = get_agent()
     shadow_cfg = agent._config.get("shadow_lab", {}) or {}
+    shadow_status_cfg = dict(shadow_cfg.get("strategies", {}) or {})
+    shadow_status_cfg.update(getattr(app.state, "shadow_dynamic_configs", {}) or {})
     shadow_rows = app.state.shadow_strategy_engine.status(
-        shadow_cfg.get("strategies", {}) or {}
+        shadow_status_cfg
     ).get("strategies", [])
     merged = dict(agent._config.get("strategies", {}) or {})
     for key, value in (shadow_cfg.get("strategies", {}) or {}).items():

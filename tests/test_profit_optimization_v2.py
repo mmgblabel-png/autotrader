@@ -379,3 +379,60 @@ def test_execution_v2_respects_post_fill_delay():
     assert row["post_fill_delay_active"] is True
     assert row["recommend_reprice"] is False
     assert row["reason"] == "post_fill_delay_active"
+
+
+def test_opportunity_router_scans_crypto_quote_and_normalizes_liquidity_to_eur():
+    class FullMarketAdapter:
+        def markets(self):
+            return [
+                {"market": "BTC-EUR", "status": "trading"},
+                {"market": "ETH-BTC", "status": "trading"},
+            ]
+
+        def ticker_books(self):
+            return {
+                "BTC-EUR": {"market": "BTC-EUR", "bid": 70000.0, "ask": 70010.0, "bid_size": 1.0, "ask_size": 1.0},
+                "ETH-BTC": {"market": "ETH-BTC", "bid": 0.05, "ask": 0.0501, "bid_size": 10.0, "ask_size": 10.0},
+            }
+
+        def ticker_book(self, market):
+            return self.ticker_books()[market]
+
+    router = OpportunityRouter(
+        FullMarketAdapter(),
+        {
+            "markets": [],
+            "auto_discover_all": True,
+            "max_markets": 500,
+            "min_top_depth_eur": 25,
+            "max_spread_bps": 50,
+        },
+    )
+    for _ in range(8):
+        router.refresh()
+    payload = router.rankings()
+    assert payload["markets_scanned"] == 2
+    assert payload["auto_discover_all"] is True
+    eth_btc = next(row for row in payload["rankings"]["grid"] if row["market"] == "ETH-BTC")
+    assert eth_btc["pair_type"] == "crypto_crypto"
+    assert eth_btc["liquidity_eur"] > 1000
+    assert eth_btc["live_execution_supported_now"] is False
+
+
+def test_shadow_batch_update_can_flush_once(tmp_path: Path):
+    engine = ShadowStrategyEngine({"path": str(tmp_path / "shadow.json")})
+    cfg = {
+        "kind": "sniper_v2",
+        "strategy_version": "v1",
+        "symbol": "ETH-BTC",
+        "shadow_order_eur": 6.0,
+        "ema_fast": 3,
+        "ema_slow": 5,
+        "momentum_lookback": 2,
+        "momentum_pct": 0.15,
+    }
+    for price in [0.05, 0.0501, 0.0502, 0.0503, 0.0504, 0.0505]:
+        engine.update("sniper_v2@ETH-BTC", price, cfg, persist=False)
+    assert not (tmp_path / "shadow.json").exists()
+    engine.flush()
+    assert (tmp_path / "shadow.json").exists()

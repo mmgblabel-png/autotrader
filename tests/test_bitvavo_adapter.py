@@ -187,3 +187,19 @@ def test_ticker_books_skips_invalid_decimal_rows(monkeypatch):
     books = adapter.ticker_books()
     assert list(books) == ["BTC-EUR"]
     assert books["BTC-EUR"]["bid"] == Decimal("73000")
+
+
+def test_public_candles_are_normalized_and_sorted(monkeypatch):
+    adapter = BitvavoAdapter(api_key="key", api_secret="secret")
+    monkeypatch.setattr(
+        adapter,
+        "_public_request",
+        lambda endpoint, query=None: [
+            [2000, "2", "3", "1", "2.5", "10"],
+            [1000, "1", "2", "0.5", "1.5", "20"],
+            [3000, "", "3", "1", "2", "10"],
+        ],
+    )
+    rows = adapter.candles("ETH-BTC", interval="1m", limit=120)
+    assert [row["timestamp"] for row in rows] == [1000, 2000]
+    assert rows[0]["close"] == Decimal("1.5")
