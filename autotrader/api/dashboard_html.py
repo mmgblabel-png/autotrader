@@ -278,7 +278,7 @@ function renderFeeReality(d){
  let rows=d.strategy_routes||[];
  $('feerealityrows').innerHTML=rows.length?rows.map(x=>`<tr><td><b>${esc(x.strategy)}</b></td><td>${esc(x.order_mode)}</td><td>${esc(x.fee_class)}</td><td class="mono">${pct(x.fee_rate_pct_each_leg)}</td><td class="mono">${pct(x.two_leg_fee_floor_pct)}</td><td class="mono">${pct(x.cost_floor_with_configured_slippage_pct)}</td><td class="mono">${pct(x.research_required_gross_edge_pct)}</td></tr>`).join(''):'<tr><td colspan="7" class="sub">Geen fee-data beschikbaar</td></tr>';
  let cfg=d.configured_policy||{};
- $('feerealitynote').textContent=(d.error?('Fee lookup: '+esc(d.error)+' · '):'')+'Configured gross-edge gate '+pct(cfg.required_gross_edge_pct)+' · telemetry only · live gates aangepast: '+(d.live_profit_gates_changed?'JA':'nee');
+ $('feerealitynote').textContent=(d.error?('Fee lookup: '+esc(d.error)+' · fallback actief · '):'')+'Conservatieve fallback '+pct(cfg.required_gross_edge_pct)+' · route-specifieke fee-gates: '+(d.live_profit_gates_changed?'ACTIEF':'fallback')+' · postOnly maker-routes gebruiken maker-fee; Sniper gebruikt taker-fee.';
 }
 function renderAutonomy(d){
  let p=d.plan||{},rows=p.rows||[],armed=!!d.armed;
