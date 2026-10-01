@@ -707,3 +707,23 @@ def test_api_mainnet_safety_defaults_to_nonexecuting(api_client, monkeypatch):
     assert payload["execution_capability"] == "not_implemented"
     assert payload["wallet_capability"] == "not_implemented"
     assert payload["broadcast_capability"] == "not_implemented"
+
+
+def test_risk_reducing_exit_is_allowed_after_kill_switch():
+    rm = RiskManager()
+    rm.set_config("SniperBot", StrategyRiskConfig(max_daily_loss=0.25, max_position_size=10))
+    rm.record_loss("SniperBot", 0.30)
+    assert rm.is_killed("SniperBot") is True
+    assert rm.check_order("SniperBot", 7.0) is False
+    assert rm.check_order("SniperBot", 7.0, risk_reducing=True) is True
+
+
+def test_risk_manager_rolls_daily_counters_when_utc_day_changes():
+    rm = RiskManager()
+    rm.set_config("SniperBot", StrategyRiskConfig(max_daily_loss=0.25))
+    rm.record_loss("SniperBot", 0.30)
+    assert rm.is_killed("SniperBot") is True
+    rm._day_key = (0, 0)
+    status = rm.status()
+    assert status["strategies"]["SniperBot"]["daily_loss"] == 0
+    assert status["strategies"]["SniperBot"]["kill_switch"] is False

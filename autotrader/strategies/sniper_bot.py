@@ -39,7 +39,7 @@ class SniperBot(BaseStrategy):
         self._entry_price = entry if inventory > 0 else 0.0
 
     def tick(self) -> None:
-        if not self._running or self._rm.is_killed(self.name):
+        if not self._running:
             return
 
         cfg = self._config
@@ -61,6 +61,7 @@ class SniperBot(BaseStrategy):
         sl_pct = float(cfg.get("stop_loss_pct", 0.3)) / 100
         cooldown = max(0.0, float(cfg.get("cooldown_seconds", 60)))
         now = time.monotonic()
+        entry_killed = self._rm.is_killed(self.name)
 
         if self._om.open_orders(self.name):
             self._prev_price = current_price
@@ -70,6 +71,11 @@ class SniperBot(BaseStrategy):
             return
 
         if self._position <= 0:
+            if entry_killed:
+                cfg["_autonomous_entry_allowed"] = False
+                cfg["_autonomous_entry_reason"] = "risk_kill_switch"
+                self._prev_price = current_price
+                return
             autonomous_allowed = bool(cfg.get("_autonomous_entry_allowed", True))
             if not autonomous_allowed:
                 self._prev_price = current_price
@@ -151,7 +157,7 @@ class SniperBot(BaseStrategy):
         if size <= 0:
             return
         notional = size * price
-        if not self._rm.check_order(self.name, notional):
+        if not self._rm.check_order(self.name, notional, risk_reducing=True):
             return
         order = Order(
             exchange=exchange,

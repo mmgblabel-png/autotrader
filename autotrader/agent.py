@@ -67,6 +67,7 @@ class AutoTrader:
             failure_handler=self._on_order_failure,
         )
         self._register_strategies()
+        self._restore_runtime_markets_from_journal()
 
     # ------------------------------------------------------------------
     # Public properties (used by api/server.py)
@@ -297,6 +298,39 @@ class AutoTrader:
             # ownership in risk, journal, PnL and learning state.
             strat.name = str(cfg.get("strategy_name") or name_map.get(key, strat.name))
             self._strategies[key] = strat
+
+    def _restore_runtime_markets_from_journal(self) -> None:
+        """Restore dynamic strategy ownership before live runtimes start."""
+        for key, strategy in self._strategies.items():
+            try:
+                active = self._bitvavo.journal.strategy_active_markets(strategy.name)
+            except Exception as exc:
+                log.warning("[%s] market restore skipped: %s", strategy.name, type(exc).__name__)
+                continue
+            if not active:
+                continue
+            chosen = str(active[0].get("market") or "").upper()
+            if not chosen:
+                continue
+            previous = str(strategy._config.get("symbol") or "").upper()
+            strategy._config["symbol"] = chosen
+            strategy._config["_market_restored_from_journal"] = True
+            strategy._config["_market_restore_previous"] = previous
+            strategy._config["_market_restore_active_count"] = len(active)
+            if len(active) > 1:
+                log.error(
+                    "[%s] multiple active owned markets after restart; managing primary=%s active=%s",
+                    strategy.name,
+                    chosen,
+                    [item.get("market") for item in active],
+                )
+            elif previous != chosen:
+                log.info(
+                    "[%s] restored dynamic market %s from journal (config default was %s).",
+                    strategy.name,
+                    chosen,
+                    previous,
+                )
 
     @staticmethod
     def _load_config(path: str) -> dict:

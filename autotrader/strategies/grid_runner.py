@@ -55,7 +55,7 @@ class GridRunner(BaseStrategy):
                 min_profit_exit_price,
             )
             notional = sell_size * current_price
-            if not self._rm.check_order(self.name, notional):
+            if not self._rm.check_order(self.name, notional, risk_reducing=True):
                 return
             self._om.register(Order(
                 exchange=exchange,

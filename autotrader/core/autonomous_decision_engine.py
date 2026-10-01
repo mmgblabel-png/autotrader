@@ -147,6 +147,18 @@ class AutonomousDecisionEngine:
                 continue
             cfg = strategy._config
             current = str(cfg.get("symbol", "")).upper()
+            strategy_min_score = max(
+                self.min_score,
+                min(100.0, float(cfg.get("autonomous_min_score", self.min_score))),
+            )
+            strategy_min_signal = max(
+                self.min_signal_strength,
+                min(100.0, float(cfg.get("autonomous_min_signal_strength", self.min_signal_strength))),
+            )
+            strategy_min_confidence = max(
+                self.min_confidence,
+                min(1.0, float(cfg.get("autonomous_min_confidence", self.min_confidence))),
+            )
             allowed = set(self._allowed_markets(key, current))
             allow_any = "*" in allowed
             candidates = [
@@ -161,10 +173,12 @@ class AutonomousDecisionEngine:
             for candidate in candidates:
                 candidate_market = str(candidate.get("market", "")).upper()
                 candidate_score_min, candidate_conf_min = self._thresholds_for_market(candidate_market)
+                candidate_score_min = max(candidate_score_min, strategy_min_score)
+                candidate_conf_min = max(candidate_conf_min, strategy_min_confidence)
                 candidate_signal = float(candidate.get("signal_strength", candidate.get("score", 0.0)) or 0.0)
                 if (
                     float(candidate.get("score") or 0.0) >= candidate_score_min
-                    and candidate_signal >= self.min_signal_strength
+                    and candidate_signal >= strategy_min_signal
                     and confidence >= candidate_conf_min
                 ):
                     passing.append(candidate)
@@ -199,11 +213,14 @@ class AutonomousDecisionEngine:
                 target_edge = float(cfg.get("take_profit_pct", 0.0))
             profit_gate = target_edge >= required_entry_edge if required_entry_edge > 0 else target_edge > 0
             market_score_min, market_conf_min = self._thresholds_for_market(desired)
+            market_score_min = max(market_score_min, strategy_min_score)
+            market_conf_min = max(market_conf_min, strategy_min_confidence)
+            risk_killed = bool(agent._rm.is_killed(display))
             quality_ok = (
                 bool(best)
                 and bool(passing)
                 and score >= market_score_min
-                and signal_strength >= self.min_signal_strength
+                and signal_strength >= strategy_min_signal
                 and confidence >= market_conf_min
                 and profit_gate
             )
@@ -237,6 +254,7 @@ class AutonomousDecisionEngine:
                 and exposure_headroom_ok
                 and minimum_order_ok
                 and entry_runtime_ready
+                and not risk_killed
                 and flat
                 and not open_local
                 and not durable_open
@@ -259,6 +277,8 @@ class AutonomousDecisionEngine:
                 reason = "daily_exposure_headroom_low"
             elif not minimum_order_ok:
                 reason = "order_below_exchange_minimum"
+            elif risk_killed:
+                reason = "risk_kill_switch"
             elif not entry_runtime_ready and flat:
                 reason = "failure_cooldown"
             elif not flat:
@@ -280,7 +300,10 @@ class AutonomousDecisionEngine:
                 "market_score": round(score, 2),
                 "signal_strength": round(signal_strength, 2),
                 "signal_direction": signal_direction,
-                "min_signal_strength": round(self.min_signal_strength, 2),
+                "min_signal_strength": round(strategy_min_signal, 2),
+                "strategy_min_score": round(strategy_min_score, 2),
+                "strategy_min_confidence": round(strategy_min_confidence, 4),
+                "risk_killed": risk_killed,
                 "momentum_pct": round(float(best.get("momentum_pct") or 0.0), 6) if best else 0.0,
                 "orderbook_imbalance_pct": round(float(best.get("orderbook_imbalance_pct") or 0.0), 4) if best else 0.0,
                 "expected_slippage_bps": round(float(best.get("expected_slippage_bps") or 0.0), 4) if best else 0.0,

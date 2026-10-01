@@ -519,3 +519,35 @@ def test_below_minimum_recommendation_does_not_switch_or_mutate_order_value():
     engine.apply(agent=agent, plan=plan, armed=True)
     assert agent._strategies["sniper"]._config["order_value_eur"] == before
     assert agent._strategies["sniper"]._config["symbol"] == "XRP-EUR"
+
+
+def test_sniper_uses_stricter_strategy_specific_thresholds():
+    agent = _agent()
+    payload = _router()
+    payload["rankings"]["sniper"][0].update({
+        "score": 90,
+        "signal_strength": 77,
+        "signal_direction": "LONG",
+    })
+    agent._strategies["sniper"]._config.update({
+        "autonomous_min_score": 82,
+        "autonomous_min_signal_strength": 80,
+        "autonomous_min_confidence": 0.75,
+    })
+    engine = AutonomousDecisionEngine({
+        "enabled": True,
+        "apply_live": True,
+        "min_score": 68,
+        "min_confidence": 0.62,
+        "min_signal_strength": 62,
+        "strategy_markets": {
+            "market_maker": ["BTC-EUR"],
+            "grid": ["SOL-EUR"],
+            "sniper": ["XRP-EUR"],
+        },
+    })
+    plan = engine.plan(agent=agent, router_payload=payload, risk_payload=_risk(), armed=True)
+    row = next(x for x in plan["rows"] if x["strategy"] == "SniperBot")
+    assert row["min_signal_strength"] == 80
+    assert row["entry_allowed"] is False
+    assert row["quality_ok"] is False
