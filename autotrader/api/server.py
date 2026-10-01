@@ -37,7 +37,7 @@ import hmac
 import os
 import threading
 import time
-from typing import Final
+from typing import Any, Final
 
 from fastapi import Body, Depends, FastAPI, Header, HTTPException, Query, Request, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
