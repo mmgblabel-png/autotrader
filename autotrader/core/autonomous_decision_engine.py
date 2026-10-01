@@ -309,6 +309,9 @@ class AutonomousDecisionEngine:
                 "strategy": display,
                 "current_market": current,
                 "desired_market": desired,
+                "pair_type": str(best.get("pair_type") or "") if best else "",
+                "quote": str(best.get("quote") or "") if best else "",
+                "quote_to_eur": round(float(best.get("quote_to_eur") or 0.0), 12) if best else 0.0,
                 "market_score": round(score, 2),
                 "signal_strength": round(signal_strength, 2),
                 "signal_direction": signal_direction,
@@ -408,13 +411,16 @@ class AutonomousDecisionEngine:
                 try:
                     rules_rows = agent._bitvavo.markets(desired)
                     rules = rules_rows[0] if rules_rows else {}
-                    required_type = "limit" if key in {"grid", "grid_eth"} else "market"
+                    required_type = "limit" if key in {"market_maker", "grid", "grid_eth"} else "market"
                     supported = {str(x).lower() for x in (rules.get("orderTypes") or [])}
                     min_quote = float(rules.get("minOrderInQuoteAsset") or 0.0)
+                    quote_to_eur = float(row.get("quote_to_eur") or 0.0)
+                    min_order_eur = min_quote * quote_to_eur
                     if (
                         str(rules.get("status") or "").lower() != "trading"
                         or required_type not in supported
-                        or (order_eur > 0 and min_quote > order_eur)
+                        or quote_to_eur <= 0
+                        or (order_eur > 0 and min_order_eur > order_eur)
                     ):
                         continue
                 except Exception:
@@ -423,13 +429,14 @@ class AutonomousDecisionEngine:
                 try:
                     cfg["symbol"] = desired
                     strategy.on_market_switch(previous, desired)
+                    cfg["_quote_to_eur"] = float(row.get("quote_to_eur") or 0.0)
                 except Exception:
                     cfg["symbol"] = previous
                     continue
                 self._last_switch[strategy.name] = time.time()
 
             if (
-                key in {"grid", "grid_eth", "sniper"}
+                key in {"market_maker", "grid", "grid_eth", "sniper"}
                 and order_eur > 0
                 and bool(row.get("entry_allowed", False))
             ):
@@ -438,8 +445,7 @@ class AutonomousDecisionEngine:
                     float(cfg.get("max_order_eur", order_eur)),
                 )
                 cfg["order_value_eur"] = min(order_eur, hard_cap)
-            # MarketMaker remains fixed-size until venue metadata/precision-aware
-            # multi-instrument sizing is independently validated.
+                cfg["_quote_to_eur"] = float(row.get("quote_to_eur") or cfg.get("_quote_to_eur", 0.0) or 0.0)
             changes.append({
                 "strategy": strategy.name,
                 "market": str(cfg.get("symbol", "")).upper(),
