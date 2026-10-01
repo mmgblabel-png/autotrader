@@ -40,6 +40,8 @@ class Order:
     avg_fill_price: float = 0.0
     fee: float = 0.0
     strategy: str = ""
+    quote_to_eur: float = 1.0
+    notional_eur: float = 0.0
 
     @property
     def is_filled(self) -> bool:
