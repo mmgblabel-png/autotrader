@@ -804,14 +804,15 @@ async def _market_universe_loop(app: FastAPI) -> None:
                 int(summary.get("exact_cross_venue_overlap", 0)),
             )
             previous = getattr(app.state, "market_universe_last_logged_counts", None)
-            if counts != previous:
+            if counts != previous or summary.get("error"):
                 log.info(
-                    "Market universe active: bitvavo=%d coinbase=%d overlap=%d crypto_crypto=%d live_orders_sent=False",
+                    "Market universe active: bitvavo=%d coinbase=%d overlap=%d crypto_crypto=%d live_orders_sent=False errors=%s",
                     counts[0],
                     counts[1],
                     counts[2],
                     int((summary.get("bitvavo") or {}).get("crypto_crypto", 0))
                     + int((summary.get("coinbase") or {}).get("crypto_crypto", 0)),
+                    summary.get("venue_errors") or {},
                 )
                 app.state.market_universe_last_logged_counts = counts
         except Exception as exc:
