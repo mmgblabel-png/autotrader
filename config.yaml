@@ -245,6 +245,7 @@ strategies:
     exclusive_symbol: true
     symbol: BTC-EUR
     exchange: bitvavo
+    order_value_eur: 6.0
     order_size: 0.0001
     min_order_size: 0.0001
     max_order_size: 0.0001
