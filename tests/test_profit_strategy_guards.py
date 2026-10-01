@@ -94,3 +94,36 @@ def test_sniper_pauses_entry_when_take_profit_cannot_cover_policy(tmp_path):
     strategy._config["_current_price"] = 1.01
     strategy.tick()
     assert om.open_orders("SniperBot") == []
+
+
+def test_sniper_kill_switch_blocks_new_entry_but_allows_position_exit(tmp_path):
+    om, rm, pe = _deps(tmp_path)
+    rm.set_config("SniperBot", StrategyRiskConfig(
+        max_daily_loss=0.25,
+        max_position_size=200,
+        max_slippage_pct=0.2,
+    ))
+    rm.record_loss("SniperBot", 0.30)
+    strategy = SniperBot(
+        om, rm, pe,
+        {
+            "enabled": True,
+            "exchange": "bitvavo",
+            "symbol": "LINK-EUR",
+            "order_value_eur": 7.0,
+            "take_profit_pct": 1.5,
+            "stop_loss_pct": 0.35,
+            "_current_price": 12.70,
+            "_live_balance_snapshot_ready": True,
+            "_bot_base_inventory": 0.5,
+            "_bot_average_entry_price": 12.80,
+            "_available_base": 0.5,
+            "_exchange_open_orders_snapshot_ready": True,
+            "_exchange_open_order_count": 0,
+        },
+    )
+    strategy.start()
+    strategy.tick()
+    orders = om.open_orders("SniperBot")
+    assert len(orders) == 1
+    assert orders[0].side is OrderSide.SELL
