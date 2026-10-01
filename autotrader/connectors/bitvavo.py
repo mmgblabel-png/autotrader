@@ -1,4 +1,4 @@
-"""Safe Bitvavo REST adapter for EUR markets.
+"""Safe Bitvavo REST adapter for Bitvavo spot markets.
 
 Bitvavo is used instead of Binance for users who can access Bitvavo in the
 Netherlands. The adapter defaults to shadow/dry-run and never supports
@@ -183,6 +183,68 @@ class BitvavoAdapter:
         if not books:
             raise BitvavoError("Empty Bitvavo ticker-book response", category="invalid_response")
         return books
+
+    @staticmethod
+    def _quote_bridge_rate(
+        asset: str,
+        books: dict[str, dict[str, Decimal | str]],
+        max_hops: int = 3,
+    ) -> Decimal | None:
+        asset = str(asset or "").upper().strip()
+        if asset == "EUR":
+            return Decimal("1")
+        if not asset:
+            return None
+        graph: dict[str, list[tuple[str, Decimal]]] = {}
+        for market, book in books.items():
+            if "-" not in market:
+                continue
+            base, quote = market.rsplit("-", 1)
+            try:
+                bid = Decimal(str(book["bid"]))
+                ask = Decimal(str(book["ask"]))
+                mid = (bid + ask) / Decimal("2")
+            except (KeyError, TypeError, ValueError, InvalidOperation):
+                continue
+            if mid <= 0 or not mid.is_finite():
+                continue
+            graph.setdefault(base, []).append((quote, mid))
+            graph.setdefault(quote, []).append((base, Decimal("1") / mid))
+        queue: list[tuple[str, Decimal, int]] = [(asset, Decimal("1"), 0)]
+        visited = {asset}
+        while queue:
+            node, rate, hops = queue.pop(0)
+            if hops >= max_hops:
+                continue
+            for target, edge in graph.get(node, []):
+                if target in visited:
+                    continue
+                next_rate = rate * edge
+                if target == "EUR":
+                    return next_rate
+                visited.add(target)
+                queue.append((target, next_rate, hops + 1))
+        return None
+
+    def quote_to_eur(
+        self,
+        market: str,
+        books: dict[str, dict[str, Decimal | str]] | None = None,
+    ) -> Decimal:
+        """Return the current EUR value of one unit of the market quote asset."""
+        market = market.upper().strip()
+        if "-" not in market:
+            raise BitvavoError("Invalid market for quote conversion", category="invalid_market")
+        quote = market.rsplit("-", 1)[1]
+        if quote == "EUR":
+            return Decimal("1")
+        rate = self._quote_bridge_rate(quote, books or self.ticker_books())
+        if rate is None or rate <= 0 or not rate.is_finite():
+            raise BitvavoError(
+                f"No EUR bridge available for quote asset {quote}",
+                category="quote_conversion_unavailable",
+            )
+        return rate
 
     def ticker_price(self, market: str) -> Decimal:
         query = urllib.parse.urlencode({"market": market.upper()})
@@ -388,15 +450,35 @@ class BitvavoAdapter:
         amount, price = self._validate_order_rules(market, amount, price, order_type, side)
         observed = self.ticker_price(market)
         expected = price or observed
-        notional_eur = amount * expected if side == "buy" else amount * observed
+        quote_to_eur = self.quote_to_eur(market)
+        notional_quote = amount * (expected if side == "buy" else observed)
+        notional_eur = notional_quote * quote_to_eur
         # Refresh the hard capital-at-risk counter from durable bot state.
         # This releases headroom after confirmed sells/cancels without raising
         # the configured exposure cap.
         self.gateway.restore_daily_state(
             exposure_eur=self.journal.current_execution_exposure_eur()
         )
-        proposal = {"venue": "bitvavo", "market": market, "side": side, "orderType": order_type, "amount": str(amount), "price": str(price) if price else None, "clientOrderId": client_order_id}
-        new_intent = self.journal.record_intent(client_order_id=client_order_id, market=market, side=side, order_type=order_type, amount=str(amount), price=str(price) if price else None)
+        proposal = {
+            "venue": "bitvavo",
+            "market": market,
+            "side": side,
+            "orderType": order_type,
+            "amount": str(amount),
+            "price": str(price) if price else None,
+            "clientOrderId": client_order_id,
+            "quoteToEur": str(quote_to_eur),
+            "notionalEur": str(notional_eur),
+        }
+        new_intent = self.journal.record_intent(
+            client_order_id=client_order_id,
+            market=market,
+            side=side,
+            order_type=order_type,
+            amount=str(amount),
+            price=str(price) if price else None,
+            quote_to_eur=str(quote_to_eur),
+        )
         if not new_intent:
             raise BitvavoError("duplicate client_order_id", category="duplicate_order")
         decision = self.gateway.evaluate(
