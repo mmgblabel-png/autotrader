@@ -234,9 +234,10 @@ def _calculated_risk_payload(agent: AutoTrader) -> dict[str, object]:
             for x in (strategy_markets.get(key) or [])
             if str(x).strip()
         }
+        allow_any = "*" in allowed
         filtered = [
             x for x in ranked
-            if not allowed or str(x.get("market", "")).upper() in allowed
+            if allow_any or not allowed or str(x.get("market", "")).upper() in allowed
         ]
         best = next((x for x in filtered if x.get("eligible")), filtered[0] if filtered else None)
         if best:
