@@ -72,6 +72,7 @@ class BaseStrategy(ABC):
             "_mid_price": 0.0,
             "_available_base": 0.0,
             "_available_quote": 0.0,
+            "_quote_to_eur": 0.0,
             "_bot_base_inventory": 0.0,
             "_bot_average_entry_price": 0.0,
             "_min_profit_exit_price": 0.0,
