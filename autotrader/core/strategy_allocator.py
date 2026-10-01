@@ -35,6 +35,7 @@ class StrategyAllocator:
         "market_maker": "MarketMaker",
         "arbitrage": "ArbitrageHunter",
         "grid": "GridRunner",
+        "grid_eth": "GridRunnerETH",
         "sniper": "SniperBot",
     }
 
