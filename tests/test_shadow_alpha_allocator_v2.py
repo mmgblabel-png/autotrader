@@ -227,3 +227,11 @@ def test_dashboard_contains_shadow_lab_and_allocator():
     assert "/api/risk-lab/leverage-martingale" in html
     assert "Leverage + Capped Martingale Lab" in html
     assert 'id="risklabpnl"' in html
+    assert "/api/report/three-hour" in html
+    assert 'id="threehOrders"' in html
+    assert 'id="threehOpportunities"' in html
+    assert "Actieve bot-exposure" in html
+    assert "Vrije exposure-headroom" in html
+    assert "Entry-turnover vandaag" in html
+    assert "60-market scanner" in html
+    assert "LIVE MANAGER" in html
