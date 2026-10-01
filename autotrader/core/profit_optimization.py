@@ -367,6 +367,7 @@ class PortfolioGoalTracker:
             self.starting_equity_eur,
             float(self.config.get("target_equity_eur", 25000.0)),
         )
+        self.target_days = max(1, int(self.config.get("target_days", 365)))
         raw = self.config.get(
             "milestones_eur",
             [100, 250, 500, 1000, 2500, 5000, 10000, 25000],
@@ -391,6 +392,14 @@ class PortfolioGoalTracker:
             min(100.0, (current - self.starting_equity_eur) / span * 100.0),
         )
         next_milestone = next((x for x in self.milestones if current < x), None)
+        required_daily_linear_eur = max(
+            0.0, self.target_equity_eur - current
+        ) / self.target_days
+        required_daily_compound_pct = 0.0
+        if current > 0 and current < self.target_equity_eur:
+            required_daily_compound_pct = (
+                (self.target_equity_eur / current) ** (1.0 / self.target_days) - 1.0
+            ) * 100.0
         contributions = []
         for row in strategy_snapshots or []:
             contributions.append({
@@ -411,6 +420,9 @@ class PortfolioGoalTracker:
             "current_equity_estimate_eur": round(current, 2),
             "progress_pct": round(progress, 4),
             "remaining_eur": round(max(0.0, self.target_equity_eur - current), 2),
+            "target_days": self.target_days,
+            "required_daily_linear_eur": round(required_daily_linear_eur, 2),
+            "required_daily_compound_pct": round(required_daily_compound_pct, 4),
             "next_milestone_eur": round(next_milestone, 2) if next_milestone else None,
             "target_reached": current >= self.target_equity_eur,
             "milestones_eur": self.milestones,
