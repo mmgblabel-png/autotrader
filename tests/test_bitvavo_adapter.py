@@ -170,3 +170,20 @@ def test_ticker_books_parses_bulk_market_books(monkeypatch):
     assert books["BTC-EUR"]["bid"] == Decimal("73000")
     assert books["ETH-BTC"]["ask"] == Decimal("0.0321")
     assert books["ETH-BTC"]["bid_size"] == Decimal("20")
+
+
+def test_ticker_books_skips_invalid_decimal_rows(monkeypatch):
+    adapter = BitvavoAdapter(api_key="key", api_secret="secret")
+    monkeypatch.setattr(
+        adapter,
+        "_public_request",
+        lambda endpoint, query=None: [
+            {"market": "BROKEN-EUR", "bid": "", "ask": "1", "bidSize": "1", "askSize": "1"},
+            {"market": "NONE-EUR", "bid": None, "ask": "1", "bidSize": "1", "askSize": "1"},
+            {"market": "NAN-EUR", "bid": "NaN", "ask": "1", "bidSize": "1", "askSize": "1"},
+            {"market": "BTC-EUR", "bid": "73000", "ask": "73010", "bidSize": "1.2", "askSize": "1.1"},
+        ],
+    )
+    books = adapter.ticker_books()
+    assert list(books) == ["BTC-EUR"]
+    assert books["BTC-EUR"]["bid"] == Decimal("73000")
