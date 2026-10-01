@@ -70,6 +70,8 @@ from autotrader.core.profit_optimization import (
 )
 from autotrader.core.autonomous_decision_engine import AutonomousDecisionEngine
 from autotrader.core.risk_lab import LeverageMartingaleRiskLab
+from autotrader.core.futures_ai_shadow import FuturesAIShadowEngine
+from autotrader.connectors.perpetual_public import PerpetualPublicMarketData
 from autotrader.connectors.bitvavo import BitvavoAdapter
 from autotrader.connectors.coinbase_advanced import CoinbaseAdvancedMarketData, CoinbaseMarketDataError
 from autotrader.connectors.bitpanda_fusion import BitpandaFusionAdapter
@@ -425,6 +427,36 @@ async def _shadow_strategy_loop(app: FastAPI, agent: AutoTrader) -> None:
         await asyncio.sleep(app.state.shadow_strategy_interval_seconds)
 
 
+async def _futures_ai_shadow_loop(app: FastAPI) -> None:
+    """Refresh public perpetual data and update the no-order futures AI lab."""
+    while True:
+        try:
+            engine = app.state.futures_ai_shadow_engine
+            if engine.enabled:
+                payload = await asyncio.to_thread(
+                    app.state.perpetual_public_feed.snapshots,
+                    engine.markets,
+                )
+                for row in payload.get("markets", []):
+                    engine.update(row)
+                first_success = getattr(app.state, "futures_ai_shadow_last_at", 0.0) == 0.0
+                app.state.futures_ai_shadow_last_at = time.time()
+                app.state.futures_ai_shadow_error = None
+                app.state.futures_ai_shadow_source = payload.get("source")
+                app.state.futures_ai_shadow_fallback = bool(payload.get("fallback_used", False))
+                if first_success:
+                    log.info(
+                        "Futures AI shadow active: markets=%s source=%s fallback=%s live_orders_sent=False",
+                        engine.markets,
+                        payload.get("source"),
+                        bool(payload.get("fallback_used", False)),
+                    )
+        except Exception as exc:
+            app.state.futures_ai_shadow_error = type(exc).__name__
+            log.warning("Futures AI shadow refresh failed: %s", type(exc).__name__)
+        await asyncio.sleep(app.state.futures_ai_shadow_interval_seconds)
+
+
 async def _opportunity_router_loop(app: FastAPI) -> None:
     """Refresh read-only multi-market rankings; never submits orders."""
     while True:
@@ -544,6 +576,21 @@ async def _lifespan(app: FastAPI):
     app.state.leverage_martingale_risk_lab = LeverageMartingaleRiskLab(
         agent._config.get("leverage_martingale_risk_lab", {}) or {}
     )
+    futures_cfg = agent._config.get("futures_ai_shadow", {}) or {}
+    app.state.futures_ai_shadow_engine = FuturesAIShadowEngine(futures_cfg)
+    app.state.perpetual_public_feed = PerpetualPublicMarketData(
+        timeout=float(futures_cfg.get("timeout_seconds", 3.0) or 3.0)
+    )
+    try:
+        app.state.futures_ai_shadow_interval_seconds = max(
+            10.0, float(futures_cfg.get("interval_seconds", 20.0))
+        )
+    except (TypeError, ValueError):
+        app.state.futures_ai_shadow_interval_seconds = 20.0
+    app.state.futures_ai_shadow_last_at = 0.0
+    app.state.futures_ai_shadow_error = None
+    app.state.futures_ai_shadow_source = None
+    app.state.futures_ai_shadow_fallback = False
     try:
         app.state.shadow_strategy_interval_seconds = max(
             10.0,
@@ -614,6 +661,9 @@ async def _lifespan(app: FastAPI):
     app.state.shadow_strategy_task = asyncio.create_task(
         _shadow_strategy_loop(app, agent), name="autotrader-shadow-strategy-loop"
     )
+    app.state.futures_ai_shadow_task = asyncio.create_task(
+        _futures_ai_shadow_loop(app), name="autotrader-futures-ai-shadow-loop"
+    )
     app.state.opportunity_router_task = asyncio.create_task(
         _opportunity_router_loop(app), name="autotrader-opportunity-router-loop"
     )
@@ -636,6 +686,7 @@ async def _lifespan(app: FastAPI):
         app.state.tick_task.cancel()
         app.state.arbitrage_shadow_task.cancel()
         app.state.shadow_strategy_task.cancel()
+        app.state.futures_ai_shadow_task.cancel()
         app.state.opportunity_router_task.cancel()
         app.state.binance_reference_task.cancel()
         with contextlib.suppress(asyncio.CancelledError):
@@ -644,6 +695,8 @@ async def _lifespan(app: FastAPI):
             await app.state.arbitrage_shadow_task
         with contextlib.suppress(asyncio.CancelledError):
             await app.state.shadow_strategy_task
+        with contextlib.suppress(asyncio.CancelledError):
+            await app.state.futures_ai_shadow_task
         with contextlib.suppress(asyncio.CancelledError):
             await app.state.opportunity_router_task
         with contextlib.suppress(asyncio.CancelledError):
@@ -1324,6 +1377,18 @@ def allocator_v2_status() -> dict[str, object]:
 @app.get("/api/risk-lab/leverage-martingale", tags=["optimization"])
 def leverage_martingale_risk_lab_status() -> dict[str, object]:
     return app.state.leverage_martingale_risk_lab.status()
+
+
+@app.get("/api/research/futures-ai", tags=["research"])
+def futures_ai_shadow_status() -> dict[str, object]:
+    payload = app.state.futures_ai_shadow_engine.status()
+    return {
+        **payload,
+        "last_update_at": getattr(app.state, "futures_ai_shadow_last_at", None),
+        "runtime_error": getattr(app.state, "futures_ai_shadow_error", None),
+        "active_source": getattr(app.state, "futures_ai_shadow_source", None),
+        "fallback_used": bool(getattr(app.state, "futures_ai_shadow_fallback", False)),
+    }
 
 
 @app.get("/api/goals/portfolio", tags=["goals"])
