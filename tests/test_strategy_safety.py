@@ -161,4 +161,5 @@ def test_market_maker_dynamic_eur_sizing_supports_low_price_eur_market(tmp_path)
     order = orders[0]
     assert order.side is OrderSide.BUY
     assert 5.0 <= order.quantity * order.price <= 7.0
-    assert round(order.price / 0.000001) == order.price / 0.000001
+    ratio = order.price / 0.000001
+    assert abs(ratio - round(ratio)) < 1e-6
