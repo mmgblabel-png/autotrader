@@ -889,6 +889,15 @@ async def _tick_loop(app: FastAPI, agent: AutoTrader) -> None:
                             if isinstance(row, dict) and row.get("symbol")
                         }
                         app.state.bitvavo_balance_snapshot_ready = True
+                        fund_valuation = await asyncio.to_thread(
+                            agent.refresh_live_fund_nav_from_balances,
+                            balance_rows,
+                        )
+                        if not bool(fund_valuation.get("verified")):
+                            log.warning(
+                                "Fund NAV snapshot rejected: unpriced_assets=%s",
+                                fund_valuation.get("unpriced_assets") or [],
+                            )
                     except Exception as balance_exc:
                         app.state.bitvavo_balance_snapshot_ready = False
                         log.warning("Bitvavo balance refresh failed: %s", balance_exc)
