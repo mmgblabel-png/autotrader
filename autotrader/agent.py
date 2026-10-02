@@ -393,6 +393,22 @@ class AutoTrader:
             return []
         return self._executor.reconcile()
 
+    def research_agent_status(self) -> dict[str, object]:
+        return {
+            "agents": {
+                name: {
+                    "responsibilities": list(descriptor.responsibilities),
+                    "inputs": list(descriptor.inputs),
+                    "outputs": list(descriptor.outputs),
+                    "decision_process": list(descriptor.decision_process),
+                    "kpis": list(descriptor.kpis),
+                }
+                for name, descriptor in self._research_agents.descriptors.items()
+            },
+            "execution_authority": False,
+            "orders_can_be_sent_by_research_agents": False,
+        }
+
     def ingest_router_research(
         self,
         router_payload: dict,
@@ -408,16 +424,7 @@ class AutoTrader:
                 continue
         return {
             "signals_ingested": accepted,
-            "agents": {
-                name: {
-                    "responsibilities": list(descriptor.responsibilities),
-                    "inputs": list(descriptor.inputs),
-                    "outputs": list(descriptor.outputs),
-                    "decision_process": list(descriptor.decision_process),
-                    "kpis": list(descriptor.kpis),
-                }
-                for name, descriptor in self._research_agents.descriptors.items()
-            },
+            **self.research_agent_status(),
         }
 
     def shadow_tick(self, *, pair: str, price: float) -> None:
