@@ -283,3 +283,47 @@ def test_shadow_trailing_peak_survives_fresh_runtime_config_and_restart(tmp_path
     assert restored_state.completed_trades == 1
     assert restored_state.position_qty == 0.0
     assert restored_state.last_signal == "trailing_profit_exit"
+
+
+def test_dynamic_shadow_candidate_maps_to_family_adaptive_learner(tmp_path: Path):
+    learner = AdaptiveLearning({
+        "path": str(tmp_path / "learning.json"),
+        "min_samples": 6,
+        "lookback": 12,
+    })
+    engine = ShadowStrategyEngine({"path": str(tmp_path / "shadow.json")}, learner=learner)
+    assert engine._learner_name("mean_reversion@ADA-EUR") == "MeanReversionShadow"
+    assert engine._learner_name("volatility_breakout@ETH-EUR") == "VolatilityBreakoutShadow"
+    assert engine._learner_name("sniper_v2@XRP-EUR") == "SniperV2Shadow"
+
+
+def test_shadow_promotion_requires_profit_factor_and_cost_stress(tmp_path: Path):
+    engine = ShadowStrategyEngine({
+        "path": str(tmp_path / "shadow.json"),
+        "fee_pct_each_leg": 0.25,
+        "slippage_pct_each_leg": 0.05,
+        "promotion_min_completed_trades": 4,
+        "promotion_min_winrate_pct": 50.0,
+        "promotion_min_net_pnl_eur": 0.10,
+        "promotion_min_profit_factor": 1.10,
+        "promotion_cost_stress_multiplier": 1.25,
+        "promotion_max_drawdown_pct": 6.0,
+    })
+    cfg = {"kind": "mean_reversion", "shadow_order_eur": 6.0}
+    engine._states["mean_reversion"] = ShadowStats(
+        completed_trades=4,
+        wins=3,
+        losses=1,
+        realized_net_pnl_eur=0.50,
+        outcomes=[0.20, 0.20, 0.20, -0.10],
+    )
+    row = engine.status({"mean_reversion": cfg})["strategies"][0]
+    assert row["profit_factor"] >= 1.10
+    assert row["stressed_net_pnl_eur"] > 0
+    assert row["promotion_ready"] is True
+
+    engine._states["mean_reversion"].outcomes = [0.11, 0.11, 0.11, -0.30]
+    engine._states["mean_reversion"].realized_net_pnl_eur = 0.20
+    row = engine.status({"mean_reversion": cfg})["strategies"][0]
+    assert row["profit_factor"] < 1.10
+    assert row["promotion_ready"] is False
