@@ -34,7 +34,10 @@ ENV PYTHONUNBUFFERED=1 \
 
 WORKDIR /app
 
-RUN groupadd --gid 10001 autotrader \
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends gosu \
+    && rm -rf /var/lib/apt/lists/* \
+    && groupadd --gid 10001 autotrader \
     && useradd --uid 10001 --gid autotrader --create-home --shell /usr/sbin/nologin autotrader \
     && mkdir -p /data /app/exports /app/logs \
     && chown -R autotrader:autotrader /data /app
@@ -44,12 +47,13 @@ RUN python -m pip install /wheels/*.whl \
     && rm -rf /wheels
 
 COPY --chown=autotrader:autotrader config.yaml /app/config.yaml
-
-USER autotrader
+COPY docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
+RUN chmod 0755 /usr/local/bin/docker-entrypoint.sh
 
 EXPOSE 8000
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
   CMD python -c "import os,urllib.request; urllib.request.urlopen('http://127.0.0.1:%s/api/health' % os.getenv('PORT','8000'), timeout=3).read()"
 
+ENTRYPOINT ["/usr/local/bin/docker-entrypoint.sh"]
 CMD ["sh", "-c", "exec python -m uvicorn autotrader.api.server:app --host 0.0.0.0 --port ${PORT:-8000}"]
