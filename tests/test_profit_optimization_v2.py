@@ -7,6 +7,7 @@ from autotrader.core.profit_optimization import (
     BinanceReferenceFeed,
     CalculatedRiskSizer,
     ExecutionV2Advisor,
+    MarketSnapshot,
     OpportunityRouter,
     PortfolioGoalTracker,
     fee_efficiency_rows,
