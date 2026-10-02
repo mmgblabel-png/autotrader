@@ -1407,6 +1407,13 @@ async def _lifespan(app: FastAPI):
         "rows": [],
     }
     app.state.autonomous_apply = {"applied": False, "reason": "startup", "changes": []}
+    app.state.autonomous_fund_scheduler = AutonomousFundScheduler(
+        agent._config.get("autonomous_fund", {}) or {}
+    )
+    app.state.autonomous_fund_status = {
+        "enabled": app.state.autonomous_fund_scheduler.enabled,
+        "live_orders_sent": False,
+    }
 
     if os.getenv("COINBASE_API_KEY", "").strip() and os.getenv("COINBASE_API_SECRET", "").strip():
         try:
