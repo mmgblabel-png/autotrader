@@ -1161,6 +1161,7 @@ async def _opportunity_router_loop(app: FastAPI) -> None:
             await asyncio.to_thread(app.state.opportunity_router.refresh)
             app.state.opportunity_router_error = None
             payload = app.state.opportunity_router.rankings()
+            app.state.ai_research_status = get_agent().ingest_router_research(payload)
             scanned = int(payload.get("markets_scanned", 0) or 0)
             configured = int(payload.get("markets_configured", 0) or 0)
             current_counts = (configured, scanned)
@@ -1732,6 +1733,21 @@ def risk_status():
 def fund_status() -> dict[str, object]:
     """Return fund mandate, portfolio risk, research signals and ledger integrity."""
     return get_agent().fund.status()
+
+
+@app.get("/api/fund/agents", tags=["fund"])
+def fund_agents() -> dict[str, object]:
+    """Expose specialized research-agent contracts and current signal buffer."""
+    agent = get_agent()
+    descriptors = agent.ingest_router_research(
+        app.state.opportunity_router.rankings()
+    )
+    return {
+        **descriptors,
+        "fund_research": agent.fund.status().get("research", {}),
+        "execution_authority": False,
+        "orders_can_be_sent_by_research_agents": False,
+    }
 
 
 @app.get("/api/research/backtest", tags=["research"])
