@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import os
 import time
 from typing import TYPE_CHECKING, Dict, Optional
 
@@ -74,6 +75,9 @@ class RiskManager:
                 symbol=symbol,
                 notional_eur=notional,
                 risk_reducing=risk_reducing,
+                require_verified_nav=(
+                    os.getenv("EXECUTION_MODE", "paper").strip().lower() == "live"
+                ),
             )
             if not fund_decision.accepted:
                 log.warning(
