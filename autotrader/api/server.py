@@ -877,7 +877,8 @@ async def _shadow_strategy_loop(app: FastAPI, agent: AutoTrader) -> None:
                 app.state.shadow_dynamic_configs = dynamic_configs
                 candidate_count = len(updated_names)
                 previous_count = getattr(app.state, "shadow_last_candidate_count", None)
-                if candidate_count != previous_count:
+                candidate_count_changed = candidate_count != previous_count
+                if candidate_count_changed:
                     log.info(
                         "Shadow fast lane candidates=%d base_strategies=%d live_orders_sent=False",
                         candidate_count,
@@ -902,7 +903,7 @@ async def _shadow_strategy_loop(app: FastAPI, agent: AutoTrader) -> None:
                     )
                 now_mono = time.monotonic()
                 last_summary = float(getattr(app.state, "shadow_summary_last_log_at", 0.0) or 0.0)
-                if first_success or now_mono - last_summary >= 300.0:
+                if first_success or candidate_count_changed or now_mono - last_summary >= 300.0:
                     summary_cfg = dict(strategies)
                     summary_cfg.update(dynamic_configs)
                     shadow_status = app.state.shadow_strategy_engine.status(summary_cfg)
