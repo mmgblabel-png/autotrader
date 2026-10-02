@@ -1730,8 +1730,24 @@ def risk_status():
 
 @app.get("/api/fund/status", tags=["fund"])
 def fund_status() -> dict[str, object]:
-    """Return fund mandate, portfolio risk, research signals and ledger integrity."""
+    """Return the complete AI Hedge Fund Prototype operating snapshot."""
     return get_agent().fund.status()
+
+
+@app.get("/api/fund/report", tags=["fund"])
+def fund_report() -> dict[str, object]:
+    """Return accounting, governance and investor-diligence reporting without secrets."""
+    status = get_agent().fund.status()
+    return {
+        "fund_id": status["fund_id"],
+        "base_currency": status["base_currency"],
+        "risk": status["risk"],
+        "growth": status["growth"],
+        "performance": status["performance"],
+        "research": status["research"],
+        "governance": status["governance"],
+        "ledger": status["ledger"],
+    }
 
 
 @app.get("/api/research/backtest", tags=["research"])
