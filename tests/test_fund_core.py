@@ -36,19 +36,16 @@ def _fund_config(tmp_path, **overrides):
     return config
 
 
-def test_mandate_rejects_gross_exposure_that_consumes_cash_reserve():
-    try:
-        FundMandate.from_config(
-            {
-                "initial_nav_eur": 100,
-                "max_gross_exposure_pct": 95,
-                "min_cash_reserve_pct": 10,
-            }
-        )
-    except ValueError as exc:
-        assert "cash" in str(exc).lower() or "capital" in str(exc).lower()
-    else:
-        raise AssertionError("invalid mandate was accepted")
+def test_mandate_clamps_loose_gross_exposure_and_cash_reserve():
+    mandate = FundMandate.from_config(
+        {
+            "initial_nav_eur": 100,
+            "max_gross_exposure_pct": 95,
+            "min_cash_reserve_pct": 10,
+        }
+    )
+    assert mandate.max_gross_exposure_pct == 80.0
+    assert mandate.min_cash_reserve_pct == 20.0
 
 
 def test_signal_blender_filters_low_confidence_and_blends_recency():

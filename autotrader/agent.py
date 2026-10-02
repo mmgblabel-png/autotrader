@@ -486,8 +486,21 @@ class AutoTrader:
             "grid_eth": "GridRunnerETH",
             "sniper": "SniperBot",
         }
+        protection_defaults = self._config.get("autonomous_fund", {}) or {}
+        protection_map = {
+            "protection_stop_loss_pct": "stop_loss_pct",
+            "protection_trailing_drawdown_pct": "trailing_drawdown_pct",
+            "protection_partial_profit_trigger_pct": "partial_profit_trigger_pct",
+            "protection_partial_profit_fraction": "partial_profit_fraction",
+        }
         for key, cls in _STRATEGY_REGISTRY.items():
             cfg = dict(strat_cfgs.get(key, {}) or {})
+            if key in {"market_maker", "grid", "grid_eth", "sniper"}:
+                for strategy_key, policy_key in protection_map.items():
+                    if strategy_key not in cfg and policy_key in protection_defaults:
+                        cfg[strategy_key] = protection_defaults[policy_key]
+                if "protection_trailing_activation_pct" not in cfg:
+                    cfg["protection_trailing_activation_pct"] = 0.90
             self._learner.apply_overrides(name_map.get(key, key), cfg)
             strat = cls(order_manager=self._om, risk_manager=self._rm,
                         profit_engine=self._pe, config=cfg)

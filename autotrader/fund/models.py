@@ -34,13 +34,13 @@ class FundMandate:
     lock_floor_after_target_reached: bool = True
     capital_floor_buffer_pct: float = 2.0
     live_nav_max_age_seconds: float = 120.0
-    max_portfolio_drawdown_pct: float = 8.0
-    max_daily_loss_pct: float = 2.0
+    max_portfolio_drawdown_pct: float = 10.0
+    max_daily_loss_pct: float = 3.0
     max_single_trade_pct: float = 20.0
-    max_gross_exposure_pct: float = 85.0
+    max_gross_exposure_pct: float = 80.0
     max_strategy_exposure_pct: float = 40.0
-    max_asset_exposure_pct: float = 35.0
-    min_cash_reserve_pct: float = 15.0
+    max_asset_exposure_pct: float = 20.0
+    min_cash_reserve_pct: float = 20.0
     min_signal_confidence: float = 0.62
     signal_half_life_seconds: float = 900.0
 
@@ -57,13 +57,27 @@ class FundMandate:
             lock_floor_after_target_reached=bool(raw.get("lock_floor_after_target_reached", True)),
             capital_floor_buffer_pct=float(raw.get("capital_floor_buffer_pct", 2.0)),
             live_nav_max_age_seconds=float(raw.get("live_nav_max_age_seconds", 120.0)),
-            max_portfolio_drawdown_pct=float(raw.get("max_portfolio_drawdown_pct", 8.0)),
-            max_daily_loss_pct=float(raw.get("max_daily_loss_pct", 2.0)),
-            max_single_trade_pct=float(raw.get("max_single_trade_pct", 20.0)),
-            max_gross_exposure_pct=float(raw.get("max_gross_exposure_pct", cls.max_gross_exposure_pct)),
-            max_strategy_exposure_pct=float(raw.get("max_strategy_exposure_pct", 40.0)),
-            max_asset_exposure_pct=float(raw.get("max_asset_exposure_pct", 35.0)),
-            min_cash_reserve_pct=float(raw.get("min_cash_reserve_pct", 15.0)),
+            max_portfolio_drawdown_pct=min(
+                10.0, float(raw.get("max_portfolio_drawdown_pct", 10.0))
+            ),
+            max_daily_loss_pct=min(
+                3.0, float(raw.get("max_daily_loss_pct", 3.0))
+            ),
+            max_single_trade_pct=min(
+                20.0, float(raw.get("max_single_trade_pct", 20.0))
+            ),
+            max_gross_exposure_pct=min(
+                80.0, float(raw.get("max_gross_exposure_pct", 80.0))
+            ),
+            max_strategy_exposure_pct=min(
+                40.0, float(raw.get("max_strategy_exposure_pct", 40.0))
+            ),
+            max_asset_exposure_pct=min(
+                20.0, float(raw.get("max_asset_exposure_pct", 20.0))
+            ),
+            min_cash_reserve_pct=max(
+                20.0, float(raw.get("min_cash_reserve_pct", 20.0))
+            ),
             min_signal_confidence=float(raw.get("min_signal_confidence", 0.62)),
             signal_half_life_seconds=float(raw.get("signal_half_life_seconds", 900.0)),
         )

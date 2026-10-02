@@ -146,3 +146,7 @@ def test_governance_report_never_enables_external_capital_automatically():
     assert report["investor_reporting"]["third_party_capital_acceptance_enabled"] is False
     assert report["compliance"]["policy"]["withdrawals_automated"] is False
     assert report["compliance"]["policy"]["private_key_export_allowed"] is False
+    assert report["compliance"]["policy"]["leverage_allowed"] is False
+    assert report["compliance"]["policy"]["margin_allowed"] is False
+    assert report["compliance"]["policy"]["futures_allowed"] is False
+    assert report["compliance"]["policy"]["borrowing_allowed"] is False

@@ -12,13 +12,13 @@ fund:
   capital_floor_buffer_pct: 2.0
   live_nav_max_age_seconds: 120
   ledger_path: data/fund_ledger.sqlite3
-  max_portfolio_drawdown_pct: 8.0
-  max_daily_loss_pct: 2.0
+  max_portfolio_drawdown_pct: 10.0
+  max_daily_loss_pct: 3.0
   max_single_trade_pct: 20.0
-  max_gross_exposure_pct: 85.0
+  max_gross_exposure_pct: 80.0
   max_strategy_exposure_pct: 40.0
-  max_asset_exposure_pct: 35.0
-  min_cash_reserve_pct: 15.0
+  max_asset_exposure_pct: 20.0
+  min_cash_reserve_pct: 20.0
   min_signal_confidence: 0.62
   signal_half_life_seconds: 900
   signal_buffer_size: 5000
@@ -80,15 +80,15 @@ binance_reference:
   timeout_seconds: 3
 
 leverage_martingale_risk_lab:
-  enabled: true
+  enabled: false
   path: /data/leverage_martingale_lab.json
   symbol: BTC-EUR
   starting_equity_eur: 50
   base_stake_eur: 3
   max_stake_eur: 8
-  leverage: 2.0
-  martingale_multiplier: 1.35
-  max_martingale_steps: 2
+  leverage: 1.0
+  martingale_multiplier: 1.0
+  max_martingale_steps: 0
   momentum_trigger_pct: 0.20
   take_profit_pct: 0.75
   stop_loss_pct: 0.45
@@ -227,11 +227,17 @@ calculated_risk:
 autonomous_execution:
   enabled: true
   apply_live: true
-  min_score: 68.0
+  min_score: 85.0
+  instrument_scope: spot_only
+  allow_margin: false
+  allow_futures: false
+  allow_borrowing: false
   min_confidence: 0.62
   min_signal_strength: 62.0
   minimum_live_order_eur: 5.0
-  max_size_score: 82.0
+  max_size_score: 92.0
+  high_volatility_bps: 180.0
+  high_volatility_size_multiplier: 0.50
   max_size_confidence: 0.75
   exposure_safety_buffer_eur: 0.10
   switch_cooldown_seconds: 90
@@ -260,6 +266,25 @@ autonomous_execution:
   allow_leverage: false
   allow_martingale: false
   allow_non_eur_live: false
+
+autonomous_fund:
+  enabled: true
+  research_interval_seconds: 21600
+  research_top_markets: 2
+  research_interval: 1h
+  research_strategy: multi_factor
+  research_candle_limit: 720
+  monte_carlo_simulations: 10000
+  report_check_seconds: 60
+  report_daily: true
+  report_weekly: true
+  report_monthly: true
+  stop_loss_pct: 2.0
+  trailing_drawdown_pct: 1.25
+  partial_profit_trigger_pct: 0.75
+  partial_profit_fraction: 0.50
+  high_volatility_bps: 180.0
+  high_volatility_size_multiplier: 0.50
 
 market_universe:
   enabled: true
@@ -358,6 +383,11 @@ strategies:
     max_position_size: 500.0
     max_slippage_pct: 0.5
     max_consecutive_errors: 5
+    protection_stop_loss_pct: 2.0
+    protection_trailing_activation_pct: 0.90
+    protection_trailing_drawdown_pct: 1.25
+    protection_partial_profit_trigger_pct: 0.75
+    protection_partial_profit_fraction: 0.50
 
   arbitrage:
     enabled: false
@@ -398,6 +428,11 @@ strategies:
     max_position_size: 300.0
     max_slippage_pct: 0.5
     max_consecutive_errors: 5
+    protection_stop_loss_pct: 2.0
+    protection_trailing_activation_pct: 0.90
+    protection_trailing_drawdown_pct: 1.25
+    protection_partial_profit_trigger_pct: 0.75
+    protection_partial_profit_fraction: 0.50
 
   grid_eth:
     enabled: true
@@ -420,6 +455,11 @@ strategies:
     max_position_size: 300.0
     max_slippage_pct: 0.5
     max_consecutive_errors: 5
+    protection_stop_loss_pct: 2.0
+    protection_trailing_activation_pct: 0.90
+    protection_trailing_drawdown_pct: 1.25
+    protection_partial_profit_trigger_pct: 0.75
+    protection_partial_profit_fraction: 0.50
 
   sniper:
     enabled: true
@@ -452,3 +492,8 @@ strategies:
     max_daily_loss: 0.25
     max_position_size: 200.0
     max_consecutive_errors: 3
+    protection_stop_loss_pct: 2.0
+    protection_trailing_activation_pct: 0.90
+    protection_trailing_drawdown_pct: 1.25
+    protection_partial_profit_trigger_pct: 0.75
+    protection_partial_profit_fraction: 0.50

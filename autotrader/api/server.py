@@ -75,6 +75,7 @@ from autotrader.core.profit_optimization import (
 )
 from autotrader.core.autonomous_decision_engine import AutonomousDecisionEngine
 from autotrader.core.risk_lab import LeverageMartingaleRiskLab
+from autotrader.fund.automation import AutonomousFundScheduler
 from autotrader.connectors.bitvavo import BitvavoAdapter, BitvavoError
 from autotrader.connectors.coinbase_advanced import CoinbaseAdvancedMarketData, CoinbaseMarketDataError
 from autotrader.connectors.bitpanda_fusion import BitpandaFusionAdapter
@@ -649,6 +650,9 @@ def _manage_stale_bot_orders(app: FastAPI, agent: AutoTrader) -> dict[str, objec
             }
     retry_seconds = max(30.0, float(advisor.config.get("cancel_retry_seconds", 60.0)))
     now = time.time()
+    strategy_by_name = {
+        strategy.name: strategy for strategy in agent._strategies.values()
+    }
 
     for record in list(agent._bitvavo.journal.inflight()):
         client_order_id = str(record.get("client_order_id") or "").strip()
@@ -668,33 +672,56 @@ def _manage_stale_bot_orders(app: FastAPI, agent: AutoTrader) -> dict[str, objec
             0.0,
             now_mono - float(desired_info.get("since_mono") or now_mono),
         )
-        try:
-            book_raw = agent._bitvavo.ticker_book(market)
-            book = {
-                "bid": float(book_raw.get("bid") or 0.0),
-                "ask": float(book_raw.get("ask") or 0.0),
+        strategy = strategy_by_name.get(strategy_name)
+        protective_override = bool(
+            strategy is not None
+            and strategy._config.get("_protective_exit_requested", False)
+        )
+        if protective_override:
+            decision = {
+                "cancel": True,
+                "reason": "protective_exit_override",
+                "price_lag_bps": 0.0,
+                "desired_market": market,
+                "score_improvement": 0.0,
+                "desired_stable_seconds": desired_stable_seconds,
+                "current_market_quality_ok": False,
             }
-        except Exception:
-            continue
-
+        else:
+            decision = None
         min_exit = 0.0
-        if side == "sell":
+        if protective_override:
+            # Emergency risk reduction must not depend on another market-data
+            # or profitability read before an old managed order can be canceled.
+            book = {"bid": 0.0, "ask": 0.0}
+        else:
             try:
-                mark = (book["bid"] + book["ask"]) / 2.0 if book["bid"] > 0 and book["ask"] > 0 else float(agent._bitvavo.ticker_price(market))
-                snap = _strategy_profit_snapshot(agent, market, strategy_name, mark)
-                min_exit = float(snap.get("min_profit_exit_price") or 0.0)
+                book_raw = agent._bitvavo.ticker_book(market)
+                book = {
+                    "bid": float(book_raw.get("bid") or 0.0),
+                    "ask": float(book_raw.get("ask") or 0.0),
+                }
             except Exception:
                 continue
 
-        decision = _execution_v2_cancel_decision(
-            advisor=advisor,
-            record=record,
-            plan_row=plan_row,
-            book=book,
-            age_seconds=age,
-            desired_stable_seconds=desired_stable_seconds,
-            min_exit_price=min_exit,
-        )
+            if side == "sell":
+                try:
+                    mark = (book["bid"] + book["ask"]) / 2.0 if book["bid"] > 0 and book["ask"] > 0 else float(agent._bitvavo.ticker_price(market))
+                    snap = _strategy_profit_snapshot(agent, market, strategy_name, mark)
+                    min_exit = float(snap.get("min_profit_exit_price") or 0.0)
+                except Exception:
+                    continue
+
+        if decision is None:
+            decision = _execution_v2_cancel_decision(
+                advisor=advisor,
+                record=record,
+                plan_row=plan_row,
+                book=book,
+                age_seconds=age,
+                desired_stable_seconds=desired_stable_seconds,
+                min_exit_price=min_exit,
+            )
         if not bool(decision.get("cancel")):
             continue
         cancel_reason = str(decision.get("reason") or "")
@@ -1189,6 +1216,33 @@ async def _opportunity_router_loop(app: FastAPI) -> None:
         await asyncio.sleep(app.state.opportunity_router_interval_seconds)
 
 
+async def _autonomous_fund_loop(app: FastAPI, agent: AutoTrader) -> None:
+    """Run read-only research/stress tests and immutable periodic fund reports."""
+    while True:
+        try:
+            router_payload = app.state.opportunity_router.rankings()
+            status = await asyncio.to_thread(
+                app.state.autonomous_fund_scheduler.run_once,
+                agent=agent,
+                router_payload=router_payload,
+            )
+            app.state.autonomous_fund_status = status
+            if status.get("research_result", {}).get("ran"):
+                log.info(
+                    "Autonomous fund research completed: markets=%s simulations=%s live_orders_sent=False",
+                    status.get("last_research_markets") or [],
+                    status.get("monte_carlo_simulations"),
+                )
+        except Exception as exc:
+            app.state.autonomous_fund_status = {
+                "enabled": True,
+                "last_research_error": type(exc).__name__,
+                "live_orders_sent": False,
+            }
+            log.warning("Autonomous fund scheduler failed safely: %s", type(exc).__name__)
+        await asyncio.sleep(app.state.autonomous_fund_scheduler.policy.report_check_seconds)
+
+
 async def _market_universe_loop(app: FastAPI) -> None:
     """Refresh the complete Bitvavo + Coinbase spot universe without trading."""
     while True:
@@ -1379,6 +1433,13 @@ async def _lifespan(app: FastAPI):
         "rows": [],
     }
     app.state.autonomous_apply = {"applied": False, "reason": "startup", "changes": []}
+    app.state.autonomous_fund_scheduler = AutonomousFundScheduler(
+        agent._config.get("autonomous_fund", {}) or {}
+    )
+    app.state.autonomous_fund_status = {
+        "enabled": app.state.autonomous_fund_scheduler.enabled,
+        "live_orders_sent": False,
+    }
 
     if os.getenv("COINBASE_API_KEY", "").strip() and os.getenv("COINBASE_API_SECRET", "").strip():
         try:
@@ -1417,6 +1478,9 @@ async def _lifespan(app: FastAPI):
     app.state.opportunity_router_task = asyncio.create_task(
         _opportunity_router_loop(app), name="autotrader-opportunity-router-loop"
     )
+    app.state.autonomous_fund_task = asyncio.create_task(
+        _autonomous_fund_loop(app, agent), name="autotrader-autonomous-fund-loop"
+    )
     app.state.market_universe_task = asyncio.create_task(
         _market_universe_loop(app), name="autotrader-market-universe-loop"
     )
@@ -1440,6 +1504,7 @@ async def _lifespan(app: FastAPI):
         app.state.arbitrage_shadow_task.cancel()
         app.state.shadow_strategy_task.cancel()
         app.state.opportunity_router_task.cancel()
+        app.state.autonomous_fund_task.cancel()
         app.state.market_universe_task.cancel()
         app.state.binance_reference_task.cancel()
         with contextlib.suppress(asyncio.CancelledError):
@@ -1450,6 +1515,8 @@ async def _lifespan(app: FastAPI):
             await app.state.shadow_strategy_task
         with contextlib.suppress(asyncio.CancelledError):
             await app.state.opportunity_router_task
+        with contextlib.suppress(asyncio.CancelledError):
+            await app.state.autonomous_fund_task
         with contextlib.suppress(asyncio.CancelledError):
             await app.state.market_universe_task
         with contextlib.suppress(asyncio.CancelledError):
@@ -1811,6 +1878,56 @@ def research_full_report(
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.get("/api/fund/automation", tags=["fund"])
+def autonomous_fund_status() -> dict[str, object]:
+    """Return autonomous fund policy, latest research and reporting state."""
+    status = dict(getattr(app.state, "autonomous_fund_status", {}) or {})
+    router = app.state.opportunity_router.rankings()
+    candidates = []
+    for rows in (router.get("rankings") or {}).values():
+        for row in rows or []:
+            if isinstance(row, dict) and row.get("eligible") and str(row.get("market") or "").upper().endswith("-EUR"):
+                candidates.append(row)
+    top = max(candidates, key=lambda row: float(row.get("score") or 0.0), default={})
+    momentum = float(top.get("momentum_pct") or 0.0)
+    volatility = abs(float(top.get("volatility_pct") or 0.0))
+    volatility_bps = volatility * 100.0
+    if volatility_bps >= 180.0:
+        regime = "HIGH_VOLATILITY"
+    elif momentum >= 0.30:
+        regime = "TREND_UP"
+    elif momentum <= -0.30:
+        regime = "TREND_DOWN"
+    else:
+        regime = "RANGE"
+    status["market_regime"] = {
+        "state": regime,
+        "market": str(top.get("market") or ""),
+        "score": round(float(top.get("score") or 0.0), 2),
+        "momentum_pct": round(momentum, 4),
+        "volatility_pct": round(volatility, 4),
+        "observed_from": "opportunity_router",
+    }
+    status["hard_rules"] = {
+        "max_portfolio_drawdown_pct": 10.0,
+        "max_daily_loss_pct": 3.0,
+        "max_position_pct": 20.0,
+        "min_cash_reserve_pct": 20.0,
+        "live_entry_score_operator": ">",
+        "live_entry_score_threshold": 85.0,
+        "instrument_scope": "spot_only",
+        "leverage": False,
+        "margin": False,
+        "futures": False,
+        "borrowing": False,
+        "withdrawals": False,
+        "transfers": False,
+        "private_key_export": False,
+        "unknown_wallet_interactions": False,
+    }
+    return status
 
 
 @app.get("/api/execution/status", tags=["execution"])
@@ -2364,6 +2481,7 @@ async def dashboard_snapshot() -> dict[str, object]:
         ("bitvavo_security", bitvavo_security_status, (), {}),
         ("risk_status", risk_status, (), {}),
         ("fund", fund_status, (), {}),
+        ("fund_automation", autonomous_fund_status, (), {}),
         ("markets_overview", markets_overview, (), {}),
         ("strategies", strategies, (), {}),
         ("bitvavo_live_state", bitvavo_live_state, (), {}),

@@ -16,7 +16,8 @@ class AutonomousDecisionEngine:
         self.config = config or {}
         self.enabled = bool(self.config.get("enabled", True))
         self.apply_live = bool(self.config.get("apply_live", False))
-        self.min_score = max(0.0, min(100.0, float(self.config.get("min_score", 68.0))))
+        # Immutable live-entry quality floor: score must be strictly greater than 85.
+        self.min_score = max(85.0, min(100.0, float(self.config.get("min_score", 85.0))))
         self.min_confidence = max(0.0, min(1.0, float(self.config.get("min_confidence", 0.62))))
         self.min_signal_strength = max(
             0.0, min(100.0, float(self.config.get("min_signal_strength", 62.0)))
@@ -35,6 +36,13 @@ class AutonomousDecisionEngine:
             0.0, float(self.config.get("exposure_safety_buffer_eur", 0.25))
         )
         self.allow_non_eur_live = bool(self.config.get("allow_non_eur_live", False))
+        self.high_volatility_bps = max(
+            1.0, float(self.config.get("high_volatility_bps", 180.0))
+        )
+        self.high_volatility_size_multiplier = max(
+            0.10,
+            min(1.0, float(self.config.get("high_volatility_size_multiplier", 0.50))),
+        )
         self._last_switch: dict[str, float] = {}
 
     def _thresholds_for_market(self, market: str) -> tuple[float, float]:
@@ -219,7 +227,7 @@ class AutonomousDecisionEngine:
                     )
                 )
                 if (
-                    float(candidate.get("score") or 0.0) >= candidate_score_min
+                    float(candidate.get("score") or 0.0) > candidate_score_min
                     and candidate_signal >= strategy_min_signal
                     and confidence >= candidate_conf_min
                     and execution_quality_ok
@@ -233,7 +241,9 @@ class AutonomousDecisionEngine:
                 x for x in [base_allocation, max_order] if x > 0
             ) if base_allocation > 0 and max_order > 0 else max(base_allocation, max_order)
             suggested_eur = min(suggested_eur, hard_cap) if hard_cap > 0 else 0.0
-
+            volatility_pct = abs(float(best.get("volatility_pct") or 0.0)) if best else 0.0
+            volatility_bps = volatility_pct * 100.0
+            high_volatility = volatility_bps >= self.high_volatility_bps
             open_local = bool(agent._om.open_orders(display))
             journal_state = (
                 agent._bitvavo.journal.strategy_market_state(current, display)
@@ -313,7 +323,7 @@ class AutonomousDecisionEngine:
             quality_ok = (
                 bool(best)
                 and bool(passing)
-                and score >= market_score_min
+                and score > market_score_min
                 and signal_strength >= strategy_min_signal
                 and confidence >= market_conf_min
                 and profit_gate
@@ -334,7 +344,7 @@ class AutonomousDecisionEngine:
                         )
                     )
                 )
-                and current_market_score >= current_score_min
+                and current_market_score > current_score_min
                 and current_market_signal >= strategy_min_signal
                 and confidence >= current_conf_min
                 and profit_gate
@@ -346,11 +356,13 @@ class AutonomousDecisionEngine:
             use_max_size = (
                 quality_ok
                 and suggested_eur >= minimum_live_order_eur
-                and score >= self.max_size_score
+                and score > self.max_size_score
                 and confidence >= self.max_size_confidence
             )
             if use_max_size and hard_cap > 0:
                 suggested_eur = hard_cap
+            if high_volatility and suggested_eur > 0:
+                suggested_eur *= self.high_volatility_size_multiplier
 
             failure_cooldown_until = float(cfg.get("_failure_cooldown_until", 0.0) or 0.0)
             entry_runtime_ready = failure_cooldown_until <= time.time()
@@ -430,6 +442,10 @@ class AutonomousDecisionEngine:
                 "liquidity_eur": round(liquidity_eur, 2),
                 "orderbook_imbalance_pct": round(float(best.get("orderbook_imbalance_pct") or 0.0), 4) if best else 0.0,
                 "expected_slippage_bps": round(expected_slippage_bps, 4),
+                "volatility_pct": round(volatility_pct, 6),
+                "volatility_bps": round(volatility_bps, 4),
+                "high_volatility": high_volatility,
+                "high_volatility_size_multiplier": self.high_volatility_size_multiplier,
                 "execution_quality_ok": execution_quality_ok,
                 "max_spread_bps": None if max_spread_bps == float("inf") else round(max_spread_bps, 4),
                 "min_liquidity_eur": round(min_liquidity_eur, 2),
@@ -482,7 +498,13 @@ class AutonomousDecisionEngine:
                 "can_raise_global_budget": False,
                 "can_raise_hard_risk_limits": False,
                 "can_use_leverage": False,
+                "can_use_margin": False,
+                "can_use_futures": False,
+                "can_borrow_funds": False,
                 "can_use_martingale": False,
+                "instrument_scope": "spot_only",
+                "live_entry_score_operator": ">",
+                "live_entry_score_threshold": self.min_score,
                 "allow_non_eur_live": self.allow_non_eur_live,
                 "market_switch_requires_flat": True,
                 "market_switch_requires_no_open_order": True,

@@ -13,6 +13,10 @@ class GovernancePolicy:
     unknown_wallet_transfers_allowed: bool = False
     bridge_without_owner_approval: bool = False
     third_party_capital_enabled: bool = False
+    leverage_allowed: bool = False
+    margin_allowed: bool = False
+    futures_allowed: bool = False
+    borrowing_allowed: bool = False
     operator_live_arm_required: bool = True
 
     def as_dict(self) -> dict[str, bool]:
@@ -22,6 +26,10 @@ class GovernancePolicy:
             "unknown_wallet_transfers_allowed": self.unknown_wallet_transfers_allowed,
             "bridge_without_owner_approval": self.bridge_without_owner_approval,
             "third_party_capital_enabled": self.third_party_capital_enabled,
+            "leverage_allowed": self.leverage_allowed,
+            "margin_allowed": self.margin_allowed,
+            "futures_allowed": self.futures_allowed,
+            "borrowing_allowed": self.borrowing_allowed,
             "operator_live_arm_required": self.operator_live_arm_required,
         }
 
@@ -59,6 +67,10 @@ class FundReporter:
             "unknown_wallet_transfers_forbidden": not self.policy.unknown_wallet_transfers_allowed,
             "bridges_require_owner_approval": not self.policy.bridge_without_owner_approval,
             "third_party_capital_disabled": not self.policy.third_party_capital_enabled,
+            "leverage_disabled": not self.policy.leverage_allowed,
+            "margin_disabled": not self.policy.margin_allowed,
+            "futures_disabled": not self.policy.futures_allowed,
+            "borrowing_disabled": not self.policy.borrowing_allowed,
             "operator_live_arm_required": self.policy.operator_live_arm_required,
         }
 

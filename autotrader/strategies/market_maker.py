@@ -6,6 +6,12 @@ from decimal import Decimal, ROUND_DOWN
 
 from autotrader.core.logger import get_logger
 from autotrader.core.order_manager import Order, OrderSide, OrderType
+from autotrader.core.spot_protection import (
+    evaluate_spot_protection,
+    mark_protection_order_failed,
+    mark_protection_order_pending,
+    mark_protection_sell_fill,
+)
 from autotrader.strategies.base import BaseStrategy
 
 log = get_logger("MarketMaker")
@@ -100,13 +106,14 @@ class MarketMaker(BaseStrategy):
         import time
         now = time.monotonic()
         last_quote = float(cfg.get("_last_quote_ts", 0.0))
-        if now - last_quote < float(cfg.get("quote_refresh_seconds", 10)):
-            return
-        if self._om.open_orders(self.name):
-            return
-        if bool(cfg.get("_exchange_open_orders_snapshot_ready", False)) and int(cfg.get("_exchange_open_order_count", 0)) > 0:
-            log.info("MM skipped: Bitvavo already has an open BTC-EUR order.")
-            return
+        quote_refresh_ready = (
+            now - last_quote >= float(cfg.get("quote_refresh_seconds", 10))
+        )
+        local_open = bool(self._om.open_orders(self.name))
+        exchange_open = (
+            bool(cfg.get("_exchange_open_orders_snapshot_ready", False))
+            and int(cfg.get("_exchange_open_order_count", 0)) > 0
+        )
 
         # Fixed-size mode keeps the legacy clamp. Dynamic EUR sizing relies on
         # exchange metadata + allocator hard caps instead.
@@ -144,11 +151,79 @@ class MarketMaker(BaseStrategy):
         live_snapshot = bool(cfg.get("_live_balance_snapshot_ready", False))
         can_bid = not entry_killed
         can_ask = True
+        if not live_snapshot and (local_open or exchange_open):
+            return
         if live_snapshot:
             available_quote = float(cfg.get("_available_quote", 0.0))
             available_base = float(cfg.get("_available_base", 0.0))
             cycle_mode = bool(cfg.get("inventory_cycle_mode", True))
             bot_inventory = max(0.0, float(cfg.get("_bot_base_inventory", 0.0)))
+            if bot_inventory > 0 and entry_price > 0:
+                protection = evaluate_spot_protection(
+                    cfg,
+                    entry_price=entry_price,
+                    current_price=mid_price,
+                    quantity=bot_inventory,
+                )
+                if protection.exit_required:
+                    if local_open or exchange_open:
+                        log.warning(
+                            "MM protective exit waiting for open order cancel: %s reason=%s pnl=%.3f%%",
+                            symbol,
+                            protection.reason,
+                            protection.pnl_pct,
+                        )
+                        return
+                    protected_size = min(
+                        bot_inventory * protection.fraction,
+                        bot_inventory,
+                        available_base,
+                    )
+                    minimum_sell = self.minimum_tradable_base(mid_price)
+                    if protection.action == "PARTIAL_EXIT":
+                        remaining = max(0.0, bot_inventory - protected_size)
+                        if (
+                            protected_size < minimum_sell
+                            or (remaining > 0 and remaining < minimum_sell)
+                        ):
+                            protected_size = min(bot_inventory, available_base)
+                    if protected_size > 0 and (
+                        minimum_sell <= 0 or protected_size >= minimum_sell
+                    ):
+                        notional = protected_size * mid_price
+                        if self._rm.check_order(
+                            self.name,
+                            notional,
+                            symbol=symbol,
+                            risk_reducing=True,
+                        ):
+                            order = Order(
+                                exchange=exchange,
+                                symbol=symbol,
+                                side=OrderSide.SELL,
+                                order_type=OrderType.MARKET,
+                                quantity=protected_size,
+                                price=mid_price,
+                                time_in_force="IOC",
+                                post_only=False,
+                                strategy=self.name,
+                            )
+                            self._om.register(order)
+                            mark_protection_order_pending(cfg, protection)
+                            log.warning(
+                                "MM PROTECT %s %s %.8f @ %.8f pnl=%.3f%% peak_dd=%.3f%%",
+                                protection.reason,
+                                symbol,
+                                protected_size,
+                                mid_price,
+                                protection.pnl_pct,
+                                protection.drawdown_from_peak_pct,
+                            )
+                        return
+
+            if local_open or exchange_open:
+                log.info("MM skipped: Bitvavo already has a managed open order.")
+                return
             min_size = max(
                 float(cfg.get("min_order_size", 0.0001)),
                 self.minimum_tradable_base(mid_price),
@@ -229,6 +304,9 @@ class MarketMaker(BaseStrategy):
             if not can_ask and (not cycle_mode or bot_inventory >= min_size):
                 log.info("MM ask skipped: insufficient available bot-owned base balance.")
 
+        if not quote_refresh_ready:
+            return
+
         placed = False
         if can_bid:
             bid_notional = size * bid_price
@@ -253,4 +331,26 @@ class MarketMaker(BaseStrategy):
         if placed:
             cfg["_last_quote_ts"] = now
 
-        # Fills must come from exchange/paper execution events; never self-generate PnL.\n
+        # Fills must come from exchange/paper execution events; never self-generate PnL.
+
+    def on_order_failure(self, order: Order, category: str, reason: str) -> None:
+        if self._config.get("_protection_pending_action"):
+            mark_protection_order_failed(self._config)
+
+    def on_fill(self, order: Order, fill: dict) -> None:
+        if order.side is not OrderSide.SELL:
+            return
+        try:
+            amount = max(0.0, float(fill.get("amount") or fill.get("filledAmount") or 0.0))
+        except (TypeError, ValueError):
+            amount = 0.0
+        if amount <= 0:
+            return
+        current_inventory = max(
+            0.0,
+            float(self._config.get("_bot_base_inventory", 0.0) or 0.0),
+        )
+        mark_protection_sell_fill(
+            self._config,
+            remaining_quantity=max(0.0, current_inventory - amount),
+        )

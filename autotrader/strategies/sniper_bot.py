@@ -5,6 +5,12 @@ import time
 
 from autotrader.core.logger import get_logger
 from autotrader.core.order_manager import Order, OrderSide, OrderType
+from autotrader.core.spot_protection import (
+    evaluate_spot_protection,
+    mark_protection_order_failed,
+    mark_protection_order_pending,
+    mark_protection_sell_fill,
+)
 from autotrader.strategies.base import BaseStrategy
 
 log = get_logger("SniperBot")
@@ -65,14 +71,16 @@ class SniperBot(BaseStrategy):
         now = time.monotonic()
         entry_killed = self._rm.is_killed(self.name)
 
-        if self._om.open_orders(self.name):
-            self._prev_price = current_price
-            return
-        if bool(cfg.get("_exchange_open_orders_snapshot_ready", False)) and int(cfg.get("_exchange_open_order_count", 0)) > 0:
-            self._prev_price = current_price
-            return
+        local_open = bool(self._om.open_orders(self.name))
+        exchange_open = (
+            bool(cfg.get("_exchange_open_orders_snapshot_ready", False))
+            and int(cfg.get("_exchange_open_order_count", 0)) > 0
+        )
 
         if self._position <= 0:
+            if local_open or exchange_open:
+                self._prev_price = current_price
+                return
             if entry_killed:
                 cfg["_autonomous_entry_allowed"] = False
                 cfg["_autonomous_entry_reason"] = "risk_kill_switch"
@@ -183,21 +191,58 @@ class SniperBot(BaseStrategy):
                 )
 
         elif self._position > 0 and self._entry_price > 0:
-            pnl_pct = (current_price - self._entry_price) / self._entry_price
-            min_profit_exit_price = max(0.0, float(cfg.get("_min_profit_exit_price", 0.0)))
-            if pnl_pct >= tp_pct and (min_profit_exit_price <= 0 or current_price >= min_profit_exit_price):
-                self._close_position(symbol, exchange, current_price, "TAKE-PROFIT")
-            elif pnl_pct <= -sl_pct:
-                self._close_position(symbol, exchange, current_price, "STOP-LOSS")
+            protection = evaluate_spot_protection(
+                cfg,
+                entry_price=self._entry_price,
+                current_price=current_price,
+                quantity=self._position,
+            )
+            if protection.exit_required and (local_open or exchange_open):
+                self._prev_price = current_price
+                return
+            if not protection.exit_required and (local_open or exchange_open):
+                self._prev_price = current_price
+                return
+            if protection.exit_required:
+                fraction = protection.fraction
+                self._close_position(
+                    symbol,
+                    exchange,
+                    current_price,
+                    protection.reason.upper(),
+                    fraction=fraction,
+                    protection=protection,
+                )
+            else:
+                pnl_pct = (current_price - self._entry_price) / self._entry_price
+                min_profit_exit_price = max(0.0, float(cfg.get("_min_profit_exit_price", 0.0)))
+                if pnl_pct >= tp_pct and (min_profit_exit_price <= 0 or current_price >= min_profit_exit_price):
+                    self._close_position(symbol, exchange, current_price, "TAKE-PROFIT")
+                elif pnl_pct <= -sl_pct:
+                    self._close_position(symbol, exchange, current_price, "STOP-LOSS")
 
         self._prev_price = current_price
 
-    def _close_position(self, symbol: str, exchange: str, price: float, reason: str) -> None:
+    def _close_position(
+        self,
+        symbol: str,
+        exchange: str,
+        price: float,
+        reason: str,
+        *,
+        fraction: float = 1.0,
+        protection=None,
+    ) -> None:
         available_base = float(self._config.get("_available_base", self._position))
-        size = min(self._position, available_base)
+        requested = self._position * max(0.0, min(1.0, float(fraction)))
+        size = min(requested, self._position, available_base)
         if size <= 0:
             return
         minimum_sell = self.minimum_tradable_base(price)
+        if protection is not None and getattr(protection, "action", "") == "PARTIAL_EXIT":
+            remaining = max(0.0, self._position - size)
+            if size < minimum_sell or (remaining > 0 and remaining < minimum_sell):
+                size = min(self._position, available_base)
         if minimum_sell > 0 and size < minimum_sell:
             self.mark_dust_inventory(size, price)
             log.info(
@@ -221,7 +266,13 @@ class SniperBot(BaseStrategy):
             strategy=self.name,
         )
         self._om.register(order)
+        if protection is not None:
+            mark_protection_order_pending(self._config, protection)
         log.info("SNIPE EXIT %s %s %.8f @ %.4f", reason, symbol, size, price)
+
+    def on_order_failure(self, order: Order, category: str, reason: str) -> None:
+        if self._config.get("_protection_pending_action"):
+            mark_protection_order_failed(self._config)
 
     def on_fill(self, order: Order, fill: dict) -> None:
         amount = float(fill.get("amount") or 0)
@@ -234,6 +285,10 @@ class SniperBot(BaseStrategy):
             self._entry_price = (previous_cost + amount * price) / self._position
         else:
             self._position = max(0.0, self._position - amount)
+            mark_protection_sell_fill(
+                self._config,
+                remaining_quantity=self._position,
+            )
             if self._position == 0:
                 self._entry_price = 0.0
                 # Enforce the configured cooldown from the confirmed exit fill,

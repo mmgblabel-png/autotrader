@@ -186,6 +186,42 @@ class FundLedger:
             "head_hash": expected_prev,
         }
 
+    def has_event_id(self, event_id: str) -> bool:
+        """Return whether an immutable event id is already present."""
+        key = str(event_id).strip()
+        if not key:
+            return False
+        with self._lock, self._connect() as conn:
+            row = conn.execute("SELECT 1 FROM fund_events WHERE event_id = ? LIMIT 1", (key,)).fetchone()
+        return row is not None
+
+    def latest_event(self, event_type: str) -> dict[str, object] | None:
+        """Return the latest decoded event of one type without exposing internals."""
+        key = str(event_type).strip()
+        if not key:
+            return None
+        with self._lock, self._connect() as conn:
+            row = conn.execute(
+                """
+                SELECT seq, event_id, timestamp, event_type, payload_json, event_hash
+                FROM fund_events
+                WHERE event_type = ?
+                ORDER BY seq DESC
+                LIMIT 1
+                """,
+                (key,),
+            ).fetchone()
+        if row is None:
+            return None
+        return {
+            "seq": int(row["seq"]),
+            "event_id": str(row["event_id"]),
+            "timestamp": float(row["timestamp"]),
+            "event_type": str(row["event_type"]),
+            "payload": json.loads(str(row["payload_json"])),
+            "event_hash": str(row["event_hash"]),
+        }
+
     def has_event_type(self, event_type: str) -> bool:
         """Return whether at least one event of the requested type exists."""
         key = str(event_type).strip()
@@ -286,7 +322,12 @@ class FundLedger:
             "event_count": int(row["event_count"] or 0),
         }
 
-    def performance_stats(self, *, now: float | None = None) -> dict[str, object]:
+    def performance_stats(
+        self,
+        *,
+        now: float | None = None,
+        starting_equity_eur: float = 0.0,
+    ) -> dict[str, object]:
         """Aggregate immutable fill accounting into dashboard/reporting metrics."""
         current = time.time() if now is None else float(now)
         with self._lock, self._connect() as conn:
@@ -310,6 +351,9 @@ class FundLedger:
         pnl_24h = 0.0
         pnl_7d = 0.0
         pnl_30d = 0.0
+        cumulative_realized = 0.0
+        equity_curve: list[dict[str, float]] = []
+        starting_equity = max(0.0, float(starting_equity_eur))
 
         for row in rows:
             try:
@@ -320,7 +364,17 @@ class FundLedger:
             except (TypeError, ValueError, json.JSONDecodeError):
                 continue
             realized += pnl
+            cumulative_realized += pnl
             turnover += notional
+            equity_curve.append(
+                {
+                    "timestamp": ts,
+                    "equity_eur": round(
+                        max(0.0, starting_equity + cumulative_realized),
+                        6,
+                    ),
+                }
+            )
             if pnl > 0:
                 positive += 1
                 gross_profit += pnl
@@ -357,6 +411,8 @@ class FundLedger:
             "realized_net_pnl_24h_eur": round(pnl_24h, 6),
             "realized_net_pnl_7d_eur": round(pnl_7d, 6),
             "realized_net_pnl_30d_eur": round(pnl_30d, 6),
+            "equity_curve_basis": "starting_equity_plus_recorded_realized_pnl",
+            "equity_curve": equity_curve[-200:],
         }
 
     def tail(self, limit: int = 25) -> list[dict[str, object]]:

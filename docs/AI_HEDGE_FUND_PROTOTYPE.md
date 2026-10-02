@@ -220,3 +220,109 @@ existing positions. It may never automatically withdraw funds, export private
 keys, send capital to unknown wallets, bridge assets without owner approval or
 accept investor capital merely because an internal diligence gate becomes
 green.
+
+
+## Autonomous Fund Policy
+
+The production fund operates with an immutable safety envelope. Runtime
+configuration may make these limits stricter, but may not loosen them:
+
+- maximum portfolio drawdown: 10%;
+- maximum daily loss: 3%;
+- maximum single position/asset exposure: 20% of verified NAV;
+- minimum cash reserve: 20%;
+- live entry market-quality score must be strictly greater than 85/100;
+- spot only;
+- leverage disabled;
+- margin disabled;
+- futures disabled;
+- borrowing disabled.
+
+The growth-stage controller can remain stricter. For example, the EUR 50
+bootstrap stage keeps a 35% cash reserve and a 16% maximum new trade even
+though the immutable outer envelope permits 20%.
+
+### Autonomous decision cycle
+
+~~~text
+continuous market scanner
+  -> trend / momentum / liquidity / volume / volatility features
+  -> regime + execution-quality scoring
+  -> score must be > 85
+  -> performance-aware risk sizing
+  -> high-volatility size haircut
+  -> Fund Core risk veto
+  -> profitability / fee gate
+  -> exchange rules / balance gate
+  -> reconciled spot execution
+~~~
+
+No setup is forced. If no market clears the quality, risk, cost and execution
+gates, new entry capital stays in cash.
+
+Existing spot inventory is protected independently from new-entry quality:
+
+- stop-loss exits are risk reducing;
+- trailing protection tracks the local position peak;
+- the first qualifying profit can reduce the position partially;
+- a protective exit has cancellation priority over an older managed BUY or
+  profit-limit SELL;
+- protective exits never open a short position.
+
+### Autonomous research
+
+A read-only research scheduler runs independently from execution. By default it:
+
+- evaluates the strongest eligible research markets every six hours;
+- runs historical backtest, walk-forward validation and stress scenarios;
+- runs at least 10,000 empirical block-bootstrap Monte Carlo simulations per
+  selected market;
+- writes compact research results to the hash-chained Fund Ledger;
+- never places, cancels or modifies a live order.
+
+Research slot IDs are durable, so a Railway restart does not repeat an already
+completed expensive run. If market data is not ready, the scheduler does not
+mark the slot complete and retries safely.
+
+### Automatic reporting
+
+When verified NAV is available, the runtime writes idempotent immutable:
+
+- daily fund reports;
+- weekly fund reports;
+- monthly fund reports.
+
+Reports contain risk state, growth stage, recorded-fill performance,
+governance controls and ledger integrity. Unverified NAV is never frozen into
+an official periodic report.
+
+### Dashboard telemetry
+
+The Command Center exposes:
+
+- current verified portfolio NAV and drawdown;
+- active risk exposure and cash-preservation limits;
+- strict >85 live-entry policy;
+- current router-derived market regime;
+- latest autonomous research markets and time;
+- Monte Carlo risk-of-ruin and probability-of-profit statistics when a run is
+  available;
+- a durable realized-equity curve based on starting capital plus recorded
+  realized PnL;
+- open positions and managed orders;
+- autonomous trade rationale and confidence;
+- agent health and performance analytics.
+
+Monte Carlo values are research statistics from sampled historical strategy
+returns, not forecasts or profit guarantees.
+
+### Operator arm boundary
+
+Analysis, scoring, market rotation planning, sizing, paper trading, research,
+backtesting, Monte Carlo, reporting and portfolio optimization operate without
+per-decision user approval.
+
+The production live-arm remains a deliberate runtime security boundary. A
+deployment never arms itself, and no live order can be submitted until the
+existing security, NAV, risk, profitability, allocation, exchange and
+reconciliation readiness gates all pass.

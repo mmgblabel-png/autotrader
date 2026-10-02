@@ -26,8 +26,15 @@ def test_dashboard_exposes_fund_core_command_center():
     assert 'id="prototypeCompliance"' in html
     assert 'id="prototypeInvestor"' in html
     assert 'id="prototypeAgentRows"' in html
+    assert 'id="prototypeEquity"' in html
+    assert 'id="fundAutoPolicy"' in html
+    assert 'id="fundAutoRegime"' in html
+    assert 'id="fundAutoResearch"' in html
+    assert 'id="fundAutoMonte"' in html
     assert "function renderFund(d)" in html
     assert "section('fund')" in html
+    assert "section('fund_automation')" in html
+    assert "renderFundAutomation(fa.value)" in html
     assert "renderFund(fund.value)" in html
 
 

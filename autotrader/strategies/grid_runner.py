@@ -5,6 +5,12 @@ import time
 
 from autotrader.core.logger import get_logger
 from autotrader.core.order_manager import Order, OrderSide, OrderType
+from autotrader.core.spot_protection import (
+    evaluate_spot_protection,
+    mark_protection_order_failed,
+    mark_protection_order_pending,
+    mark_protection_sell_fill,
+)
 from autotrader.strategies.base import BaseStrategy
 
 log = get_logger("GridRunner")
@@ -25,10 +31,6 @@ class GridRunner(BaseStrategy):
         current_price = float(cfg.get("_current_price", 0.0))
         if current_price <= 0:
             return
-        if self._om.open_orders(self.name):
-            return
-        if bool(cfg.get("_exchange_open_orders_snapshot_ready", False)) and int(cfg.get("_exchange_open_order_count", 0)) > 0:
-            return
 
         symbol = str(cfg.get("symbol", "SOL-EUR")).upper()
         exchange = str(cfg.get("exchange", "bitvavo")).lower()
@@ -42,6 +44,81 @@ class GridRunner(BaseStrategy):
         available_base = float(cfg.get("_available_base", 0.0))
         bot_inventory = max(0.0, float(cfg.get("_bot_base_inventory", 0.0)))
         entry_price = max(0.0, float(cfg.get("_bot_average_entry_price", 0.0)))
+        local_open = bool(self._om.open_orders(self.name))
+        exchange_open = (
+            bool(cfg.get("_exchange_open_orders_snapshot_ready", False))
+            and int(cfg.get("_exchange_open_order_count", 0)) > 0
+        )
+
+        if bot_inventory > 0:
+            protection = evaluate_spot_protection(
+                cfg,
+                entry_price=entry_price,
+                current_price=current_price,
+                quantity=bot_inventory,
+            )
+            if protection.exit_required:
+                if local_open or exchange_open:
+                    log.warning(
+                        "GRID protective exit waiting for open order cancel: %s reason=%s pnl=%.3f%%",
+                        symbol,
+                        protection.reason,
+                        protection.pnl_pct,
+                    )
+                    return
+                protected_size = bot_inventory * protection.fraction
+                protected_size = min(
+                    bot_inventory,
+                    protected_size,
+                    available_base if live_snapshot else bot_inventory,
+                )
+                minimum_sell = self.minimum_tradable_base(current_price)
+                if protection.action == "PARTIAL_EXIT":
+                    remaining = max(0.0, bot_inventory - protected_size)
+                    if (
+                        protected_size < minimum_sell
+                        or (remaining > 0 and remaining < minimum_sell)
+                    ):
+                        protected_size = min(
+                            bot_inventory,
+                            available_base if live_snapshot else bot_inventory,
+                        )
+                if protected_size > 0 and (
+                    minimum_sell <= 0 or protected_size >= minimum_sell
+                ):
+                    notional = protected_size * current_price
+                    if self._rm.check_order(
+                        self.name,
+                        notional,
+                        symbol=symbol,
+                        risk_reducing=True,
+                    ):
+                        order = Order(
+                            exchange=exchange,
+                            symbol=symbol,
+                            side=OrderSide.SELL,
+                            order_type=OrderType.MARKET,
+                            quantity=protected_size,
+                            price=current_price,
+                            time_in_force="IOC",
+                            post_only=False,
+                            strategy=self.name,
+                        )
+                        self._om.register(order)
+                        mark_protection_order_pending(cfg, protection)
+                        log.warning(
+                            "GRID PROTECT %s %s %.8f @ %.8f pnl=%.3f%% peak_dd=%.3f%%",
+                            protection.reason,
+                            symbol,
+                            protected_size,
+                            current_price,
+                            protection.pnl_pct,
+                            protection.drawdown_from_peak_pct,
+                        )
+                    return
+
+        if local_open or exchange_open:
+            return
 
         if bot_inventory > 0:
             sell_size = min(size, bot_inventory, available_base if live_snapshot else bot_inventory)
@@ -130,6 +207,8 @@ class GridRunner(BaseStrategy):
         log.info("GRID BUY %s %.8f @ %.8f", symbol, buy_size, buy_price)
 
     def on_order_failure(self, order: Order, category: str, reason: str) -> None:
+        if self._config.get("_protection_pending_action"):
+            mark_protection_order_failed(self._config)
         if category == "allocation":
             cooldown = max(1.0, float(self._config.get("allocation_failure_cooldown_seconds", 5.0)))
         else:
@@ -157,6 +236,10 @@ class GridRunner(BaseStrategy):
             entry = total_cost / inventory
         else:
             inventory = max(0.0, inventory - amount)
+            mark_protection_sell_fill(
+                self._config,
+                remaining_quantity=inventory,
+            )
             if inventory == 0:
                 entry = 0.0
         self._config["_bot_base_inventory"] = inventory
