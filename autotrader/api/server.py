@@ -2411,7 +2411,8 @@ def portfolio_goal_status() -> dict[str, object]:
     rows = _live_profit_snapshots(agent)
     economic_pnl = sum(float(row.get("economic_pnl_eur") or 0.0) for row in rows)
     fund_state = agent.fund.status()
-    verified_nav = fund_state.get("nav_eur") if fund_state.get("nav_verified") else None
+    fund_risk = fund_state.get("risk", {}) if isinstance(fund_state, dict) else {}
+    verified_nav = fund_risk.get("nav_eur") if fund_risk.get("nav_verified") else None
     current_equity = (
         float(verified_nav)
         if verified_nav is not None
