@@ -156,6 +156,17 @@ class SniperBot(BaseStrategy):
         size = min(self._position, available_base)
         if size <= 0:
             return
+        minimum_sell = self.minimum_tradable_base(price)
+        if minimum_sell > 0 and size < minimum_sell:
+            self.mark_dust_inventory(size, price)
+            log.info(
+                "SNIPE dust ignored: %s inventory %.8f below tradable minimum %.8f.",
+                symbol,
+                size,
+                minimum_sell,
+            )
+            return
+        self.clear_dust_inventory()
         notional = size * price
         if not self._rm.check_order(self.name, notional, risk_reducing=True):
             return

@@ -1,3 +1,4 @@
+from decimal import Decimal
 from pathlib import Path
 
 from autotrader.connectors.bitvavo import BitvavoAdapter
@@ -86,3 +87,31 @@ def test_recent_order_activity_is_complete_and_redacted(tmp_path: Path):
     assert "exchange_order_id" not in row
     assert "raw_json" not in row
     journal.close()
+
+
+def test_strategy_active_markets_ignores_subminimum_dust(tmp_path):
+    journal = OrderJournal(str(tmp_path / "dust.sqlite3"))
+    cid = "dust-buy-1"
+    journal.record_intent(
+        client_order_id=cid,
+        market="DOGE-EUR",
+        side="buy",
+        order_type="market",
+        amount="40",
+        price="0.10",
+    )
+    journal.set_strategy(cid, "GridRunner")
+    journal.update(cid, "filled", {"status": "filled"})
+    journal.record_fill(cid, {
+        "fillId": "dust-fill-1",
+        "amount": "40",
+        "price": "0.10",
+        "fee": "0",
+        "feeCurrency": "EUR",
+    })
+
+    assert journal.strategy_active_markets("GridRunner")
+    assert journal.strategy_active_markets(
+        "GridRunner",
+        min_inventory_quote_value=Decimal("5"),
+    ) == []

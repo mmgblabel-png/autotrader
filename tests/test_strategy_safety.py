@@ -163,3 +163,114 @@ def test_market_maker_dynamic_eur_sizing_supports_low_price_eur_market(tmp_path)
     assert 5.0 <= order.quantity * order.price <= 7.0
     ratio = order.price / 0.000001
     assert abs(ratio - round(ratio)) < 1e-6
+
+
+def test_grid_ignores_subminimum_dust_instead_of_retrying_sell(tmp_path):
+    om = OrderManager()
+    strategy = GridRunner(
+        om,
+        RiskManager(),
+        ProfitEngine(export_dir=str(tmp_path)),
+        {
+            "enabled": True,
+            "symbol": "DOGE-EUR",
+            "exchange": "bitvavo",
+            "order_value_eur": 6.0,
+            "entry_offset_pct": 0.6,
+            "exit_markup_pct": 0.8,
+            "_current_price": 0.085,
+            "_min_order_base": 0.0,
+            "_min_order_quote": 5.0,
+            "_live_balance_snapshot_ready": True,
+            "_available_quote": 50.0,
+            "_available_base": 11.8,
+            "_bot_base_inventory": 11.8,
+            "_bot_average_entry_price": 0.084,
+            "_exchange_open_orders_snapshot_ready": True,
+            "_exchange_open_order_count": 0,
+            "_autonomous_entry_allowed": False,
+        },
+    )
+    strategy.start()
+    strategy.tick()
+    assert om.open_orders("GridRunner") == []
+    assert strategy._config["_dust_inventory_ignored"] is True
+    assert strategy._config["_dust_base_inventory"] == 11.8
+
+
+def test_grid_kill_switch_blocks_entries_but_allows_owned_exit(tmp_path):
+    from autotrader.core.risk_manager import StrategyRiskConfig
+
+    om = OrderManager()
+    rm = RiskManager({"GridRunner": StrategyRiskConfig(max_daily_loss=0.01)})
+    rm.record_loss("GridRunner", 0.02)
+    strategy = GridRunner(
+        om,
+        rm,
+        ProfitEngine(export_dir=str(tmp_path)),
+        {
+            "enabled": True,
+            "symbol": "SOL-EUR",
+            "exchange": "bitvavo",
+            "order_value_eur": 6.0,
+            "entry_offset_pct": 0.6,
+            "exit_markup_pct": 0.8,
+            "_current_price": 100.0,
+            "_min_order_base": 0.01,
+            "_min_order_quote": 5.0,
+            "_live_balance_snapshot_ready": True,
+            "_available_quote": 50.0,
+            "_available_base": 0.1,
+            "_bot_base_inventory": 0.1,
+            "_bot_average_entry_price": 95.0,
+            "_exchange_open_orders_snapshot_ready": True,
+            "_exchange_open_order_count": 0,
+        },
+    )
+    strategy.start()
+    strategy.tick()
+    orders = om.open_orders("GridRunner")
+    assert len(orders) == 1
+    assert orders[0].side is OrderSide.SELL
+
+
+def test_market_maker_kill_switch_allows_risk_reducing_sell(tmp_path):
+    from autotrader.core.risk_manager import StrategyRiskConfig
+    from autotrader.strategies.market_maker import MarketMaker
+
+    om = OrderManager()
+    rm = RiskManager({"MarketMaker": StrategyRiskConfig(max_daily_loss=0.01)})
+    rm.record_loss("MarketMaker", 0.02)
+    strategy = MarketMaker(
+        om,
+        rm,
+        ProfitEngine(export_dir=str(tmp_path)),
+        {
+            "enabled": True,
+            "symbol": "SUI-EUR",
+            "exchange": "bitvavo",
+            "order_value_eur": 6.0,
+            "target_spread": 0.8,
+            "cycle_exit_markup_pct": 0.8,
+            "estimated_fee_pct": 0.25,
+            "estimated_slippage_pct": 0.05,
+            "inventory_cycle_mode": True,
+            "quote_refresh_seconds": 0,
+            "_mid_price": 1.0,
+            "_current_price": 1.0,
+            "_min_order_base": 1.0,
+            "_min_order_quote": 5.0,
+            "_live_balance_snapshot_ready": True,
+            "_available_quote": 50.0,
+            "_available_base": 8.0,
+            "_bot_base_inventory": 8.0,
+            "_bot_average_entry_price": 0.95,
+            "_exchange_open_orders_snapshot_ready": True,
+            "_exchange_open_order_count": 0,
+        },
+    )
+    strategy.start()
+    strategy.tick()
+    orders = om.open_orders("MarketMaker")
+    assert len(orders) == 1
+    assert orders[0].side is OrderSide.SELL

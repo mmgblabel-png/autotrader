@@ -303,7 +303,12 @@ class AutoTrader:
         """Restore dynamic strategy ownership before live runtimes start."""
         for key, strategy in self._strategies.items():
             try:
-                active = self._bitvavo.journal.strategy_active_markets(strategy.name)
+                auto_cfg = self._config.get("autonomous_execution", {}) or {}
+                dust_floor = Decimal(str(auto_cfg.get("minimum_live_order_eur", 5.0)))
+                active = self._bitvavo.journal.strategy_active_markets(
+                    strategy.name,
+                    min_inventory_quote_value=dust_floor,
+                )
             except Exception as exc:
                 log.warning("[%s] market restore skipped: %s", strategy.name, type(exc).__name__)
                 continue

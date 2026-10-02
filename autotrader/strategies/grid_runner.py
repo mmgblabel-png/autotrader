@@ -16,13 +16,12 @@ class GridRunner(BaseStrategy):
     name = "GridRunner"
 
     def tick(self) -> None:
-        if not self._running or self._rm.is_killed(self.name):
+        if not self._running:
             return
 
         cfg = self._config
+        entry_killed = self._rm.is_killed(self.name)
         cooldown_until = float(cfg.get("_failure_cooldown_until", 0.0))
-        if cooldown_until > time.time():
-            return
         current_price = float(cfg.get("_current_price", 0.0))
         if current_price <= 0:
             return
@@ -46,27 +45,45 @@ class GridRunner(BaseStrategy):
 
         if bot_inventory > 0:
             sell_size = min(size, bot_inventory, available_base if live_snapshot else bot_inventory)
-            if sell_size <= 0:
+            minimum_sell = self.minimum_tradable_base(current_price)
+            if sell_size > 0 and (minimum_sell <= 0 or sell_size >= minimum_sell):
+                self.clear_dust_inventory()
+                min_profit_exit_price = max(0.0, float(cfg.get("_min_profit_exit_price", 0.0)))
+                price = max(
+                    current_price * (1 + entry_offset),
+                    entry_price * (1 + exit_markup),
+                    min_profit_exit_price,
+                )
+                notional = sell_size * current_price
+                if not self._rm.check_order(self.name, notional, risk_reducing=True):
+                    return
+                self._om.register(Order(
+                    exchange=exchange,
+                    symbol=symbol,
+                    side=OrderSide.SELL,
+                    order_type=OrderType.LIMIT,
+                    quantity=sell_size,
+                    price=round(price, 8),
+                    strategy=self.name,
+                ))
+                log.info("GRID SELL %s %.8f @ %.8f", symbol, sell_size, price)
                 return
-            min_profit_exit_price = max(0.0, float(cfg.get("_min_profit_exit_price", 0.0)))
-            price = max(
-                current_price * (1 + entry_offset),
-                entry_price * (1 + exit_markup),
-                min_profit_exit_price,
+            self.mark_dust_inventory(bot_inventory, current_price)
+            log.info(
+                "GRID dust ignored: %s inventory %.8f below tradable minimum %.8f.",
+                symbol,
+                bot_inventory,
+                minimum_sell,
             )
-            notional = sell_size * current_price
-            if not self._rm.check_order(self.name, notional, risk_reducing=True):
-                return
-            self._om.register(Order(
-                exchange=exchange,
-                symbol=symbol,
-                side=OrderSide.SELL,
-                order_type=OrderType.LIMIT,
-                quantity=sell_size,
-                price=round(price, 8),
-                strategy=self.name,
-            ))
-            log.info("GRID SELL %s %.8f @ %.8f", symbol, sell_size, price)
+        else:
+            self.clear_dust_inventory()
+
+        if entry_killed:
+            cfg["_autonomous_entry_allowed"] = False
+            cfg["_autonomous_entry_reason"] = "risk_kill_switch"
+            return
+
+        if cooldown_until > time.time():
             return
 
         if not bool(cfg.get("_autonomous_entry_allowed", True)):

@@ -338,7 +338,12 @@ class OrderJournal:
             ).fetchall()
         return [dict(row) for row in rows]
 
-    def strategy_active_markets(self, strategy: str) -> list[dict[str, Any]]:
+    def strategy_active_markets(
+        self,
+        strategy: str,
+        *,
+        min_inventory_quote_value: Decimal = Decimal("0"),
+    ) -> list[dict[str, Any]]:
         """Return bot-owned markets that still need runtime management.
 
         A market is active when this strategy has a durable nonterminal order or
@@ -366,13 +371,26 @@ class OrderJournal:
                 continue
             inventory = self.inventory_cost_basis(market, strategy)
             quantity = max(Decimal("0"), Decimal(str(inventory.get("quantity") or "0")))
+            average_entry = max(
+                Decimal("0"),
+                Decimal(str(inventory.get("average_entry_price") or "0")),
+            )
             open_orders = int(row["open_orders"] or 0)
-            if open_orders > 0 or quantity > 0:
+            inventory_value = quantity * average_entry
+            inventory_is_dust = (
+                open_orders <= 0
+                and quantity > 0
+                and min_inventory_quote_value > 0
+                and average_entry > 0
+                and inventory_value < min_inventory_quote_value
+            )
+            if open_orders > 0 or (quantity > 0 and not inventory_is_dust):
                 active.append({
                     "market": market,
                     "open_orders": open_orders,
                     "inventory_quantity": str(quantity),
-                    "average_entry_price": str(inventory.get("average_entry_price") or "0"),
+                    "inventory_quote_value": str(inventory_value),
+                    "average_entry_price": str(average_entry),
                 })
         active.sort(
             key=lambda x: (
