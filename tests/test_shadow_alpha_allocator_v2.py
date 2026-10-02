@@ -239,3 +239,47 @@ def test_dashboard_contains_shadow_lab_and_allocator():
     assert "/api/fees/live" in html
     assert 'id="actualmakerfee"' in html
     assert 'id="feerealityrows"' in html
+
+
+def test_shadow_trailing_peak_survives_fresh_runtime_config_and_restart(tmp_path: Path):
+    path = tmp_path / "shadow.json"
+    engine = ShadowStrategyEngine({
+        "path": str(path),
+        "fee_pct_each_leg": 0.0,
+        "slippage_pct_each_leg": 0.0,
+    })
+    state = ShadowStats(
+        prices=[100.0] * 20,
+        position_qty=0.06,
+        entry_price=100.0,
+        entry_cost_eur=6.0,
+        position_peak_price=100.0,
+        strategy_version="v1",
+    )
+    engine._states["sniper_v2@TEST-EUR"] = state
+    cfg = {
+        "kind": "sniper_v2",
+        "symbol": "TEST-EUR",
+        "ema_fast": 3,
+        "ema_slow": 6,
+        "momentum_lookback": 2,
+        "take_profit_pct": 10.0,
+        "stop_loss_pct": 10.0,
+        "trailing_exit_pct": 0.5,
+        "min_exit_net_pct": 0.75,
+    }
+
+    engine.update("sniper_v2@TEST-EUR", 102.0, dict(cfg))
+    assert engine._states["sniper_v2@TEST-EUR"].position_peak_price == 102.0
+    engine.flush()
+
+    restored = ShadowStrategyEngine({
+        "path": str(path),
+        "fee_pct_each_leg": 0.0,
+        "slippage_pct_each_leg": 0.0,
+    })
+    restored.update("sniper_v2@TEST-EUR", 101.0, dict(cfg))
+    restored_state = restored._states["sniper_v2@TEST-EUR"]
+    assert restored_state.completed_trades == 1
+    assert restored_state.position_qty == 0.0
+    assert restored_state.last_signal == "trailing_profit_exit"
