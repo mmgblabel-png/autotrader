@@ -583,3 +583,28 @@ def test_non_eur_market_is_shadow_only_until_accounting_is_enabled():
     row = next(x for x in plan["rows"] if x["strategy"] == "GridRunner")
     assert row["desired_market"] != "ETH-BTC"
     assert plan["hard_rules"]["allow_non_eur_live"] is False
+
+
+def test_dust_inventory_is_economically_flat_and_does_not_block_switch():
+    agent = _agent(inventory={("SOL-EUR", "GridRunner"): 0.05})
+    agent._strategies["grid"]._config["_min_order_base"] = 0.10
+    agent._strategies["grid"]._config["_current_price"] = 100.0
+    engine = AutonomousDecisionEngine({
+        "enabled": True,
+        "apply_live": True,
+        "min_score": 68,
+        "min_confidence": 0.62,
+        "min_signal_strength": 62,
+        "switch_cooldown_seconds": 0,
+        "strategy_markets": {
+            "market_maker": ["BTC-EUR"],
+            "grid": ["SOL-EUR", "ETH-EUR"],
+            "sniper": ["XRP-EUR", "ADA-EUR"],
+        },
+    })
+    plan = engine.plan(agent=agent, router_payload=_router(), risk_payload=_risk(), armed=True)
+    row = next(x for x in plan["rows"] if x["strategy"] == "GridRunner")
+    assert row["dust_inventory"] is True
+    assert row["flat"] is True
+    assert row["desired_market"] == "ETH-EUR"
+    assert row["may_switch"] is True
