@@ -236,6 +236,8 @@ autonomous_execution:
   min_signal_strength: 62.0
   minimum_live_order_eur: 5.0
   max_size_score: 92.0
+  high_volatility_bps: 180.0
+  high_volatility_size_multiplier: 0.50
   max_size_confidence: 0.75
   exposure_safety_buffer_eur: 0.10
   switch_cooldown_seconds: 90
