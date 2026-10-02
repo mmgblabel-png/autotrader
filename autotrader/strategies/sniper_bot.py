@@ -21,6 +21,7 @@ class SniperBot(BaseStrategy):
         self._entry_price = 0.0
         self._prev_price = 0.0
         self._last_entry_ts = 0.0
+        self._last_entry_attempt_ts = 0.0
 
     def on_market_switch(self, old_market: str, new_market: str) -> None:
         super().on_market_switch(old_market, new_market)
@@ -28,6 +29,7 @@ class SniperBot(BaseStrategy):
         self._entry_price = 0.0
         self._prev_price = 0.0
         self._last_entry_ts = 0.0
+        self._last_entry_attempt_ts = 0.0
 
     def _sync_live_inventory(self) -> None:
         cfg = self._config
@@ -88,16 +90,36 @@ class SniperBot(BaseStrategy):
             signal_strength = float(cfg.get("_autonomous_signal_strength", 0.0) or 0.0)
             min_signal_strength = float(cfg.get("_autonomous_min_signal_strength", 62.0) or 62.0)
             signal_direction = str(cfg.get("_autonomous_signal_direction", "WAIT")).upper()
+            router_momentum_pct = float(cfg.get("_autonomous_momentum_pct", 0.0) or 0.0)
+            min_router_momentum_pct = max(
+                0.0,
+                float(cfg.get("autonomous_min_momentum_pct", 0.12) or 0.12),
+            )
+            max_router_momentum_pct = max(
+                min_router_momentum_pct,
+                float(cfg.get("autonomous_max_momentum_pct", 0.80) or 0.80),
+            )
+            router_momentum_ok = (
+                router_momentum_pct >= min_router_momentum_pct
+                and router_momentum_pct <= max_router_momentum_pct
+            )
             router_trigger = (
                 signal_direction == "LONG"
                 and signal_strength >= min_signal_strength
+                and router_momentum_ok
             )
             local_trigger = self._prev_price > 0 and move >= momentum_pct
-            # Once autonomous metadata exists, the router is the entry authority.
-            # The legacy one-tick trigger remains only for non-autonomous use.
+            # In autonomous mode a generic router score is not enough for a
+            # momentum strategy. Require sustained router momentum as well.
             has_router_signal = "_autonomous_signal_direction" in cfg
             entry_trigger = router_trigger if has_router_signal else local_trigger
-            if entry_trigger and now - self._last_entry_ts >= cooldown:
+            attempt_cooldown = max(
+                1.0,
+                float(cfg.get("entry_attempt_cooldown_seconds", 30.0) or 30.0),
+            )
+            exit_cooldown_ready = now - self._last_entry_ts >= cooldown
+            attempt_ready = now - self._last_entry_attempt_ts >= attempt_cooldown
+            if entry_trigger and exit_cooldown_ready and attempt_ready:
                 required_edge = max(0.0, float(cfg.get("_required_entry_edge_pct", 0.0)))
                 if required_edge > 0 and tp_target_value < required_edge:
                     log.info(
@@ -107,12 +129,27 @@ class SniperBot(BaseStrategy):
                     )
                     self._prev_price = current_price
                     return
-                notional = size * current_price
+                entry_slippage_cap_pct = max(
+                    0.01,
+                    float(
+                        cfg.get(
+                            "entry_max_slippage_pct",
+                            cfg.get("max_slippage_pct", 0.12),
+                        ) or 0.12
+                    ),
+                )
+                entry_cap_price = current_price * (1.0 + entry_slippage_cap_pct / 100.0)
+                if order_value > 0:
+                    size = order_value / entry_cap_price
+                notional = size * entry_cap_price
                 router_slippage_pct = max(
                     0.0,
                     float(cfg.get("_autonomous_expected_slippage_bps", 0.0) or 0.0) / 100.0,
                 )
-                slippage_pct = max(abs(move) * 100 * 0.5, router_slippage_pct)
+                slippage_pct = max(
+                    abs(move) * 100 * 0.5,
+                    router_slippage_pct,
+                )
                 available_quote = float(cfg.get("_available_quote", 0.0))
                 if bool(cfg.get("_live_balance_snapshot_ready", False)) and available_quote < notional:
                     self._prev_price = current_price
@@ -124,21 +161,25 @@ class SniperBot(BaseStrategy):
                     exchange=exchange,
                     symbol=symbol,
                     side=OrderSide.BUY,
-                    order_type=OrderType.MARKET,
+                    order_type=OrderType.LIMIT,
                     quantity=size,
-                    price=current_price,
+                    price=entry_cap_price,
+                    time_in_force="IOC",
+                    post_only=False,
                     strategy=self.name,
                 )
                 self._om.register(order)
-                self._last_entry_ts = now
+                self._last_entry_attempt_ts = now
                 log.info(
-                    "SNIPE ENTER BUY %s %.8f @ %.4f (router=%s signal=%.1f move=%.3f%%)",
+                    "SNIPE ENTER IOC %s %.8f cap=%.4f observed=%.4f "
+                    "(signal=%.1f router_momentum=%.3f%% slippage_cap=%.3f%%)",
                     symbol,
                     size,
+                    entry_cap_price,
                     current_price,
-                    router_trigger,
                     signal_strength,
-                    move * 100,
+                    router_momentum_pct,
+                    entry_slippage_cap_pct,
                 )
 
         elif self._position > 0 and self._entry_price > 0:
