@@ -424,3 +424,41 @@ def test_bitvavo_account_nav_fails_closed_for_unpriced_positive_asset():
     assert valuation["verified"] is False
     assert valuation["nav_eur"] == 50.0
     assert valuation["unpriced_assets"] == ["UNKNOWN"]
+
+
+def test_verified_high_water_survives_restart_and_preserves_drawdown_gate(tmp_path):
+    config = _fund_config(
+        tmp_path,
+        initial_nav_eur=100.0,
+        max_portfolio_drawdown_pct=8.0,
+    )
+    first = HedgeFundEngine(config)
+    first.refresh_nav(120.0, source="bitvavo", verified=True)
+
+    assert first.ledger.has_event_type("nav_high_water") is True
+    assert first.ledger.max_verified_nav_eur() == 120.0
+
+    restarted = HedgeFundEngine(config)
+    assert restarted.status()["risk"]["peak_nav_eur"] == 120.0
+    restarted.refresh_nav(110.0, source="bitvavo", verified=True)
+
+    status = restarted.status()["risk"]
+    assert status["drawdown_pct"] > 8.0
+    decision = restarted.pretrade_check(
+        strategy="GridRunner",
+        symbol="ETH-EUR",
+        notional_eur=1.0,
+    )
+    assert decision.accepted is False
+    assert "drawdown" in decision.reason.lower()
+
+
+def test_unverified_nav_is_not_restored_as_high_water(tmp_path):
+    config = _fund_config(tmp_path, initial_nav_eur=100.0)
+    first = HedgeFundEngine(config)
+    first.refresh_nav(1000.0, source="local-estimate", verified=False)
+
+    assert first.ledger.max_verified_nav_eur() == 0.0
+
+    restarted = HedgeFundEngine(config)
+    assert restarted.status()["risk"]["peak_nav_eur"] == 100.0
