@@ -6,7 +6,7 @@ fund:
   fund_id: autotrader-personal-fund
   base_currency: EUR
   initial_nav_eur: 50
-  target_nav_eur: 25000
+  target_nav_eur: 50000
   protected_capital_floor_eur: 25000
   lock_floor_after_target_reached: true
   capital_floor_buffer_pct: 2.0
@@ -22,6 +22,8 @@ fund:
   min_signal_confidence: 0.62
   signal_half_life_seconds: 900
   signal_buffer_size: 5000
+  track_record_min_days: 365
+  track_record_min_fills: 100
   agent_weights:
     market_research: 1.0
     trend_detection: 1.0
@@ -56,7 +58,7 @@ portfolio:
 portfolio_goal:
   enabled: true
   starting_equity_eur: 50
-  target_equity_eur: 25000
+  target_equity_eur: 50000
   target_days: 365
   milestones_eur:
     - 100
@@ -67,6 +69,7 @@ portfolio_goal:
     - 5000
     - 10000
     - 25000
+    - 50000
   goal_is_risk_input: false
   increase_risk_to_catch_up: false
 
