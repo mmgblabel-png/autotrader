@@ -1894,6 +1894,8 @@ def live_readiness():
     profit_policy_satisfied = bool(target_edges) and all(
         edge >= required_entry_edge_pct for edge in target_edges.values()
     )
+    fund_risk_status = agent.fund.risk.status()
+    fund_nav_verified_fresh = agent.fund.risk.live_nav_is_fresh()
     gates = {
         "execution_mode_live": os.getenv("EXECUTION_MODE", "paper").strip().lower() == "live",
         "live_execution_approved": os.getenv("LIVE_EXECUTION_APPROVED", "false").strip().lower() == "true",
@@ -1908,6 +1910,7 @@ def live_readiness():
         "exchange_open_orders_safe": exchange_open_orders_safe,
         "journal_state_reconciled": journal_state_reconciled,
         "profit_policy_satisfied": profit_policy_satisfied,
+        "fund_nav_verified_fresh": fund_nav_verified_fresh,
         "live_strategy_configured": bool(approved_live),
         "live_strategy_running": any(state.get("running") for state in approved_live),
         "running_strategies_approved": all(
@@ -1975,6 +1978,10 @@ def live_readiness():
             "exchange_open_orders_safe": exchange_open_orders_safe,
             "journal_inflight_safe": journal_inflight_safe,
             "resume_safe": resume_safe,
+            "fund_nav_verified": bool(fund_risk_status.get("nav_verified")),
+            "fund_nav_source": fund_risk_status.get("nav_source"),
+            "fund_nav_age_seconds": fund_risk_status.get("nav_age_seconds"),
+            "fund_nav_eur": fund_risk_status.get("nav_eur"),
         },
         "journal": journal_state,
         "journals": journal_states,
