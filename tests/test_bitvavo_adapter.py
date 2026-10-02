@@ -311,6 +311,7 @@ def test_ioc_limit_order_sends_non_post_only_execution(monkeypatch, tmp_path):
     monkeypatch.setenv("BITVAVO_DRY_RUN", "false")
     monkeypatch.setenv("LIVE_EXECUTION_APPROVED", "true")
     monkeypatch.setenv("LIVE_EXECUTION_ADAPTER_INSTALLED", "true")
+    monkeypatch.setenv("BITVAVO_LIVE_TRADING", "true")
     monkeypatch.setenv("EMERGENCY_STOP", "false")
     monkeypatch.setenv("LIVE_TRADING_CONFIRMATION", "I_UNDERSTAND_LIVE_ORDERS")
     adapter = BitvavoAdapter(
