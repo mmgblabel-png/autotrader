@@ -9,7 +9,7 @@ class AllowRisk:
     def is_killed(self, _name):
         return False
 
-    def check_order(self, _name, _notional):
+    def check_order(self, _name, _notional, *, risk_reducing=False, **_kwargs):
         return True
 
 
