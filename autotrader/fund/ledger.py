@@ -358,7 +358,7 @@ class FundLedger:
 
         wins = sum(1 for value in exit_pnls if value > 0)
         losses = sum(1 for value in exit_pnls if value < 0)
-        completed_exits = wins + losses
+        completed_exits = len(exit_pnls)
         elapsed_days = 0
         if first_verified_at is not None and last_verified_at is not None:
             elapsed_days = int(
