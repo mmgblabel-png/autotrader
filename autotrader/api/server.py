@@ -988,6 +988,22 @@ async def _tick_loop(app: FastAPI, agent: AutoTrader) -> None:
         await asyncio.sleep(app.state.tick_interval_seconds)
 
 
+def _shadow_fee_ranked_candidates(
+    rows: list[dict[str, object]],
+    limit: int,
+) -> list[dict[str, object]]:
+    """Rank eligible shadow candidates by economic score without touching live score."""
+    eligible = [row for row in (rows or []) if bool(row.get("eligible"))]
+    return sorted(
+        eligible,
+        key=lambda row: (
+            float(row.get("economic_shadow_score", row.get("score", 0.0)) or 0.0),
+            float(row.get("score") or 0.0),
+        ),
+        reverse=True,
+    )[: max(1, int(limit))]
+
+
 async def _shadow_strategy_loop(app: FastAPI, agent: AutoTrader) -> None:
     """Run many candidate strategy/market combinations without sending orders."""
     cfg = agent._config.get("shadow_lab", {}) or {}
@@ -1012,10 +1028,10 @@ async def _shadow_strategy_loop(app: FastAPI, agent: AutoTrader) -> None:
                     if not bool(base_cfg.get("enabled", True)):
                         continue
                     profile = profile_map.get(str(base_cfg.get("kind", name)).lower(), "grid")
-                    candidates = [
-                        row for row in (rankings.get(profile, []) or [])
-                        if bool(row.get("eligible"))
-                    ][:dynamic_per_strategy]
+                    candidates = _shadow_fee_ranked_candidates(
+                        list(rankings.get(profile, []) or []),
+                        dynamic_per_strategy,
+                    )
                     if not candidates:
                         symbol = str(base_cfg.get("symbol", "")).upper().strip()
                         if symbol:

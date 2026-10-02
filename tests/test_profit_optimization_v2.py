@@ -7,6 +7,7 @@ from autotrader.core.profit_optimization import (
     BinanceReferenceFeed,
     CalculatedRiskSizer,
     ExecutionV2Advisor,
+    MarketSnapshot,
     OpportunityRouter,
     PortfolioGoalTracker,
     fee_efficiency_rows,
@@ -439,3 +440,65 @@ def test_shadow_batch_update_can_flush_once(tmp_path: Path):
     assert not (tmp_path / "shadow.json").exists()
     engine.flush()
     assert (tmp_path / "shadow.json").exists()
+
+
+def test_opportunity_router_fee_quality_prefers_cheaper_quote_when_quality_equal():
+    adapter = FakeBookAdapter()
+    router = OpportunityRouter(adapter, {
+        "markets": ["AAA-EUR", "AAA-USDC"],
+        "fee_quality_weight": 0.10,
+        "maker_fee_bps_by_quote": {"EUR": 15.0, "USDC": 5.0},
+        "taker_fee_bps_by_quote": {"EUR": 25.0, "USDC": 5.0},
+    })
+    snap = MarketSnapshot(
+        market="AAA-EUR",
+        bid=100.0,
+        ask=100.1,
+        bid_size=100.0,
+        ask_size=100.0,
+        mid=100.05,
+        spread_bps=9.995,
+        momentum_pct=0.0,
+        volatility_pct=0.18,
+        liquidity_eur=10000.0,
+        imbalance_pct=0.0,
+        observed_at=time.time(),
+        expected_slippage_bps=0.0,
+    )
+    router._latest = {
+        "AAA-EUR": snap,
+        "AAA-USDC": MarketSnapshot(**{**snap.__dict__, "market": "AAA-USDC"}),
+    }
+    rows = router.rankings()["rankings"]["market_maker"]
+    by_market = {row["market"]: row for row in rows}
+    assert by_market["AAA-USDC"]["estimated_execution_fee_bps"] == 5.0
+    assert by_market["AAA-EUR"]["estimated_execution_fee_bps"] == 15.0
+    assert by_market["AAA-USDC"]["score"] == by_market["AAA-EUR"]["score"]
+    assert by_market["AAA-USDC"]["economic_shadow_score"] > by_market["AAA-EUR"]["economic_shadow_score"]
+
+
+def test_opportunity_router_uses_taker_fee_profile_for_sniper():
+    adapter = FakeBookAdapter()
+    router = OpportunityRouter(adapter, {
+        "markets": ["AAA-EUR"],
+        "taker_fee_bps_by_quote": {"EUR": 25.0},
+    })
+    snap = MarketSnapshot(
+        market="AAA-EUR",
+        bid=100.0,
+        ask=100.1,
+        bid_size=100.0,
+        ask_size=100.0,
+        mid=100.05,
+        spread_bps=9.995,
+        momentum_pct=0.2,
+        volatility_pct=0.18,
+        liquidity_eur=10000.0,
+        imbalance_pct=10.0,
+        observed_at=time.time(),
+        expected_slippage_bps=0.0,
+    )
+    router._latest = {"AAA-EUR": snap}
+    row = router.rankings()["rankings"]["sniper"][0]
+    assert row["fee_profile"] == "taker"
+    assert row["estimated_round_trip_fee_bps"] == 50.0

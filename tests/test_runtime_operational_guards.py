@@ -5,6 +5,7 @@ from autotrader.api.server import (
     _apply_strategy_evidence_gate,
     _readiness_log_worthy,
     _router_status_log_worthy,
+    _shadow_fee_ranked_candidates,
 )
 from autotrader.connectors.bitvavo import BitvavoError
 from autotrader.core.profit_optimization import ExecutionV2Advisor
@@ -323,3 +324,15 @@ def test_live_evidence_gate_can_be_disabled():
     result = _apply_strategy_evidence_gate(agent)
     assert result == {"enabled": False, "blocked": []}
     assert agent._strategies["bad"]._config["_autonomous_entry_allowed"] is True
+
+
+def test_shadow_candidate_ranking_prefers_economic_score_without_mutating_live_score():
+    rows = [
+        {"market": "AAA-EUR", "eligible": True, "score": 80.0, "economic_shadow_score": 78.0},
+        {"market": "AAA-USDC", "eligible": True, "score": 80.0, "economic_shadow_score": 84.0},
+        {"market": "BAD-USDC", "eligible": False, "score": 99.0, "economic_shadow_score": 99.0},
+    ]
+    selected = _shadow_fee_ranked_candidates(rows, 2)
+    assert [row["market"] for row in selected] == ["AAA-USDC", "AAA-EUR"]
+    assert rows[0]["score"] == 80.0
+    assert rows[1]["score"] == 80.0
