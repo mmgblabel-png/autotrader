@@ -72,6 +72,11 @@ DASHBOARD_HTML = r'''<!doctype html>
     <div class="metric"><span>Profit factor</span><b id="prototypePf">—</b></div>
     <div class="metric"><span>Compliance controls</span><b id="prototypeCompliance">—</b></div>
     <div class="metric"><span>Investor reporting</span><b id="prototypeInvestor">—</b></div>
+    <div class="metric"><span>Autonomous policy</span><b id="fundAutoPolicy">—</b></div>
+    <div class="metric"><span>Market regime</span><b id="fundAutoRegime">—</b></div>
+    <div class="metric"><span>Research / Monte Carlo</span><b id="fundAutoResearch">—</b></div>
+    <div class="metric"><span>Monte Carlo risk</span><b id="fundAutoMonte">—</b></div>
+    <div style="margin-top:12px"><div class="mini">Recorded realized equity curve</div><canvas id="prototypeEquity" height="92" style="width:100%;height:92px"></canvas></div>
     <div class="table-wrap" style="margin-top:12px"><table class="table compact"><thead><tr><th>Agent</th><th>State</th><th>Signals</th><th>Confidence</th><th>Score</th></tr></thead><tbody id="prototypeAgentRows"><tr><td colspan="5" class="sub">Research department laden…</td></tr></tbody></table></div>
   </div>
 </section>
@@ -428,6 +433,32 @@ function renderFund(d){
    ?'Verified track record gate gehaald; third-party capital acceptance blijft uit totdat juridische/compliance setup afzonderlijk is voltooid.'
    :'€50 → €500 → €5.000 → €50.000 → verified track record. Groei verandert de riskregels niet buiten de automatische stage-envelope.';
  $('prototypeAgentRows').innerHTML=agents.length?agents.map(x=>`<tr><td><b>${esc(x.label||x.key)}</b></td><td class="${x.state==='ACTIVE'||x.state==='CONTROL'?'green':x.state==='STALE'?'amber':'sub'}">${esc(x.state||'—')}</td><td>${Number(x.signal_count||0)}</td><td>${(Number(x.mean_confidence||0)*100).toFixed(1)}%</td><td>${Number(x.mean_score||0).toFixed(1)}</td></tr>`).join(''):'<tr><td colspan="5" class="sub">Geen research-agent status</td></tr>';
+ drawFundEquity(perf.equity_curve||[]);
+}
+function drawFundEquity(rows){
+ const canvas=$('prototypeEquity'); if(!canvas)return;
+ const rect=canvas.getBoundingClientRect(),dpr=window.devicePixelRatio||1;
+ canvas.width=Math.max(1,Math.floor(rect.width*dpr));canvas.height=Math.max(1,Math.floor(92*dpr));
+ const ctx=canvas.getContext('2d');ctx.clearRect(0,0,canvas.width,canvas.height);
+ let vals=(rows||[]).map(x=>Number(x.equity_eur)).filter(Number.isFinite);
+ if(!vals.length){ctx.fillStyle='#7f8ca3';ctx.font=(12*dpr)+'px sans-serif';ctx.fillText('Nog geen durable fills voor equity curve',8*dpr,28*dpr);return}
+ let lo=Math.min(...vals),hi=Math.max(...vals);if(hi===lo){hi=lo+1}
+ ctx.lineWidth=1.5*dpr;ctx.strokeStyle='#58a6ff';ctx.beginPath();
+ vals.forEach((v,i)=>{let x=(i/Math.max(1,vals.length-1))*(canvas.width-12*dpr)+6*dpr,y=canvas.height-6*dpr-((v-lo)/(hi-lo))*(canvas.height-12*dpr);if(i===0)ctx.moveTo(x,y);else ctx.lineTo(x,y)});
+ ctx.stroke();
+}
+function renderFundAutomation(d){
+ let rules=d.hard_rules||{},reg=d.market_regime||{},latest=(d.latest_research||[])[0]||{},mc=latest.monte_carlo||{};
+ $('fundAutoPolicy').textContent='SPOT ONLY · SCORE '+esc(rules.live_entry_score_operator||'>')+Number(rules.live_entry_score_threshold||85).toFixed(0)+' · DD '+Number(rules.max_portfolio_drawdown_pct||10).toFixed(0)+'%';
+ $('fundAutoPolicy').className='green';
+ $('fundAutoRegime').textContent=esc(reg.state||'WAITING')+(reg.market?' · '+esc(reg.market):'')+(reg.score!=null?' · score '+Number(reg.score).toFixed(1):'');
+ let when=d.last_research_at?new Date(Number(d.last_research_at)*1000).toLocaleString():'nog geen run';
+ $('fundAutoResearch').textContent=(d.monte_carlo_simulations||10000)+' sims · '+when+' · '+((d.last_research_markets||[]).join(', ')||'wacht op marktdata');
+ if(mc.risk_of_ruin_pct!=null){
+   $('fundAutoMonte').textContent='ruin '+Number(mc.risk_of_ruin_pct).toFixed(2)+'% · profit '+Number(mc.probability_of_profit_pct||0).toFixed(2)+'% · P50 '+money((mc.terminal_capital||{}).p50||0);
+ }else{
+   $('fundAutoMonte').textContent='Nog geen automatische Monte Carlo-snapshot';
+ }
 }
 function renderRisk(d){let pos=d.open_positions||d.positions||[];if(!Array.isArray(pos))pos=[];$('positions').innerHTML=pos.length?pos.map(x=>`<tr><td>${esc(x.symbol||x.market)}</td><td>${esc(x.side)}</td><td>${money(x.notional_eur??x.notional)}</td><td>${money(x.pnl_eur??x.pnl)}</td></tr>`).join(''):'<tr><td colspan="4" class="sub">Geen open posities</td></tr>'}
 function renderProfit(d){
@@ -540,13 +571,13 @@ async function refresh(){
   let section=(key)=>{let x=sections[key];return x&&x.ok?{status:'fulfilled',value:x.data}:{status:'rejected',reason:Error((x&&x.error)||'niet beschikbaar')}};
   let entries=[
    section('paper_report'),section('execution_status'),section('pnl_summary'),section('health'),section('bitvavo_security'),
-   section('risk_status'),section('fund'),section('markets_overview'),section('strategies'),section('bitvavo_live_state'),section('live_pnl'),
+   section('risk_status'),section('fund'),section('fund_automation'),section('markets_overview'),section('strategies'),section('bitvavo_live_state'),section('live_pnl'),
    section('coinbase_security'),section('coinbase_live_state'),section('arbitrage'),section('shadow'),section('allocator'),
    section('orders'),section('execution_v2'),section('opportunities'),section('fee_efficiency'),section('portfolio_goal'),
    section('binance_reference'),section('autonomy'),section('risk_lab'),section('three_hour'),section('fees_live'),
    section('universe_summary'),section('live_readiness')
   ];
-  let [r,e,s,h,f,k,fund,m,a,v,p,cb,cbb,arb,sh,al,oa,ev2,op,fe,goal,bref,auto,rl,threeh,fr,uni,lr]=entries;
+  let [r,e,s,h,f,k,fund,fa,m,a,v,p,cb,cbb,arb,sh,al,oa,ev2,op,fe,goal,bref,auto,rl,threeh,fr,uni,lr]=entries;
   let fail=(entry,label)=>{if(entry.status==='rejected')setSectionError(label,entry.reason)};
   if(r.status==='fulfilled')renderReport(r.value);else fail(r,'Portfolio');
   if(e.status==='fulfilled')renderExec(e.value);else fail(e,'Execution');
@@ -555,6 +586,7 @@ async function refresh(){
   if(f.status==='fulfilled')renderBitvavo(f.value,e.status==='fulfilled'?e.value:{});else fail(f,'Bitvavo');
   if(k.status==='fulfilled')renderRisk(k.value);else fail(k,'Risk');
   if(fund.status==='fulfilled')renderFund(fund.value);else fail(fund,'Fund Core');
+  if(fa.status==='fulfilled')renderFundAutomation(fa.value);else fail(fa,'Autonomous Fund');
   if(m.status==='fulfilled')renderMarkets(m.value);else fail(m,'Markten');
   if(a.status==='fulfilled')renderAgents(a.value);else fail(a,'Agents');
   if(v.status==='fulfilled')renderLiveState(v.value);else fail(v,'Open orders');
