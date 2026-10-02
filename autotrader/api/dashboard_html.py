@@ -389,7 +389,7 @@ function renderFund(d){
    :armed
      ?'€25.000 floor is permanent gelatcht; nieuwe exposure mag alleen uit vermogen boven de beschermde zone komen.'
      :(r.nav_verified
-       ?'Groei naar €50.000 onder automatische stage-limieten; bij €25.000 wordt de protected-capital floor permanent gelatcht.'
+       ?'Groei naar €50.000 onder automatische stage-limieten; bij €25.000 wordt de protected-capital floor permanent gelatcht; het target verhoogt nooit automatisch het risico.'
        :'Live NAV is niet geverifieerd of te oud: nieuwe risicoverhogende orders blijven fail-closed.');
 }
 function renderRisk(d){let pos=d.open_positions||d.positions||[];if(!Array.isArray(pos))pos=[];$('positions').innerHTML=pos.length?pos.map(x=>`<tr><td>${esc(x.symbol||x.market)}</td><td>${esc(x.side)}</td><td>${money(x.notional_eur??x.notional)}</td><td>${money(x.pnl_eur??x.pnl)}</td></tr>`).join(''):'<tr><td colspan="4" class="sub">Geen open posities</td></tr>'}
