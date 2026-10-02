@@ -8,8 +8,11 @@ WORKDIR /build
 
 COPY pyproject.toml README.md ./
 COPY autotrader ./autotrader
+COPY tests ./tests
 
 RUN python -m pip install --upgrade pip build \
+    && python -m pip install -e ".[dev]" \
+    && python -m pytest -q tests \
     && python -m build --wheel --outdir /wheels
 
 
