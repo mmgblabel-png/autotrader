@@ -16,7 +16,8 @@ class AutonomousDecisionEngine:
         self.config = config or {}
         self.enabled = bool(self.config.get("enabled", True))
         self.apply_live = bool(self.config.get("apply_live", False))
-        self.min_score = max(0.0, min(100.0, float(self.config.get("min_score", 68.0))))
+        # Immutable live-entry quality floor: score must be strictly greater than 85.
+        self.min_score = max(85.0, min(100.0, float(self.config.get("min_score", 85.0))))
         self.min_confidence = max(0.0, min(1.0, float(self.config.get("min_confidence", 0.62))))
         self.min_signal_strength = max(
             0.0, min(100.0, float(self.config.get("min_signal_strength", 62.0)))
@@ -219,7 +220,7 @@ class AutonomousDecisionEngine:
                     )
                 )
                 if (
-                    float(candidate.get("score") or 0.0) >= candidate_score_min
+                    float(candidate.get("score") or 0.0) > candidate_score_min
                     and candidate_signal >= strategy_min_signal
                     and confidence >= candidate_conf_min
                     and execution_quality_ok
@@ -313,7 +314,7 @@ class AutonomousDecisionEngine:
             quality_ok = (
                 bool(best)
                 and bool(passing)
-                and score >= market_score_min
+                and score > market_score_min
                 and signal_strength >= strategy_min_signal
                 and confidence >= market_conf_min
                 and profit_gate
@@ -334,7 +335,7 @@ class AutonomousDecisionEngine:
                         )
                     )
                 )
-                and current_market_score >= current_score_min
+                and current_market_score > current_score_min
                 and current_market_signal >= strategy_min_signal
                 and confidence >= current_conf_min
                 and profit_gate
@@ -346,7 +347,7 @@ class AutonomousDecisionEngine:
             use_max_size = (
                 quality_ok
                 and suggested_eur >= minimum_live_order_eur
-                and score >= self.max_size_score
+                and score > self.max_size_score
                 and confidence >= self.max_size_confidence
             )
             if use_max_size and hard_cap > 0:
@@ -482,7 +483,13 @@ class AutonomousDecisionEngine:
                 "can_raise_global_budget": False,
                 "can_raise_hard_risk_limits": False,
                 "can_use_leverage": False,
+                "can_use_margin": False,
+                "can_use_futures": False,
+                "can_borrow_funds": False,
                 "can_use_martingale": False,
+                "instrument_scope": "spot_only",
+                "live_entry_score_operator": ">",
+                "live_entry_score_threshold": self.min_score,
                 "allow_non_eur_live": self.allow_non_eur_live,
                 "market_switch_requires_flat": True,
                 "market_switch_requires_no_open_order": True,
