@@ -466,6 +466,130 @@ def _router_status_log_worthy(
     return now_mono - float(last_log_at or 0.0) >= max(30.0, float(heartbeat_seconds))
 
 
+def _execution_v2_price_lag_bps(
+    side: str,
+    old_price: float,
+    bid: float,
+    ask: float,
+) -> float:
+    """Return only the directional lag that hurts maker fill probability."""
+    if old_price <= 0:
+        return 0.0
+    if side == "buy":
+        return max(0.0, (bid - old_price) / old_price * 10000.0)
+    if side == "sell":
+        return max(0.0, (old_price - ask) / old_price * 10000.0)
+    return 0.0
+
+
+def _execution_v2_cancel_decision(
+    *,
+    advisor: ExecutionV2Advisor,
+    record: dict[str, object],
+    plan_row: dict[str, object],
+    book: dict[str, object],
+    age_seconds: float,
+    desired_stable_seconds: float,
+    min_exit_price: float = 0.0,
+) -> dict[str, object]:
+    """Decide whether an order has genuinely degraded enough to cancel.
+
+    The decision intentionally preserves maker queue position:
+    - BUYs are released for a confirmed materially better market, failed
+      current-market quality, or a stale price that has fallen behind top bid.
+    - SELL exits behave like hanging orders and remain live while competitive;
+      they are only re-quoted when their ask is materially above top ask and the
+      replacement can still satisfy the minimum profitable exit price.
+    """
+    market = str(record.get("market") or "").upper()
+    side = str(record.get("side") or "").lower()
+    old_price = max(0.0, float(record.get("price") or 0.0))
+    bid = max(0.0, float(book.get("bid") or 0.0))
+    ask = max(0.0, float(book.get("ask") or 0.0))
+    lag_bps = _execution_v2_price_lag_bps(side, old_price, bid, ask)
+
+    buy_stale = max(
+        float(advisor.stale_after_seconds),
+        float(advisor.config.get("buy_stale_after_seconds", advisor.stale_after_seconds)),
+    )
+    buy_max_age = max(
+        buy_stale,
+        float(advisor.config.get("buy_max_order_age_seconds", advisor.max_order_age_seconds)),
+    )
+    buy_tolerance = max(
+        float(advisor.min_move_bps),
+        float(advisor.config.get("buy_refresh_tolerance_bps", advisor.min_move_bps)),
+    )
+    switch_score_delta = max(
+        0.0,
+        float(advisor.config.get("opportunity_switch_score_delta", 5.0)),
+    )
+    switch_confirm = max(
+        0.0,
+        float(advisor.config.get("opportunity_switch_confirm_seconds", 120.0)),
+    )
+
+    sell_stale = max(
+        buy_stale,
+        float(advisor.config.get("sell_stale_after_seconds", 600.0)),
+    )
+    sell_max_age = max(
+        sell_stale,
+        float(advisor.config.get("sell_max_order_age_seconds", 1800.0)),
+    )
+    sell_tolerance = max(
+        float(advisor.min_move_bps),
+        float(advisor.config.get("sell_refresh_tolerance_bps", 12.0)),
+    )
+
+    desired = str(plan_row.get("desired_market") or market).upper()
+    score_improvement = float(plan_row.get("score_improvement") or 0.0)
+    current_quality_ok = bool(plan_row.get("current_market_quality_ok", True))
+
+    reason = ""
+    if side == "buy":
+        if age_seconds >= buy_stale and not current_quality_ok:
+            reason = "buy_current_quality_failed"
+        elif (
+            desired != market
+            and age_seconds >= buy_stale
+            and desired_stable_seconds >= switch_confirm
+            and score_improvement >= switch_score_delta
+        ):
+            reason = "buy_better_market_confirmed"
+        elif (
+            desired == market
+            and age_seconds >= buy_stale
+            and lag_bps >= buy_tolerance
+        ):
+            reason = "buy_stale_price_lag"
+        elif age_seconds >= buy_max_age and lag_bps >= buy_tolerance:
+            reason = "buy_max_age_price_lag"
+    elif side == "sell":
+        if ask <= 0:
+            return {"cancel": False, "reason": "missing_top_ask", "price_lag_bps": lag_bps}
+        if min_exit_price > 0 and ask < min_exit_price:
+            return {
+                "cancel": False,
+                "reason": "sell_profit_guard_holds",
+                "price_lag_bps": lag_bps,
+            }
+        if age_seconds >= sell_stale and lag_bps >= sell_tolerance:
+            reason = "sell_stale_price_lag"
+        elif age_seconds >= sell_max_age and lag_bps >= sell_tolerance:
+            reason = "sell_max_age_price_lag"
+
+    return {
+        "cancel": bool(reason),
+        "reason": reason or "keep_queue_position",
+        "price_lag_bps": round(lag_bps, 3),
+        "desired_market": desired,
+        "score_improvement": round(score_improvement, 3),
+        "desired_stable_seconds": round(desired_stable_seconds, 1),
+        "current_market_quality_ok": current_quality_ok,
+    }
+
+
 def _manage_stale_bot_orders(app: FastAPI, agent: AutoTrader) -> dict[str, object]:
     """Cancel only durable bot-owned stale orders so autonomy can re-evaluate.
 
@@ -473,8 +597,9 @@ def _manage_stale_bot_orders(app: FastAPI, agent: AutoTrader) -> dict[str, objec
     - requires live mode + explicit runtime arm;
     - requires execution_v2.apply_live;
     - never touches orders without both strategy ownership and exchange_order_id;
-    - stale BUYs are released when the strategy has moved on or quality failed;
-    - risk-reducing SELLs are released only when a safe profitable re-quote is possible.
+    - preserves maker queue position unless quality/price has materially degraded;
+    - market switches require a stable, meaningfully better alternative;
+    - risk-reducing SELLs behave like hanging orders while still competitive.
     """
     advisor = getattr(app.state, "execution_v2_advisor", None)
     if (
@@ -504,6 +629,15 @@ def _manage_stale_bot_orders(app: FastAPI, agent: AutoTrader) -> dict[str, objec
     canceled: list[dict[str, object]] = []
     errors: list[dict[str, object]] = []
     retry_at = dict(getattr(app.state, "execution_v2_cancel_retry_at", {}) or {})
+    desired_state = dict(getattr(app.state, "execution_v2_desired_state", {}) or {})
+    for strategy_name, row in plan_rows.items():
+        desired = str(row.get("desired_market") or "").upper()
+        previous = desired_state.get(strategy_name) or {}
+        if str(previous.get("market") or "").upper() != desired:
+            desired_state[strategy_name] = {
+                "market": desired,
+                "since_mono": now_mono,
+            }
     retry_seconds = max(30.0, float(advisor.config.get("cancel_retry_seconds", 60.0)))
     now = time.time()
 
@@ -520,37 +654,41 @@ def _manage_stale_bot_orders(app: FastAPI, agent: AutoTrader) -> dict[str, objec
 
         age = max(0.0, now - float(record.get("created_at") or now))
         plan_row = plan_rows.get(strategy_name, {}) or {}
-        cancel_reason = ""
+        desired_info = desired_state.get(strategy_name) or {}
+        desired_stable_seconds = max(
+            0.0,
+            now_mono - float(desired_info.get("since_mono") or now_mono),
+        )
+        try:
+            book_raw = agent._bitvavo.ticker_book(market)
+            book = {
+                "bid": float(book_raw.get("bid") or 0.0),
+                "ask": float(book_raw.get("ask") or 0.0),
+            }
+        except Exception:
+            continue
 
-        if side == "buy":
-            desired = str(plan_row.get("desired_market") or market).upper()
-            quality_ok = bool(plan_row.get("quality_ok", False))
-            if age >= float(advisor.max_order_age_seconds):
-                cancel_reason = "buy_max_age"
-            elif age >= float(advisor.stale_after_seconds) and (
-                not quality_ok or desired != market
-            ):
-                cancel_reason = "buy_stale_opportunity_changed"
-        elif side == "sell":
-            if age < float(advisor.stale_after_seconds):
-                continue
+        min_exit = 0.0
+        if side == "sell":
             try:
-                mark = float(agent._bitvavo.ticker_price(market))
-                snap = _strategy_profit_snapshot(
-                    agent, market, strategy_name, mark
-                )
+                mark = (book["bid"] + book["ask"]) / 2.0 if book["bid"] > 0 and book["ask"] > 0 else float(agent._bitvavo.ticker_price(market))
+                snap = _strategy_profit_snapshot(agent, market, strategy_name, mark)
                 min_exit = float(snap.get("min_profit_exit_price") or 0.0)
             except Exception:
                 continue
-            if min_exit > 0 and mark < min_exit:
-                continue
-            if age >= float(advisor.max_order_age_seconds):
-                cancel_reason = "sell_max_age_safe_requote"
-            elif age >= float(advisor.stale_after_seconds) * 2.0:
-                cancel_reason = "sell_stale_safe_requote"
 
-        if not cancel_reason:
+        decision = _execution_v2_cancel_decision(
+            advisor=advisor,
+            record=record,
+            plan_row=plan_row,
+            book=book,
+            age_seconds=age,
+            desired_stable_seconds=desired_stable_seconds,
+            min_exit_price=min_exit,
+        )
+        if not bool(decision.get("cancel")):
             continue
+        cancel_reason = str(decision.get("reason") or "")
 
         try:
             agent._bitvavo.cancel_order(market, exchange_order_id)
@@ -563,14 +701,22 @@ def _manage_stale_bot_orders(app: FastAPI, agent: AutoTrader) -> dict[str, objec
                 "side": side,
                 "age_seconds": round(age, 1),
                 "reason": cancel_reason,
+                "price_lag_bps": decision.get("price_lag_bps"),
+                "score_improvement": decision.get("score_improvement"),
+                "desired_market": decision.get("desired_market"),
+                "desired_stable_seconds": decision.get("desired_stable_seconds"),
             })
             log.info(
-                "Execution v2 canceled stale bot order: strategy=%s market=%s side=%s age=%.1fs reason=%s",
+                "Execution v2 canceled degraded bot order: strategy=%s market=%s side=%s age=%.1fs reason=%s lag_bps=%s score_delta=%s desired=%s stable=%.1fs",
                 strategy_name,
                 market,
                 side,
                 age,
                 cancel_reason,
+                decision.get("price_lag_bps"),
+                decision.get("score_improvement"),
+                decision.get("desired_market"),
+                float(decision.get("desired_stable_seconds") or 0.0),
             )
         except BitvavoError as exc:
             error_retry_seconds = _execution_v2_retry_seconds(advisor, exc)
@@ -625,6 +771,7 @@ def _manage_stale_bot_orders(app: FastAPI, agent: AutoTrader) -> dict[str, objec
             )
 
     app.state.execution_v2_cancel_retry_at = retry_at
+    app.state.execution_v2_desired_state = desired_state
     result = {
         "applied": True,
         "reason": "managed",
@@ -1130,6 +1277,7 @@ async def _lifespan(app: FastAPI):
     app.state.opportunity_router_last_logged_count = None
     app.state.opportunity_router_last_log_at = 0.0
     app.state.execution_v2_advisor = ExecutionV2Advisor(agent._config.get("execution_v2", {}) or {})
+    app.state.execution_v2_desired_state = {}
     app.state.execution_v2_last_manage_at = 0.0
     app.state.execution_v2_live_actions = {
         "applied": False,
@@ -1719,6 +1867,7 @@ def activate_live(payload: dict = Body(...)):
 @app.post("/api/live/deactivate", tags=["execution"])
 def deactivate_live():
     app.state.live_armed = False
+    app.state.execution_v2_desired_state = {}
     try:
         get_agent().live_reconcile()
     except Exception as exc:
