@@ -71,3 +71,39 @@ def test_adaptive_learning_has_post_rollback_holdoff():
     adaptive = cfg["adaptive_learning"]
     assert adaptive["rollback_cooldown_exits"] >= adaptive["change_cooldown"]
     assert adaptive["rollback_cooldown_exits"] >= 12
+
+
+def test_autonomous_fund_hard_policy_is_spot_only_and_non_disableable_in_config():
+    cfg = _config()
+    fund = cfg["fund"]
+    auto = cfg["autonomous_execution"]
+    scheduler = cfg["autonomous_fund"]
+    assert fund["max_portfolio_drawdown_pct"] == 10.0
+    assert fund["max_daily_loss_pct"] == 3.0
+    assert fund["max_single_trade_pct"] == 20.0
+    assert fund["max_gross_exposure_pct"] == 80.0
+    assert fund["max_asset_exposure_pct"] == 20.0
+    assert fund["min_cash_reserve_pct"] == 20.0
+    assert auto["min_score"] == 85.0
+    assert auto["instrument_scope"] == "spot_only"
+    assert auto["allow_margin"] is False
+    assert auto["allow_futures"] is False
+    assert auto["allow_borrowing"] is False
+    assert cfg["leverage_martingale_risk_lab"]["enabled"] is False
+    assert cfg["leverage_martingale_risk_lab"]["leverage"] == 1.0
+    assert cfg["leverage_martingale_risk_lab"]["max_martingale_steps"] == 0
+    assert scheduler["monte_carlo_simulations"] >= 10000
+    assert scheduler["report_daily"] is True
+    assert scheduler["report_weekly"] is True
+    assert scheduler["report_monthly"] is True
+
+
+def test_every_live_spot_strategy_has_stop_trailing_and_partial_profit_protection():
+    cfg = _config()
+    for key in ("market_maker", "grid", "grid_eth"):
+        row = cfg["strategies"][key]
+        assert row["protection_stop_loss_pct"] > 0
+        assert row["protection_trailing_activation_pct"] > 0
+        assert row["protection_trailing_drawdown_pct"] > 0
+        assert row["protection_partial_profit_trigger_pct"] > 0
+        assert 0 < row["protection_partial_profit_fraction"] < 1
