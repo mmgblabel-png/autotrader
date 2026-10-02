@@ -2,6 +2,7 @@ from autotrader.api.server import (
     _dashboard_snapshot_section,
     _execution_v2_cancel_decision,
     _execution_v2_retry_seconds,
+    _apply_strategy_evidence_gate,
     _readiness_log_worthy,
     _router_status_log_worthy,
 )
@@ -266,3 +267,59 @@ def test_execution_v2_quality_failure_can_cancel_when_price_also_degrades():
     assert decision["cancel"] is True
     assert decision["reason"] == "buy_quality_failed_price_lag"
     assert decision["price_lag_bps"] >= 10.0
+
+
+class _EvidenceStrategy:
+    def __init__(self, name):
+        self.name = name
+        self._config = {"_autonomous_entry_allowed": True}
+
+
+class _EvidenceProfitEngine:
+    def __init__(self, rows):
+        self._rows = rows
+
+    def as_summary(self):
+        return {"by_strategy": self._rows}
+
+
+class _EvidenceAgent:
+    def __init__(self, rows, gate=None):
+        self._config = {
+            "live_evidence_gate": gate
+            or {
+                "enabled": True,
+                "min_completed_exits": 4,
+                "minimum_net_pnl_eur": -0.10,
+            }
+        }
+        self._strategies = {
+            "good": _EvidenceStrategy("GoodBot"),
+            "bad": _EvidenceStrategy("BadBot"),
+            "new": _EvidenceStrategy("NewBot"),
+        }
+        self.profit_engine = _EvidenceProfitEngine(rows)
+
+
+def test_live_evidence_gate_blocks_only_proven_weak_entries():
+    agent = _EvidenceAgent({
+        "GoodBot": {"wins": 4, "losses": 1, "net_pnl": 0.25},
+        "BadBot": {"wins": 1, "losses": 4, "net_pnl": -0.35},
+        "NewBot": {"wins": 0, "losses": 1, "net_pnl": -0.20},
+    })
+    result = _apply_strategy_evidence_gate(agent)
+    assert [row["strategy"] for row in result["blocked"]] == ["BadBot"]
+    assert agent._strategies["bad"]._config["_autonomous_entry_allowed"] is False
+    assert agent._strategies["bad"]._config["_autonomous_entry_reason"] == "live_evidence_gate"
+    assert agent._strategies["good"]._config["_autonomous_entry_allowed"] is True
+    assert agent._strategies["new"]._config["_autonomous_entry_allowed"] is True
+
+
+def test_live_evidence_gate_can_be_disabled():
+    agent = _EvidenceAgent(
+        {"BadBot": {"wins": 0, "losses": 10, "net_pnl": -9.0}},
+        gate={"enabled": False},
+    )
+    result = _apply_strategy_evidence_gate(agent)
+    assert result == {"enabled": False, "blocked": []}
+    assert agent._strategies["bad"]._config["_autonomous_entry_allowed"] is True
