@@ -201,3 +201,111 @@ def test_fund_fill_recording_is_idempotent(tmp_path):
     status = fund.status()
     assert status["risk"]["gross_exposure_eur"] == 8.0
     assert status["ledger"]["valid"] is True
+
+
+def test_capital_floor_latches_at_target_and_allows_only_risk_reduction(tmp_path):
+    fund = HedgeFundEngine(
+        _fund_config(
+            tmp_path,
+            initial_nav_eur=100.0,
+            target_nav_eur=250.0,
+            protected_capital_floor_eur=250.0,
+            capital_floor_buffer_pct=2.0,
+            max_single_trade_pct=100.0,
+            max_gross_exposure_pct=80.0,
+            min_cash_reserve_pct=20.0,
+        )
+    )
+
+    fund.refresh_nav(249.99, source="test")
+    before = fund.status()["risk"]
+    assert before["capital_floor_armed"] is False
+
+    fund.refresh_nav(250.0, source="test")
+    status = fund.status()["risk"]
+    assert status["capital_floor_armed"] is True
+    assert status["protected_capital_floor_eur"] == 250.0
+    assert status["protected_zone_eur"] == 255.0
+    assert status["risk_capital_available_eur"] == 0.0
+
+    blocked = fund.pretrade_check(
+        strategy="GridRunner",
+        symbol="ETH-EUR",
+        notional_eur=1.0,
+    )
+    assert blocked.accepted is False
+    assert "protected capital floor" in blocked.reason.lower()
+
+    exit_order = fund.pretrade_check(
+        strategy="GridRunner",
+        symbol="ETH-EUR",
+        notional_eur=1.0,
+        risk_reducing=True,
+    )
+    assert exit_order.accepted is True
+
+
+def test_capital_floor_limits_total_exposure_to_surplus_only():
+    mandate = FundMandate.from_config(
+        {
+            "initial_nav_eur": 100.0,
+            "target_nav_eur": 250.0,
+            "protected_capital_floor_eur": 250.0,
+            "capital_floor_buffer_pct": 2.0,
+            "max_single_trade_pct": 100.0,
+            "max_gross_exposure_pct": 80.0,
+            "max_strategy_exposure_pct": 80.0,
+            "max_asset_exposure_pct": 80.0,
+            "min_cash_reserve_pct": 20.0,
+        }
+    )
+    risk = FundRiskEngine(mandate)
+    risk.record_nav(250.0)
+    risk.record_nav(300.0)
+
+    assert risk.status()["risk_capital_available_eur"] == 45.0
+    assert risk.pretrade_check(
+        strategy="GridRunner",
+        symbol="ETH-EUR",
+        notional_eur=40.0,
+    ).accepted is True
+
+    risk.record_fill(
+        strategy="GridRunner",
+        symbol="ETH-EUR",
+        side="BUY",
+        notional_eur=40.0,
+    )
+    second = risk.pretrade_check(
+        strategy="GridRunner",
+        symbol="ETH-EUR",
+        notional_eur=10.0,
+    )
+    assert second.accepted is False
+    assert "total exposure" in second.reason.lower()
+
+
+def test_capital_floor_latch_survives_engine_restart(tmp_path):
+    config = _fund_config(
+        tmp_path,
+        initial_nav_eur=100.0,
+        target_nav_eur=250.0,
+        protected_capital_floor_eur=250.0,
+        capital_floor_buffer_pct=2.0,
+    )
+    first = HedgeFundEngine(config)
+    first.refresh_nav(250.0, source="test")
+
+    assert first.ledger.has_event_type("capital_floor_armed") is True
+    assert first.status()["risk"]["capital_floor_armed"] is True
+
+    restarted = HedgeFundEngine(config)
+    restarted.refresh_nav(100.0, source="restart-test")
+    status = restarted.status()["risk"]
+    assert status["capital_floor_armed"] is True
+    assert status["risk_capital_available_eur"] == 0.0
+    assert restarted.pretrade_check(
+        strategy="GridRunner",
+        symbol="ETH-EUR",
+        notional_eur=1.0,
+    ).accepted is False
