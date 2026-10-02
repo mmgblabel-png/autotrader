@@ -220,10 +220,10 @@ class FundRiskEngine:
                     False,
                     "protected capital floor active; existing exposure must be reduced",
                 )
-            if notional > risk_capital + 1e-9:
+            if gross_exposure_eur + notional > risk_capital + 1e-9:
                 return decision(
                     False,
-                    "protected capital floor active; order exceeds surplus risk capital",
+                    "protected capital floor active; total exposure would exceed surplus risk capital",
                 )
 
         if drawdown >= self.mandate.max_portfolio_drawdown_pct:
