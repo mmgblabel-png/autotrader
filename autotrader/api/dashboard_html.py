@@ -48,6 +48,7 @@ DASHBOARD_HTML = r'''<!doctype html>
     <div class="metric"><span>Protected zone incl. buffer</span><b id="fundzone">—</b></div>
     <div class="metric"><span>Gross exposure</span><b id="fundgross">—</b></div>
     <div class="metric"><span>Required deleveraging</span><b id="funddelever">—</b></div>
+    <div class="metric"><span>NAV verificatie</span><b id="fundnavverified">—</b></div>
     <div class="metric"><span>Ledger integrity</span><b id="fundledger">—</b></div>
   </div>
 </section>
@@ -364,6 +365,9 @@ function renderFund(d){
  $('fundgross').textContent=money(r.gross_exposure_eur||0)+' · '+Number(r.gross_exposure_pct||0).toFixed(2)+'%';
  $('funddelever').textContent=money(r.required_deleveraging_eur||0);
  $('funddelever').className=Number(r.required_deleveraging_eur||0)>0?'red':'green';
+ let navAge=r.nav_age_seconds==null?'—':Number(r.nav_age_seconds).toFixed(1)+'s';
+ $('fundnavverified').textContent=(r.nav_verified?'VERIFIED':'BLOCKED')+' · '+esc(r.nav_source||'unknown')+' · '+navAge;
+ $('fundnavverified').className=r.nav_verified?'green':'red';
  $('fundledger').textContent=l.valid===true?'VALID · '+Number(l.event_count||0)+' events':'CONTROLEREN';
  $('fundledger').className=l.valid===true?'green':'red';
  let preservation=!!r.capital_preservation_mode,armed=!!r.capital_floor_armed,reached=!!r.target_reached;
@@ -375,7 +379,9 @@ function renderFund(d){
    ?'Nieuwe risicoverhogende orders geblokkeerd; alleen risicoverlaging toegestaan totdat exposure weer binnen surplus capital valt.'
    :armed
      ?'€25.000 floor is permanent gelatcht; nieuwe exposure mag alleen uit vermogen boven de beschermde zone komen.'
-     :'Groei naar €25.000 onder normale fund-risklimieten; het target verhoogt nooit automatisch het risico.';
+     :(r.nav_verified
+       ?'Groei naar €25.000 onder normale fund-risklimieten; het target verhoogt nooit automatisch het risico.'
+       :'Live NAV is niet geverifieerd of te oud: nieuwe risicoverhogende orders blijven fail-closed.');
 }
 function renderRisk(d){let pos=d.open_positions||d.positions||[];if(!Array.isArray(pos))pos=[];$('positions').innerHTML=pos.length?pos.map(x=>`<tr><td>${esc(x.symbol||x.market)}</td><td>${esc(x.side)}</td><td>${money(x.notional_eur??x.notional)}</td><td>${money(x.pnl_eur??x.pnl)}</td></tr>`).join(''):'<tr><td colspan="4" class="sub">Geen open posities</td></tr>'}
 function renderProfit(d){

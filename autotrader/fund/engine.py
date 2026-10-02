@@ -52,6 +52,7 @@ class HedgeFundEngine:
                 "target_nav_eur": self.mandate.target_nav_eur,
                 "protected_capital_floor_eur": self.mandate.protected_capital_floor_eur,
                 "lock_floor_after_target_reached": self.mandate.lock_floor_after_target_reached,
+                "live_nav_max_age_seconds": self.mandate.live_nav_max_age_seconds,
             },
         )
 
@@ -97,12 +98,14 @@ class HedgeFundEngine:
         notional_eur: float,
         symbol: str = "",
         risk_reducing: bool = False,
+        require_verified_nav: bool = False,
     ) -> RiskDecision:
         decision = self.risk.pretrade_check(
             strategy=strategy,
             symbol=symbol,
             notional_eur=notional_eur,
             risk_reducing=risk_reducing,
+            require_verified_nav=require_verified_nav,
         )
         if not decision.accepted:
             self.ledger.append(
@@ -124,13 +127,18 @@ class HedgeFundEngine:
         nav_eur: float,
         *,
         source: str = "mark_to_market",
+        verified: bool = False,
     ) -> dict[str, object]:
         """Refresh in-memory NAV without writing a snapshot on every runtime tick.
 
         The one-way transition into protected-capital mode is always persisted,
         so a restart cannot silently re-enable risk to the protected EUR 25k.
         """
-        armed_now = self.risk.record_nav(nav_eur)
+        armed_now = self.risk.record_nav(
+            nav_eur,
+            source=source,
+            verified=verified,
+        )
         status = self.risk.status()
         if armed_now:
             self.ledger.append(
@@ -153,18 +161,23 @@ class HedgeFundEngine:
         *,
         source: str = "profit_engine",
         event_id: str | None = None,
+        verified: bool = False,
     ) -> None:
-        self.refresh_nav(nav_eur, source=source)
+        self.refresh_nav(nav_eur, source=source, verified=verified)
         self.ledger.append(
             "nav_snapshot",
             {
                 "fund_id": self.mandate.fund_id,
                 "nav_eur": float(nav_eur),
                 "source": source,
+                "verified": bool(verified),
                 "risk": self.risk.status(),
             },
             event_id=event_id,
         )
+
+    def mark_nav_unverified(self, source: str = "unverified") -> None:
+        self.risk.mark_nav_unverified(source)
 
     def restore_fill(
         self,

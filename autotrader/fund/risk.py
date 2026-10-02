@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 import math
+import time
 from typing import Dict
 
 from autotrader.fund.models import FundMandate, RiskDecision
@@ -20,6 +21,9 @@ class FundRiskState:
     asset_exposure_eur: Dict[str, float] = field(default_factory=dict)
     day_key: str = ""
     capital_floor_armed: bool = False
+    nav_verified: bool = False
+    nav_source: str = "initial_config"
+    nav_updated_at: float | None = None
 
 
 class FundRiskEngine:
@@ -95,32 +99,61 @@ class FundRiskEngine:
             )
 
     def restore_peak_nav(self, peak_nav_eur: float) -> None:
-        """Restore a durable historical high-water mark without changing current NAV."""
+        """Restore a durable high-water mark without arming the protected floor.
+
+        The one-way floor latch is restored only from its explicit ledger event,
+        never merely from historical NAV rows whose provenance may predate the
+        verified-live-NAV control.
+        """
         value = float(peak_nav_eur)
         if not math.isfinite(value) or value <= 0:
             return
         self.state.peak_nav_eur = max(self.state.peak_nav_eur, value)
-        if (
-            self.mandate.lock_floor_after_target_reached
-            and self.state.peak_nav_eur >= self.mandate.target_nav_eur
-        ):
-            self.state.capital_floor_armed = True
 
-    def record_nav(self, nav_eur: float) -> bool:
-        """Record current NAV and return True only when the capital floor arms now."""
+    def record_nav(
+        self,
+        nav_eur: float,
+        *,
+        source: str = "mark_to_market",
+        verified: bool = False,
+    ) -> bool:
+        """Record NAV and provenance; return True only when the floor arms now."""
         value = float(nav_eur)
         if not math.isfinite(value) or value <= 0:
             raise ValueError("nav_eur must be positive and finite")
         self._roll_day_if_needed()
         was_armed = self.state.capital_floor_armed
         self.state.current_nav_eur = value
-        self.state.peak_nav_eur = max(self.state.peak_nav_eur, value)
-        if (
-            self.mandate.lock_floor_after_target_reached
-            and self.state.peak_nav_eur >= self.mandate.target_nav_eur
-        ):
-            self.state.capital_floor_armed = True
+        self.state.nav_verified = bool(verified)
+        self.state.nav_source = str(source).strip() or "unknown"
+        self.state.nav_updated_at = time.time()
+        if verified:
+            self.state.peak_nav_eur = max(self.state.peak_nav_eur, value)
+            if (
+                self.mandate.lock_floor_after_target_reached
+                and self.state.peak_nav_eur >= self.mandate.target_nav_eur
+            ):
+                self.state.capital_floor_armed = True
         return self.state.capital_floor_armed and not was_armed
+
+    def mark_nav_unverified(self, source: str = "unverified") -> None:
+        """Invalidate NAV provenance without overwriting the last numeric NAV."""
+        self.state.nav_verified = False
+        self.state.nav_source = str(source).strip() or "unverified"
+
+    def nav_age_seconds(self, *, now: float | None = None) -> float | None:
+        if self.state.nav_updated_at is None:
+            return None
+        current = time.time() if now is None else float(now)
+        return max(0.0, current - self.state.nav_updated_at)
+
+    def live_nav_is_fresh(self, *, now: float | None = None) -> bool:
+        age = self.nav_age_seconds(now=now)
+        return bool(
+            self.state.nav_verified
+            and age is not None
+            and age <= self.mandate.live_nav_max_age_seconds
+        )
 
     def record_realized_pnl(self, pnl_delta_eur: float) -> None:
         value = float(pnl_delta_eur)
@@ -173,6 +206,7 @@ class FundRiskEngine:
         notional_eur: float,
         symbol: str = "",
         risk_reducing: bool = False,
+        require_verified_nav: bool = False,
     ) -> RiskDecision:
         self._roll_day_if_needed()
         nav = max(self.state.current_nav_eur, 1e-12)
@@ -192,6 +226,7 @@ class FundRiskEngine:
         )
         risk_capital = self.risk_capital_available_eur
         deleveraging = self.required_deleveraging_eur
+        nav_age = self.nav_age_seconds()
 
         def decision(accepted: bool, reason: str) -> RiskDecision:
             return RiskDecision(
@@ -209,6 +244,9 @@ class FundRiskEngine:
                 protected_zone_eur=self.protected_zone_eur,
                 risk_capital_available_eur=risk_capital,
                 required_deleveraging_eur=deleveraging,
+                nav_verified=self.state.nav_verified,
+                nav_source=self.state.nav_source,
+                nav_age_seconds=nav_age,
             )
 
         if not self.mandate.enabled:
@@ -217,6 +255,16 @@ class FundRiskEngine:
             return decision(True, "risk-reducing order allowed")
         if notional <= 0:
             return decision(False, "notional must be positive")
+        if require_verified_nav and not self.state.nav_verified:
+            return decision(False, "live fund NAV is not verified")
+        if (
+            require_verified_nav
+            and (
+                nav_age is None
+                or nav_age > self.mandate.live_nav_max_age_seconds
+            )
+        ):
+            return decision(False, "live fund NAV is stale")
 
         if self.state.capital_floor_armed:
             if deleveraging > 1e-9:
@@ -271,6 +319,14 @@ class FundRiskEngine:
             "protected_zone_eur": round(self.protected_zone_eur, 6),
             "risk_capital_available_eur": round(risk_capital, 6),
             "required_deleveraging_eur": round(required_deleveraging, 6),
+            "nav_verified": self.state.nav_verified,
+            "nav_source": self.state.nav_source,
+            "nav_age_seconds": (
+                None
+                if self.nav_age_seconds() is None
+                else round(float(self.nav_age_seconds()), 6)
+            ),
+            "live_nav_max_age_seconds": round(self.mandate.live_nav_max_age_seconds, 6),
             "capital_preservation_mode": bool(
                 self.state.capital_floor_armed
                 and (required_deleveraging > 1e-9 or risk_capital <= 1e-9)

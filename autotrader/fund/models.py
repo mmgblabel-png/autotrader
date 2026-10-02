@@ -33,6 +33,7 @@ class FundMandate:
     protected_capital_floor_eur: float = 25000.0
     lock_floor_after_target_reached: bool = True
     capital_floor_buffer_pct: float = 2.0
+    live_nav_max_age_seconds: float = 120.0
     max_portfolio_drawdown_pct: float = 8.0
     max_daily_loss_pct: float = 2.0
     max_single_trade_pct: float = 20.0
@@ -55,6 +56,7 @@ class FundMandate:
             protected_capital_floor_eur=float(raw.get("protected_capital_floor_eur", 25000.0)),
             lock_floor_after_target_reached=bool(raw.get("lock_floor_after_target_reached", True)),
             capital_floor_buffer_pct=float(raw.get("capital_floor_buffer_pct", 2.0)),
+            live_nav_max_age_seconds=float(raw.get("live_nav_max_age_seconds", 120.0)),
             max_portfolio_drawdown_pct=float(raw.get("max_portfolio_drawdown_pct", 8.0)),
             max_daily_loss_pct=float(raw.get("max_daily_loss_pct", 2.0)),
             max_single_trade_pct=float(raw.get("max_single_trade_pct", 20.0)),
@@ -85,6 +87,8 @@ class FundMandate:
         if self.protected_capital_floor_eur > self.target_nav_eur:
             raise ValueError("protected_capital_floor_eur cannot exceed target_nav_eur")
         _bounded_float("capital_floor_buffer_pct", self.capital_floor_buffer_pct, 0.0, 100.0)
+        if not math.isfinite(self.live_nav_max_age_seconds) or self.live_nav_max_age_seconds <= 0:
+            raise ValueError("live_nav_max_age_seconds must be positive")
         for name in (
             "max_portfolio_drawdown_pct",
             "max_daily_loss_pct",
@@ -173,6 +177,9 @@ class RiskDecision:
     protected_zone_eur: float = 0.0
     risk_capital_available_eur: float = 0.0
     required_deleveraging_eur: float = 0.0
+    nav_verified: bool = False
+    nav_source: str = "unverified"
+    nav_age_seconds: float | None = None
 
     def as_dict(self) -> dict[str, object]:
         return {
@@ -190,4 +197,9 @@ class RiskDecision:
             "protected_zone_eur": round(self.protected_zone_eur, 6),
             "risk_capital_available_eur": round(self.risk_capital_available_eur, 6),
             "required_deleveraging_eur": round(self.required_deleveraging_eur, 6),
+            "nav_verified": self.nav_verified,
+            "nav_source": self.nav_source,
+            "nav_age_seconds": (
+                None if self.nav_age_seconds is None else round(self.nav_age_seconds, 6)
+            ),
         }

@@ -5,6 +5,7 @@ from __future__ import annotations
 import sqlite3
 import time
 
+from autotrader.agent import AutoTrader
 from autotrader.core.risk_manager import RiskManager
 from autotrader.fund.engine import HedgeFundEngine
 from autotrader.fund.ledger import FundLedger
@@ -29,6 +30,7 @@ def _fund_config(tmp_path, **overrides):
         "min_cash_reserve_pct": 20.0,
         "min_signal_confidence": 0.60,
         "signal_half_life_seconds": 600.0,
+        "live_nav_max_age_seconds": 120.0,
     }
     config.update(overrides)
     return config
@@ -217,11 +219,11 @@ def test_capital_floor_latches_at_target_and_allows_only_risk_reduction(tmp_path
         )
     )
 
-    fund.refresh_nav(249.99, source="test")
+    fund.refresh_nav(249.99, source="test", verified=True)
     before = fund.status()["risk"]
     assert before["capital_floor_armed"] is False
 
-    fund.refresh_nav(250.0, source="test")
+    fund.refresh_nav(250.0, source="test", verified=True)
     status = fund.status()["risk"]
     assert status["capital_floor_armed"] is True
     assert status["protected_capital_floor_eur"] == 250.0
@@ -260,8 +262,8 @@ def test_capital_floor_limits_total_exposure_to_surplus_only():
         }
     )
     risk = FundRiskEngine(mandate)
-    risk.record_nav(250.0)
-    risk.record_nav(300.0)
+    risk.record_nav(250.0, source="test", verified=True)
+    risk.record_nav(300.0, source="test", verified=True)
 
     assert risk.status()["risk_capital_available_eur"] == 45.0
     assert risk.pretrade_check(
@@ -294,7 +296,7 @@ def test_capital_floor_latch_survives_engine_restart(tmp_path):
         capital_floor_buffer_pct=2.0,
     )
     first = HedgeFundEngine(config)
-    first.refresh_nav(250.0, source="test")
+    first.refresh_nav(250.0, source="test", verified=True)
 
     assert first.ledger.has_event_type("capital_floor_armed") is True
     assert first.status()["risk"]["capital_floor_armed"] is True
@@ -311,3 +313,114 @@ def test_capital_floor_latch_survives_engine_restart(tmp_path):
         symbol="ETH-EUR",
         notional_eur=1.0,
     ).accepted is False
+
+
+def test_unverified_nav_cannot_arm_capital_floor(tmp_path):
+    fund = HedgeFundEngine(
+        _fund_config(
+            tmp_path,
+            initial_nav_eur=100.0,
+            target_nav_eur=250.0,
+            protected_capital_floor_eur=250.0,
+        )
+    )
+    fund.refresh_nav(1000.0, source="untrusted-test", verified=False)
+    status = fund.status()["risk"]
+    assert status["capital_floor_armed"] is False
+    assert status["peak_nav_eur"] == 100.0
+    assert status["nav_verified"] is False
+
+
+def test_live_entries_require_verified_fresh_nav_but_exits_remain_allowed(monkeypatch):
+    mandate = FundMandate.from_config(
+        {
+            "initial_nav_eur": 100.0,
+            "live_nav_max_age_seconds": 10.0,
+            "max_single_trade_pct": 100.0,
+            "max_gross_exposure_pct": 80.0,
+            "max_strategy_exposure_pct": 80.0,
+            "max_asset_exposure_pct": 80.0,
+            "min_cash_reserve_pct": 20.0,
+        }
+    )
+    risk = FundRiskEngine(mandate)
+
+    missing = risk.pretrade_check(
+        strategy="GridRunner",
+        symbol="ETH-EUR",
+        notional_eur=1.0,
+        require_verified_nav=True,
+    )
+    assert missing.accepted is False
+    assert "not verified" in missing.reason.lower()
+
+    exit_order = risk.pretrade_check(
+        strategy="GridRunner",
+        symbol="ETH-EUR",
+        notional_eur=1.0,
+        risk_reducing=True,
+        require_verified_nav=True,
+    )
+    assert exit_order.accepted is True
+
+    risk.record_nav(100.0, source="bitvavo", verified=True)
+    assert risk.pretrade_check(
+        strategy="GridRunner",
+        symbol="ETH-EUR",
+        notional_eur=1.0,
+        require_verified_nav=True,
+    ).accepted is True
+
+    assert risk.state.nav_updated_at is not None
+    risk.state.nav_updated_at -= 11.0
+    stale = risk.pretrade_check(
+        strategy="GridRunner",
+        symbol="ETH-EUR",
+        notional_eur=1.0,
+        require_verified_nav=True,
+    )
+    assert stale.accepted is False
+    assert "stale" in stale.reason.lower()
+
+
+def test_risk_manager_requires_verified_nav_in_live_mode(tmp_path, monkeypatch):
+    fund = HedgeFundEngine(_fund_config(tmp_path))
+    manager = RiskManager()
+    manager.set_fund_engine(fund)
+    monkeypatch.setenv("EXECUTION_MODE", "live")
+
+    assert manager.check_order("GridRunner", 1.0, symbol="ETH-EUR") is False
+    fund.refresh_nav(100.0, source="bitvavo", verified=True)
+    assert manager.check_order("GridRunner", 1.0, symbol="ETH-EUR") is True
+
+
+def test_bitvavo_account_nav_uses_eur_bid_and_in_order_balance():
+    valuation = AutoTrader.value_bitvavo_balances_eur(
+        [
+            {"symbol": "EUR", "available": "10", "inOrder": "5"},
+            {"symbol": "BTC", "available": "0.001", "inOrder": "0.002"},
+            {"symbol": "ETH", "available": "0", "inOrder": "0"},
+        ],
+        {
+            "BTC-EUR": {"bid": "50000", "ask": "50100"},
+            "ETH-EUR": {"bid": "2000", "ask": "2010"},
+        },
+    )
+    assert valuation["verified"] is True
+    assert valuation["unpriced_assets"] == []
+    assert valuation["asset_values_eur"]["EUR"] == 15.0
+    assert valuation["asset_values_eur"]["BTC"] == 150.0
+    assert valuation["nav_eur"] == 165.0
+
+
+def test_bitvavo_account_nav_fails_closed_for_unpriced_positive_asset():
+    valuation = AutoTrader.value_bitvavo_balances_eur(
+        [
+            {"symbol": "EUR", "available": "50", "inOrder": "0"},
+            {"symbol": "UNKNOWN", "available": "2", "inOrder": "0"},
+        ],
+        {},
+    )
+    assert valuation["verified"] is False
+    assert valuation["nav_eur"] == 50.0
+    assert valuation["unpriced_assets"] == ["UNKNOWN"]
