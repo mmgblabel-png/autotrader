@@ -170,3 +170,48 @@ def test_allocator_allows_risk_reducing_sell_above_entry_caps():
     )
     decision = allocator.evaluate(order, [], observed_price=Decimal("100"))
     assert decision.accepted is True
+
+
+def test_dynamic_allocator_uses_verified_nav_and_keeps_cash_reserve():
+    cfg = config()
+    cfg["portfolio"].update({
+        "initial_live_capital_eur": 80,
+        "global_live_budget_eur": 80,
+        "dynamic_with_verified_nav": True,
+        "max_deployable_pct": 80,
+        "min_cash_reserve_pct": 20,
+    })
+    allocator = StrategyAllocator(cfg)
+
+    assert allocator.global_budget_eur == Decimal("64")
+    bootstrap = allocator.capital_status()
+    assert bootstrap["managed_nav_eur"] == 80.0
+    assert bootstrap["cash_reserve_eur"] == 16.0
+
+    assert allocator.set_verified_nav(250) is True
+    assert allocator.global_budget_eur == Decimal("200")
+    status = allocator.capital_status()
+    assert status["managed_nav_eur"] == 250.0
+    assert status["cash_reserve_eur"] == 50.0
+
+
+def test_dynamic_allocator_scales_strategy_and_order_caps_with_nav():
+    cfg = config()
+    cfg["portfolio"].update({
+        "initial_live_capital_eur": 80,
+        "global_live_budget_eur": 80,
+        "dynamic_with_verified_nav": True,
+        "max_deployable_pct": 80,
+        "min_cash_reserve_pct": 20,
+    })
+    allocator = StrategyAllocator(cfg)
+
+    start = allocator.allocation_for("MarketMaker")
+    assert start is not None
+    assert start.max_order_eur == Decimal("10")
+
+    allocator.set_verified_nav(160)
+    scaled = allocator.allocation_for("MarketMaker")
+    assert scaled is not None
+    assert scaled.max_order_eur == Decimal("20")
+    assert scaled.allocation_eur > start.allocation_eur
