@@ -168,9 +168,8 @@ class CoinbaseConnector(ConnectorBase):
 
 # Registry: exchange name → connector class
 CONNECTOR_REGISTRY: Dict[str, type] = {
-    "binance": BinanceConnector,
-    "kraken": KrakenConnector,
-    "coinbase": CoinbaseConnector,
+    # Legacy Binance/Kraken/Coinbase stubs are intentionally not registered:
+    # returning fake order IDs is unsafe in an execution system.
     "binance_spot_safe": BinanceSpotAdapter,
     "bitvavo_safe": BitvavoAdapter,
     "bitpanda_fusion": BitpandaFusionAdapter,
