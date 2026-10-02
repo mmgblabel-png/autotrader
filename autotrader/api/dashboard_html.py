@@ -56,6 +56,25 @@ DASHBOARD_HTML = r'''<!doctype html>
     <div class="metric"><span>Ledger integrity</span><b id="fundledger">—</b></div>
   </div>
 </section>
+<section class="section">
+  <div class="card control-card">
+    <div class="control-head">
+      <div><div class="eyebrow">Institutional operating model</div><div class="control-title">AI Hedge Fund Prototype</div><div id="prototypeNote" class="control-sub">Research, accounting, compliance en investor-readiness vanuit dezelfde Fund Ledger.</div></div>
+      <span id="prototypeBadge" class="badge">BUILDING</span>
+    </div>
+    <div class="order-kpis">
+      <div class="order-kpi"><div class="k">Research Agents</div><div id="prototypeAgents" class="v">—</div></div>
+      <div class="order-kpi"><div class="k">Research Coverage</div><div id="prototypeCoverage" class="v blue">—</div></div>
+      <div class="order-kpi"><div class="k">Recorded Fills</div><div id="prototypeFills" class="v">—</div></div>
+      <div class="order-kpi"><div class="k">Recorded Net PnL</div><div id="prototypePnl" class="v">—</div></div>
+    </div>
+    <div class="metric" style="margin-top:12px"><span>24h / 7d / 30d realized</span><b id="prototypeWindows">—</b></div>
+    <div class="metric"><span>Profit factor</span><b id="prototypePf">—</b></div>
+    <div class="metric"><span>Compliance controls</span><b id="prototypeCompliance">—</b></div>
+    <div class="metric"><span>Investor reporting</span><b id="prototypeInvestor">—</b></div>
+    <div class="table-wrap" style="margin-top:12px"><table class="table compact"><thead><tr><th>Agent</th><th>State</th><th>Signals</th><th>Confidence</th><th>Score</th></tr></thead><tbody id="prototypeAgentRows"><tr><td colspan="5" class="sub">Research department laden…</td></tr></tbody></table></div>
+  </div>
+</section>
 <section class="section"><div class="card control-card"><div class="control-head"><div><div class="eyebrow">Execution monitor</div><div class="control-title">Order Control Center</div><div class="control-sub">Direct zicht op open Bitvavo-orders én iedere recente bot-order uit het duurzame journal.</div></div><span class="badge live">READ ONLY · AUTO REFRESH</span></div><div class="order-kpis"><div class="order-kpi"><div class="k">Nu open</div><div id="orderOpenCount" class="v blue">0</div></div><div class="order-kpi"><div class="k">Recent gevuld</div><div id="orderFilledCount" class="v green">0</div></div><div class="order-kpi"><div class="k">Geannuleerd</div><div id="orderCanceledCount" class="v">0</div></div><div class="order-kpi"><div class="k">Fouten laatste 3u</div><div id="orderErrorCount" class="v">0</div></div></div><div class="order-layout"><div><div class="exchange-head"><div><div class="exchange-name">Open orders</div><div class="mini">Rechtstreeks van Bitvavo</div></div><span id="openOrderBadge" class="badge">0 open</span></div><div class="table-wrap"><table class="table compact"><thead><tr><th>Markt</th><th>Side</th><th>Qty</th><th>Prijs</th><th>Waarde</th><th>Status</th></tr></thead><tbody id="liveorders"><tr><td colspan="6" class="sub">Laden…</td></tr></tbody></table></div><div id="liveordersnote" class="sub" style="margin-top:9px">Read-only uit Bitvavo.</div></div><div><div class="exchange-head"><div><div class="exchange-name">Alle recente orders</div><div class="mini">Nieuwste eerst · order-ID's en secrets bewust verborgen</div></div><span id="activityBadge" class="badge ok">journal</span></div><div class="table-wrap"><table class="table compact"><thead><tr><th>Tijd</th><th>Bot</th><th>Markt</th><th>Side</th><th>Type</th><th>Qty</th><th>Prijs</th><th>Fills</th><th>Status</th></tr></thead><tbody id="orderactivity"><tr><td colspan="9" class="sub">Orderhistorie laden…</td></tr></tbody></table></div><div id="orderactivitynote" class="sub" style="margin-top:9px">Duurzame journal-history.</div></div></div></div></section>
 <section class="section">
   <div class="card">
@@ -355,9 +374,9 @@ function renderRiskLab(d){
  $('risklabnote').textContent='Trades '+(d.completed_trades||0)+' · winrate '+Number(d.winrate_pct||0).toFixed(1)+'% · martingale-stap max '+(d.max_martingale_steps||0)+' · live_capable: '+(d.live_capable?'JA':'nee');
 }
 function renderFund(d){
- let r=d.risk||{},l=d.ledger||{},g=d.growth||{},stage=g.stage||{},tr=g.track_record||{},p=Math.max(0,Math.min(100,Number(r.target_progress_pct||0)));
+ let r=d.risk||{},l=d.ledger||{},g=d.growth||{},stage=g.stage||{},tr=g.track_record||{},research=d.research||{},perf=d.performance||{},gov=d.governance||{},compliance=gov.compliance||{},investor=gov.investor_reporting||{},p=Math.max(0,Math.min(100,Number(r.target_progress_pct||0)));
  $('fundnav').textContent=money(r.nav_eur||0);
- $('fundtarget').textContent=money(r.target_nav_eur||25000);
+ $('fundtarget').textContent=money(r.target_nav_eur||50000);
  $('funddrawdown').textContent=Number(r.drawdown_pct||0).toFixed(2)+'%';
  $('funddrawdown').className='v '+(Number(r.drawdown_pct||0)>4?'red':Number(r.drawdown_pct||0)>2?'amber':'green');
  $('fundriskcapital').textContent=money(r.risk_capital_available_eur||0);
@@ -391,6 +410,24 @@ function renderFund(d){
      :(r.nav_verified
        ?'Groei naar €50.000 onder automatische stage-limieten; bij €25.000 wordt de protected-capital floor permanent gelatcht; het target verhoogt nooit automatisch het risico.'
        :'Live NAV is niet geverifieerd of te oud: nieuwe risicoverhogende orders blijven fail-closed.');
+ let agents=research.agents||[];
+ $('prototypeAgents').textContent=Number(research.agent_count||0)+'/9';
+ $('prototypeCoverage').textContent=Number(research.signal_coverage_pct||0).toFixed(1)+'%';
+ $('prototypeFills').textContent=Number(perf.fill_count||0);
+ $('prototypePnl').textContent=money(perf.realized_net_pnl_eur||0);
+ $('prototypePnl').className='v '+(Number(perf.realized_net_pnl_eur||0)>=0?'green':'red');
+ $('prototypeWindows').textContent=money(perf.realized_net_pnl_24h_eur||0)+' / '+money(perf.realized_net_pnl_7d_eur||0)+' / '+money(perf.realized_net_pnl_30d_eur||0);
+ $('prototypePf').textContent=perf.profit_factor==null?'NOG GEEN VERLIESBASIS':Number(perf.profit_factor).toFixed(3);
+ $('prototypeCompliance').textContent=compliance.all_internal_controls_passed?'INTERNAL CONTROLS PASS':'CONTROLEREN';
+ $('prototypeCompliance').className=compliance.all_internal_controls_passed?'green':'red';
+ $('prototypeInvestor').textContent=esc(investor.status||'BUILDING_VERIFIED_TRACK_RECORD');
+ $('prototypeInvestor').className=investor.diligence_ready?'green':'amber';
+ $('prototypeBadge').textContent=investor.diligence_ready?'DILIGENCE READY':'BUILDING TRACK RECORD';
+ $('prototypeBadge').className='badge '+(investor.diligence_ready?'ok':'');
+ $('prototypeNote').textContent=investor.diligence_ready
+   ?'Verified track record gate gehaald; third-party capital acceptance blijft uit totdat juridische/compliance setup afzonderlijk is voltooid.'
+   :'€50 → €500 → €5.000 → €50.000 → verified track record. Groei verandert de riskregels niet buiten de automatische stage-envelope.';
+ $('prototypeAgentRows').innerHTML=agents.length?agents.map(x=>`<tr><td><b>${esc(x.label||x.key)}</b></td><td class="${x.state==='ACTIVE'||x.state==='CONTROL'?'green':x.state==='STALE'?'amber':'sub'}">${esc(x.state||'—')}</td><td>${Number(x.signal_count||0)}</td><td>${(Number(x.mean_confidence||0)*100).toFixed(1)}%</td><td>${Number(x.mean_score||0).toFixed(1)}</td></tr>`).join(''):'<tr><td colspan="5" class="sub">Geen research-agent status</td></tr>';
 }
 function renderRisk(d){let pos=d.open_positions||d.positions||[];if(!Array.isArray(pos))pos=[];$('positions').innerHTML=pos.length?pos.map(x=>`<tr><td>${esc(x.symbol||x.market)}</td><td>${esc(x.side)}</td><td>${money(x.notional_eur??x.notional)}</td><td>${money(x.pnl_eur??x.pnl)}</td></tr>`).join(''):'<tr><td colspan="4" class="sub">Geen open posities</td></tr>'}
 function renderProfit(d){

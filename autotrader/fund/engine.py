@@ -9,10 +9,12 @@ import os
 import time
 from typing import Any, Iterable, Mapping
 
+from autotrader.fund.agents import ResearchDepartment
 from autotrader.fund.growth import FundGrowthController
 from autotrader.fund.ledger import FundLedger
 from autotrader.fund.models import AgentSignal, FundMandate, RiskDecision
 from autotrader.fund.portfolio import SignalBlender
+from autotrader.fund.reporting import FundReporter
 from autotrader.fund.risk import FundRiskEngine
 
 
@@ -39,6 +41,8 @@ class HedgeFundEngine:
             self.risk.restore_peak_nav(historical_peak)
         if self.ledger.has_event_type("capital_floor_armed"):
             self.risk.restore_capital_floor_armed()
+        self.research_department = ResearchDepartment()
+        self.reporter = FundReporter()
         self.blender = SignalBlender(
             self.mandate,
             agent_weights=self.config.get("agent_weights") or {},
@@ -66,6 +70,7 @@ class HedgeFundEngine:
     def ingest_signal(self, signal: AgentSignal) -> None:
         validated = signal.validated()
         self._signals.append(validated)
+        self.research_department.ingest(validated)
         event_id = self._signal_event_id(validated)
         self.ledger.append(
             "agent_signal",
@@ -245,11 +250,27 @@ class HedgeFundEngine:
         integrity = self.ledger.verify()
         risk_status = self.risk.status()
         track = self.ledger.track_record_stats()
+        performance = self.ledger.performance_stats()
         growth = self.growth.status(
             nav_eur=float(risk_status["nav_eur"]),
             ledger_valid=bool(integrity.get("valid")),
             track_record_days=float(track["days"]),
             fill_count=int(track["fill_count"]),
+        )
+        department = self.research_department.status()
+        research = {
+            "signal_buffer_count": len(self._signals),
+            "blended_signals": self.blended_signals()[:20],
+            "min_signal_confidence": self.mandate.min_signal_confidence,
+            **department,
+        }
+        governance = self.reporter.build(
+            fund_id=self.mandate.fund_id,
+            risk=risk_status,
+            growth=growth,
+            ledger=integrity,
+            performance=performance,
+            research=department,
         )
         return {
             "fund_id": self.mandate.fund_id,
@@ -257,11 +278,9 @@ class HedgeFundEngine:
             "base_currency": self.mandate.base_currency,
             "risk": risk_status,
             "growth": growth,
-            "research": {
-                "signal_buffer_count": len(self._signals),
-                "blended_signals": self.blended_signals()[:20],
-                "min_signal_confidence": self.mandate.min_signal_confidence,
-            },
+            "research": research,
+            "performance": performance,
+            "governance": governance,
             "ledger": integrity,
         }
 

@@ -18,6 +18,14 @@ def test_dashboard_exposes_fund_core_command_center():
     assert 'id="fundtrack"' in html
     assert 'id="fundroles"' in html
     assert 'id="fundledger"' in html
+    assert "AI Hedge Fund Prototype" in html
+    assert 'id="prototypeAgents"' in html
+    assert 'id="prototypeCoverage"' in html
+    assert 'id="prototypeFills"' in html
+    assert 'id="prototypePnl"' in html
+    assert 'id="prototypeCompliance"' in html
+    assert 'id="prototypeInvestor"' in html
+    assert 'id="prototypeAgentRows"' in html
     assert "function renderFund(d)" in html
     assert "section('fund')" in html
     assert "renderFund(fund.value)" in html
