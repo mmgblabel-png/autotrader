@@ -478,15 +478,15 @@ class PortfolioGoalTracker:
     def __init__(self, config: dict[str, Any] | None = None) -> None:
         self.config = config or {}
         self.enabled = bool(self.config.get("enabled", True))
-        self.starting_equity_eur = max(0.01, float(self.config.get("starting_equity_eur", 50.0)))
+        self.starting_equity_eur = max(0.01, float(self.config.get("starting_equity_eur", 80.0)))
         self.target_equity_eur = max(
             self.starting_equity_eur,
-            float(self.config.get("target_equity_eur", 25000.0)),
+            float(self.config.get("target_equity_eur", 100000.0)),
         )
         self.target_days = max(1, int(self.config.get("target_days", 365)))
         raw = self.config.get(
             "milestones_eur",
-            [100, 250, 500, 1000, 2500, 5000, 10000, 25000],
+            [250, 500, 1000, 5000, 10000, 50000, 100000],
         )
         self.milestones = sorted({
             float(x)
