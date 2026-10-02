@@ -61,7 +61,7 @@ def test_non_reducing_sell_still_respects_daily_exposure():
     assert result.reason == "daily exposure limit exceeded"
 
 
-def test_grid_failure_enters_cooldown_and_prevents_immediate_retry():
+def test_grid_failure_enters_cooldown_and_prevents_immediate_entry_retry():
     om = OrderManager()
     strategy = GridRunner(
         order_manager=om,
@@ -78,10 +78,10 @@ def test_grid_failure_enters_cooldown_and_prevents_immediate_retry():
             "exposure_reject_cooldown_seconds": 300,
             "_current_price": 100.0,
             "_live_balance_snapshot_ready": True,
-            "_available_quote": 0.0,
-            "_available_base": 1.0,
-            "_bot_base_inventory": 0.05,
-            "_bot_average_entry_price": 95.0,
+            "_available_quote": 50.0,
+            "_available_base": 0.0,
+            "_bot_base_inventory": 0.0,
+            "_bot_average_entry_price": 0.0,
             "_exchange_open_orders_snapshot_ready": True,
             "_exchange_open_order_count": 0,
         },
@@ -90,10 +90,10 @@ def test_grid_failure_enters_cooldown_and_prevents_immediate_retry():
     failed = Order(
         exchange="bitvavo",
         symbol="SOL-EUR",
-        side=OrderSide.SELL,
+        side=OrderSide.BUY,
         order_type=OrderType.LIMIT,
-        quantity=0.05,
-        price=101.0,
+        quantity=0.06,
+        price=99.0,
         strategy="GridRunner",
     )
     strategy.on_order_failure(
@@ -105,6 +105,40 @@ def test_grid_failure_enters_cooldown_and_prevents_immediate_retry():
 
     strategy.tick()
     assert om.open_orders("GridRunner") == []
+
+
+def test_grid_failure_cooldown_does_not_block_risk_reducing_exit():
+    om = OrderManager()
+    strategy = GridRunner(
+        order_manager=om,
+        risk_manager=RiskManager(),
+        profit_engine=ProfitEngine(),
+        config={
+            "enabled": True,
+            "symbol": "SOL-EUR",
+            "exchange": "bitvavo",
+            "order_value_eur": 6.0,
+            "entry_offset_pct": 0.6,
+            "exit_markup_pct": 0.8,
+            "failure_cooldown_seconds": 60,
+            "_failure_cooldown_until": time.time() + 300,
+            "_current_price": 100.0,
+            "_min_order_base": 0.01,
+            "_min_order_quote": 5.0,
+            "_live_balance_snapshot_ready": True,
+            "_available_quote": 0.0,
+            "_available_base": 0.10,
+            "_bot_base_inventory": 0.10,
+            "_bot_average_entry_price": 95.0,
+            "_exchange_open_orders_snapshot_ready": True,
+            "_exchange_open_order_count": 0,
+        },
+    )
+    strategy.start()
+    strategy.tick()
+    orders = om.open_orders("GridRunner")
+    assert len(orders) == 1
+    assert orders[0].side is OrderSide.SELL
 
 
 def test_risk_reducing_sell_bypasses_entry_trade_cap_and_loss_stop():
