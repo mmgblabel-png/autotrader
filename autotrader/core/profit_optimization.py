@@ -354,15 +354,18 @@ class OpportunityRouter:
                 maker_profile = strategy in {"market_maker", "grid", "mean_reversion"}
                 fee_bps = self._fee_bps(snap.market, maker=maker_profile)
                 fee_quality = self._fee_quality(fee_bps)
-                # Preserve the original market-quality score as the dominant
-                # signal while allowing materially cheaper execution to break
-                # ties and improve shadow discovery.
-                base_score = self._weighted(features, weights)
+                # Keep the existing score untouched because it is consumed
+                # by the live EUR autonomous router. Fee economics are exposed
+                # separately for shadow/research ranking so this feature cannot
+                # silently change live order selection.
+                score = self._weighted(features, weights)
                 fee_weight = max(
                     0.0,
                     min(0.25, float(self.config.get("fee_quality_weight", 0.10))),
                 )
-                score = base_score * (1.0 - fee_weight) + fee_quality * fee_weight
+                economic_shadow_score = (
+                    score * (1.0 - fee_weight) + fee_quality * fee_weight
+                )
                 signal_strength, signal_direction = self._signal_strength(
                     strategy, features, snap
                 )
@@ -376,6 +379,7 @@ class OpportunityRouter:
                     "pair_type": "crypto_fiat" if snap.market.endswith("-EUR") else "crypto_crypto",
                     "live_execution_supported_now": snap.market.endswith("-EUR"),
                     "score": round(score, 2),
+                    "economic_shadow_score": round(economic_shadow_score, 2),
                     "signal_strength": round(signal_strength, 2),
                     "signal_direction": signal_direction,
                     "eligible": eligible,
