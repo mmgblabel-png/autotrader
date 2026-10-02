@@ -227,7 +227,7 @@ class AutoTrader:
                 economic_pnl += float(stats.get("unrealized_pnl") or 0.0)
 
         nav = max(0.01, self._fund.mandate.initial_nav_eur + economic_pnl)
-        self._fund.risk.record_nav(nav)
+        self._fund.refresh_nav(nav, source="runtime_mark_to_market")
         return nav
 
     def tick_all(self) -> None:
@@ -341,7 +341,7 @@ class AutoTrader:
             self._fund.mandate.initial_nav_eur
             + float(self._pe.as_summary().get("total_pnl", 0.0)),
         )
-        self._fund.risk.record_nav(restored_nav)
+        self._fund.refresh_nav(restored_nav, source="journal_restore")
 
     def _setup_risk(self) -> None:
         for key, strat_cfg in self._config.get("strategies", {}).items():
