@@ -340,3 +340,39 @@ def test_sniper_uses_bounded_ioc_limit_entry_instead_of_market_chase(tmp_path):
     assert order.post_only is False
     assert order.price <= 1.1110 * 1.0012 + 1e-12
     assert order.quantity * order.price <= 6.000001
+
+
+def test_grid_uses_exchange_minimum_when_total_inventory_is_tradable(tmp_path):
+    om = OrderManager()
+    strategy = GridRunner(
+        om,
+        RiskManager(),
+        ProfitEngine(export_dir=str(tmp_path)),
+        {
+            "enabled": True,
+            "symbol": "RSR-EUR",
+            "exchange": "bitvavo",
+            "order_value_eur": 8.0,
+            "entry_offset_pct": 0.6,
+            "exit_markup_pct": 0.8,
+            "_current_price": 0.002337,
+            "_min_order_base": 0.0,
+            "_min_order_quote": 8.0,
+            "_live_balance_snapshot_ready": True,
+            "_available_quote": 0.0,
+            "_available_base": 5845.4476,
+            "_bot_base_inventory": 5845.4476,
+            "_bot_average_entry_price": 0.0022,
+            "_exchange_open_orders_snapshot_ready": True,
+            "_exchange_open_order_count": 0,
+            "_autonomous_entry_allowed": False,
+        },
+    )
+    strategy.start()
+    strategy.tick()
+    orders = om.open_orders("GridRunner")
+    assert len(orders) == 1
+    assert orders[0].side is OrderSide.SELL
+    minimum = strategy.minimum_tradable_base(strategy._config["_current_price"])
+    assert orders[0].quantity >= minimum
+    assert orders[0].quantity <= strategy._config["_bot_base_inventory"]
