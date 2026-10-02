@@ -42,8 +42,11 @@ class StrategyAllocator:
     def __init__(self, config: dict) -> None:
         portfolio = config.get("portfolio", {}) or {}
         self.global_budget_eur = Decimal(str(portfolio.get("global_live_budget_eur", "50")))
+        self.bootstrap_budget_eur = self.global_budget_eur
+        self.dynamic_nav_scaling = bool(portfolio.get("dynamic_nav_scaling", True))
         self.max_total_open_orders = max(1, int(portfolio.get("max_total_open_orders", 4)))
         self._allocations: dict[str, StrategyAllocation] = {}
+        self._base_allocations: dict[str, StrategyAllocation] = {}
 
         autonomous_markets = (
             (config.get("autonomous_execution", {}) or {}).get("strategy_markets", {}) or {}
@@ -60,7 +63,7 @@ class StrategyAllocator:
             if symbol and symbol not in allowed:
                 allowed.append(symbol)
             symbols = frozenset(allowed or ([symbol] if symbol else []))
-            self._allocations[name] = StrategyAllocation(
+            allocation = StrategyAllocation(
                 allocation_eur=Decimal(str(cfg.get("allocation_eur", "0"))),
                 max_order_eur=Decimal(str(cfg.get("max_order_eur", "10"))),
                 max_open_orders=max(1, int(cfg.get("max_open_orders", 1))),
@@ -68,6 +71,80 @@ class StrategyAllocator:
                 exclusive_symbol=bool(cfg.get("exclusive_symbol", True)),
                 live_capable=bool(cfg.get("live_capable", False)),
             )
+            self._allocations[name] = allocation
+            self._base_allocations[name] = allocation
+
+    def sync_verified_fund_budget(
+        self,
+        *,
+        nav_eur: float,
+        max_single_trade_pct: float,
+        max_gross_exposure_pct: float,
+    ) -> dict[str, str]:
+        """Scale live allocation caps from verified NAV and effective fund limits."""
+        if not self.dynamic_nav_scaling:
+            return {
+                "scaled": "false",
+                "reason": "dynamic_nav_scaling_disabled",
+                "global_budget_eur": str(self.global_budget_eur),
+            }
+        nav = Decimal(str(max(0.0, float(nav_eur))))
+        single_pct = Decimal(str(max(0.0, float(max_single_trade_pct))))
+        gross_pct = Decimal(str(max(0.0, float(max_gross_exposure_pct))))
+        if nav <= 0 or single_pct <= 0 or gross_pct <= 0:
+            return {
+                "scaled": "false",
+                "reason": "invalid_verified_nav_or_limits",
+                "global_budget_eur": str(self.global_budget_eur),
+            }
+
+        deployable = nav * gross_pct / Decimal("100")
+        single_cap = nav * single_pct / Decimal("100")
+        live_base_total = sum(
+            (
+                row.allocation_eur
+                for row in self._base_allocations.values()
+                if row.live_capable and row.allocation_eur > 0
+            ),
+            Decimal("0"),
+        )
+        if live_base_total <= 0:
+            return {
+                "scaled": "false",
+                "reason": "no_live_allocations",
+                "global_budget_eur": str(self.global_budget_eur),
+            }
+
+        updated: dict[str, StrategyAllocation] = {}
+        for name, base in self._base_allocations.items():
+            if not base.live_capable or base.allocation_eur <= 0:
+                updated[name] = base
+                continue
+            share = base.allocation_eur / live_base_total
+            allocation_eur = deployable * share
+            order_ratio = (
+                min(Decimal("1"), base.max_order_eur / base.allocation_eur)
+                if base.allocation_eur > 0
+                else Decimal("0")
+            )
+            max_order_eur = min(single_cap, allocation_eur * order_ratio)
+            updated[name] = StrategyAllocation(
+                allocation_eur=allocation_eur,
+                max_order_eur=max_order_eur,
+                max_open_orders=base.max_open_orders,
+                symbols=base.symbols,
+                exclusive_symbol=base.exclusive_symbol,
+                live_capable=base.live_capable,
+            )
+
+        self.global_budget_eur = deployable
+        self._allocations = updated
+        return {
+            "scaled": "true",
+            "reason": "verified_nav",
+            "global_budget_eur": str(self.global_budget_eur),
+            "single_trade_cap_eur": str(single_cap),
+        }
 
     @staticmethod
     def _notional(order: Order, fallback_price: Decimal | None = None) -> Decimal | None:
