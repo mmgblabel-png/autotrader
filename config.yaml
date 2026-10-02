@@ -388,21 +388,6 @@ strategies:
     protection_trailing_drawdown_pct: 1.25
     protection_partial_profit_trigger_pct: 0.75
     protection_partial_profit_fraction: 0.50
-    protection_stop_loss_pct: 2.0
-    protection_trailing_activation_pct: 0.90
-    protection_trailing_drawdown_pct: 1.25
-    protection_partial_profit_trigger_pct: 0.75
-    protection_partial_profit_fraction: 0.50
-    protection_stop_loss_pct: 2.0
-    protection_trailing_activation_pct: 0.90
-    protection_trailing_drawdown_pct: 1.25
-    protection_partial_profit_trigger_pct: 0.75
-    protection_partial_profit_fraction: 0.50
-    protection_stop_loss_pct: 2.0
-    protection_trailing_activation_pct: 0.90
-    protection_trailing_drawdown_pct: 1.25
-    protection_partial_profit_trigger_pct: 0.75
-    protection_partial_profit_fraction: 0.50
 
   arbitrage:
     enabled: false
@@ -443,6 +428,11 @@ strategies:
     max_position_size: 300.0
     max_slippage_pct: 0.5
     max_consecutive_errors: 5
+    protection_stop_loss_pct: 2.0
+    protection_trailing_activation_pct: 0.90
+    protection_trailing_drawdown_pct: 1.25
+    protection_partial_profit_trigger_pct: 0.75
+    protection_partial_profit_fraction: 0.50
 
   grid_eth:
     enabled: true
@@ -465,6 +455,11 @@ strategies:
     max_position_size: 300.0
     max_slippage_pct: 0.5
     max_consecutive_errors: 5
+    protection_stop_loss_pct: 2.0
+    protection_trailing_activation_pct: 0.90
+    protection_trailing_drawdown_pct: 1.25
+    protection_partial_profit_trigger_pct: 0.75
+    protection_partial_profit_fraction: 0.50
 
   sniper:
     enabled: true
@@ -497,3 +492,8 @@ strategies:
     max_daily_loss: 0.25
     max_position_size: 200.0
     max_consecutive_errors: 3
+    protection_stop_loss_pct: 2.0
+    protection_trailing_activation_pct: 0.90
+    protection_trailing_drawdown_pct: 1.25
+    protection_partial_profit_trigger_pct: 0.75
+    protection_partial_profit_fraction: 0.50
