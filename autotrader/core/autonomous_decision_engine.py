@@ -244,9 +244,6 @@ class AutonomousDecisionEngine:
             volatility_pct = abs(float(best.get("volatility_pct") or 0.0)) if best else 0.0
             volatility_bps = volatility_pct * 100.0
             high_volatility = volatility_bps >= self.high_volatility_bps
-            if high_volatility and suggested_eur > 0:
-                suggested_eur *= self.high_volatility_size_multiplier
-
             open_local = bool(agent._om.open_orders(display))
             journal_state = (
                 agent._bitvavo.journal.strategy_market_state(current, display)
@@ -364,6 +361,8 @@ class AutonomousDecisionEngine:
             )
             if use_max_size and hard_cap > 0:
                 suggested_eur = hard_cap
+            if high_volatility and suggested_eur > 0:
+                suggested_eur *= self.high_volatility_size_multiplier
 
             failure_cooldown_until = float(cfg.get("_failure_cooldown_until", 0.0) or 0.0)
             entry_runtime_ready = failure_cooldown_until <= time.time()
