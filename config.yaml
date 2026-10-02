@@ -146,7 +146,9 @@ calculated_risk:
   max_size_multiplier: 1.35
   max_drawdown_pct: 8.0
   max_fee_drag_pct: 55.0
-  apply_live: false
+  # This payload is consumed by AutonomousDecisionEngine for bounded sizing.
+  # It cannot raise max_order_eur, global budget, leverage, or armed state.
+  apply_live: true
   allow_leverage: false
   allow_martingale: false
   allow_budget_increase: false
