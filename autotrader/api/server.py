@@ -1190,6 +1190,33 @@ async def _opportunity_router_loop(app: FastAPI) -> None:
         await asyncio.sleep(app.state.opportunity_router_interval_seconds)
 
 
+async def _autonomous_fund_loop(app: FastAPI, agent: AutoTrader) -> None:
+    """Run read-only research/stress tests and immutable periodic fund reports."""
+    while True:
+        try:
+            router_payload = app.state.opportunity_router.rankings()
+            status = await asyncio.to_thread(
+                app.state.autonomous_fund_scheduler.run_once,
+                agent=agent,
+                router_payload=router_payload,
+            )
+            app.state.autonomous_fund_status = status
+            if status.get("research_result", {}).get("ran"):
+                log.info(
+                    "Autonomous fund research completed: markets=%s simulations=%s live_orders_sent=False",
+                    status.get("last_research_markets") or [],
+                    status.get("monte_carlo_simulations"),
+                )
+        except Exception as exc:
+            app.state.autonomous_fund_status = {
+                "enabled": True,
+                "last_research_error": type(exc).__name__,
+                "live_orders_sent": False,
+            }
+            log.warning("Autonomous fund scheduler failed safely: %s", type(exc).__name__)
+        await asyncio.sleep(app.state.autonomous_fund_scheduler.policy.report_check_seconds)
+
+
 async def _market_universe_loop(app: FastAPI) -> None:
     """Refresh the complete Bitvavo + Coinbase spot universe without trading."""
     while True:
