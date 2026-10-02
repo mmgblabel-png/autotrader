@@ -195,8 +195,34 @@ class AutoTrader:
                 if result.get("changed"):
                     log.info("[%s] adaptive learning update: %s", strategy.name, result)
                 return
+    def refresh_fund_nav(self) -> float:
+        """Refresh fund NAV from mark-to-market economics before new entries are evaluated."""
+        mode = os.getenv("EXECUTION_MODE", "paper").strip().lower()
+        economic_pnl = 0.0
+        used_live_snapshots = False
+
+        if mode == "live":
+            for strategy in self._strategies.values():
+                snapshot = strategy._config.get("_profit_snapshot")
+                if isinstance(snapshot, dict):
+                    try:
+                        economic_pnl += float(snapshot.get("economic_pnl_eur") or 0.0)
+                        used_live_snapshots = True
+                    except (TypeError, ValueError):
+                        continue
+
+        if not used_live_snapshots:
+            for stats in self._pe.summary().values():
+                economic_pnl += float(stats.get("net_pnl") or 0.0)
+                economic_pnl += float(stats.get("unrealized_pnl") or 0.0)
+
+        nav = max(0.01, self._fund.mandate.initial_nav_eur + economic_pnl)
+        self._fund.risk.record_nav(nav)
+        return nav
+
     def tick_all(self) -> None:
-        """Run strategies; in live mode, do not even create intents until runtime-armed."""
+        """Run strategies only after mark-to-market fund risk is refreshed."""
+        self.refresh_fund_nav()
         live = os.getenv("EXECUTION_MODE", "paper").strip().lower() == "live"
         if live and not self._is_live_armed():
             return
