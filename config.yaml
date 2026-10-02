@@ -383,6 +383,26 @@ strategies:
     max_position_size: 500.0
     max_slippage_pct: 0.5
     max_consecutive_errors: 5
+    protection_stop_loss_pct: 2.0
+    protection_trailing_activation_pct: 0.90
+    protection_trailing_drawdown_pct: 1.25
+    protection_partial_profit_trigger_pct: 0.75
+    protection_partial_profit_fraction: 0.50
+    protection_stop_loss_pct: 2.0
+    protection_trailing_activation_pct: 0.90
+    protection_trailing_drawdown_pct: 1.25
+    protection_partial_profit_trigger_pct: 0.75
+    protection_partial_profit_fraction: 0.50
+    protection_stop_loss_pct: 2.0
+    protection_trailing_activation_pct: 0.90
+    protection_trailing_drawdown_pct: 1.25
+    protection_partial_profit_trigger_pct: 0.75
+    protection_partial_profit_fraction: 0.50
+    protection_stop_loss_pct: 2.0
+    protection_trailing_activation_pct: 0.90
+    protection_trailing_drawdown_pct: 1.25
+    protection_partial_profit_trigger_pct: 0.75
+    protection_partial_profit_fraction: 0.50
 
   arbitrage:
     enabled: false
