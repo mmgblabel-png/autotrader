@@ -132,7 +132,7 @@ portfolio_goal:
   enabled: true
   starting_equity_eur: 50
   target_equity_eur: 50000
-  target_days: 0
+  target_days: 1825
   milestones_eur:
     - 50
     - 500
