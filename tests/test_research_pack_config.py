@@ -42,4 +42,6 @@ def test_router_scans_full_bitvavo_universe_but_live_non_eur_stays_blocked():
     assert router["auto_discover_all"] is True
     assert router["max_markets"] == 500
     assert cfg["shadow_lab"]["dynamic_markets_per_strategy"] >= 10
-    assert cfg["shadow_lab"]["promotion_min_completed_trades"] == 8
+    assert cfg["shadow_lab"]["promotion_min_completed_trades"] == 24
+    assert cfg["shadow_lab"]["promotion_min_profit_factor"] >= 1.10
+    assert cfg["shadow_lab"]["promotion_cost_stress_multiplier"] >= 1.25
