@@ -10,6 +10,7 @@ import os
 import time
 from typing import Any, Iterable, Mapping
 
+from autotrader.fund.allocation import PortfolioAllocationEngine
 from autotrader.fund.growth import GrowthController
 from autotrader.fund.ledger import FundLedger
 from autotrader.fund.models import AgentSignal, FundMandate, RiskDecision
@@ -24,6 +25,9 @@ class HedgeFundEngine:
         self.config = dict(config or {})
         self.mandate = FundMandate.from_config(self.config)
         self.growth = GrowthController(self.config.get("growth_plan") or {})
+        self.portfolio_allocator = PortfolioAllocationEngine(
+            self.config.get("portfolio_allocation") or {}
+        )
         default_ledger = "data/fund_ledger.sqlite3"
         ledger_path = str(
             os.getenv("FUND_LEDGER_PATH")
@@ -110,10 +114,11 @@ class HedgeFundEngine:
             risk_reducing=risk_reducing,
             require_verified_nav=require_verified_nav,
         )
+        risk_snapshot = self.risk.status()
         if decision.accepted:
             growth_ok, growth_reason = self.growth.check_order(
                 nav_eur=decision.nav_eur,
-                risk_status=self.risk.status(),
+                risk_status=risk_snapshot,
                 notional_eur=notional_eur,
                 risk_reducing=risk_reducing,
             )
@@ -122,6 +127,37 @@ class HedgeFundEngine:
                     decision,
                     accepted=False,
                     reason=growth_reason,
+                )
+        if decision.accepted and self.growth.enabled and symbol:
+            growth_policy = self.current_growth_policy()
+            sector_ok, sector_reason, sector_diag = (
+                self.portfolio_allocator.check_sector_order(
+                    symbol=symbol,
+                    notional_eur=notional_eur,
+                    nav_eur=decision.nav_eur,
+                    asset_exposure_eur=(
+                        risk_snapshot.get("asset_exposure_eur") or {}
+                    ),
+                    max_sector_exposure_pct=float(
+                        growth_policy.get("max_sector_exposure_pct") or 0.0
+                    ),
+                    risk_reducing=risk_reducing,
+                )
+            )
+            if not sector_ok:
+                decision = replace(
+                    decision,
+                    accepted=False,
+                    reason=sector_reason,
+                )
+                self.ledger.append(
+                    "portfolio_risk_reject",
+                    {
+                        "strategy": strategy,
+                        "symbol": symbol,
+                        "notional_eur": float(notional_eur),
+                        **sector_diag,
+                    },
                 )
         if not decision.accepted:
             self.ledger.append(
@@ -275,12 +311,43 @@ class HedgeFundEngine:
             track_metrics=track_metrics,
             ledger_valid=bool(integrity.get("valid")),
         )
+        growth_policy = growth_status.get("policy", {}) or {}
+        nav = float(risk_status.get("nav_eur") or 0.0)
+        if self.growth.enabled:
+            deployable = float(
+                growth_policy.get("effective_live_budget_eur") or 0.0
+            )
+            max_asset_pct = float(
+                growth_policy.get("max_asset_exposure_pct") or 0.0
+            )
+            max_sector_pct = float(
+                growth_policy.get("max_sector_exposure_pct") or 0.0
+            )
+        else:
+            deployable = nav * max(
+                0.0, 100.0 - self.mandate.min_cash_reserve_pct
+            ) / 100.0
+            max_asset_pct = self.mandate.max_asset_exposure_pct
+            max_sector_pct = 30.0
+        portfolio_status = {
+            "sector_exposure_eur": self.portfolio_allocator.sector_exposure_eur(
+                risk_status.get("asset_exposure_eur") or {}
+            ),
+            "allocation": self.portfolio_allocator.recommend(
+                self.blended_signals(),
+                nav_eur=nav,
+                deployable_budget_eur=deployable,
+                max_asset_exposure_pct=max_asset_pct,
+                max_sector_exposure_pct=max_sector_pct,
+            ),
+        }
         return {
             "fund_id": self.mandate.fund_id,
             "enabled": self.mandate.enabled,
             "base_currency": self.mandate.base_currency,
             "risk": risk_status,
             "growth": growth_status,
+            "portfolio": portfolio_status,
             "research": {
                 "signal_buffer_count": len(self._signals),
                 "blended_signals": self.blended_signals()[:20],
