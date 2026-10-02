@@ -34,6 +34,8 @@ class Order:
     order_type: OrderType
     quantity: float
     price: Optional[float] = None
+    time_in_force: str = "GTC"
+    post_only: bool = True
     order_id: str = field(default_factory=lambda: str(uuid.uuid4()))
     status: OrderStatus = OrderStatus.PENDING
     filled_quantity: float = 0.0

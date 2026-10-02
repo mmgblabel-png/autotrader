@@ -278,3 +278,107 @@ def test_bitvavo_error_309_is_classified_as_invalid_signature(monkeypatch):
         )
     assert exc.value.error_code == 309
     assert exc.value.category == "invalid_signature"
+
+
+def test_public_request_retries_transient_network_failure(monkeypatch):
+    monkeypatch.setenv("BITVAVO_PUBLIC_READ_ATTEMPTS", "2")
+    adapter = BitvavoAdapter(api_key="key", api_secret="secret")
+    calls = {"count": 0}
+
+    class DummyResponse:
+        def __enter__(self):
+            return self
+        def __exit__(self, *args):
+            return False
+        def read(self):
+            return b'{"market":"BTC-EUR","price":"73452.01"}'
+
+    def flaky(*args, **kwargs):
+        calls["count"] += 1
+        if calls["count"] == 1:
+            raise urllib.error.URLError("transient ssl failure")
+        return DummyResponse()
+
+    monkeypatch.setattr("urllib.request.urlopen", flaky)
+    monkeypatch.setattr("time.sleep", lambda *_args, **_kwargs: None)
+
+    assert adapter.ticker_price("BTC-EUR") == Decimal("73452.01")
+    assert calls["count"] == 2
+
+
+def test_ioc_limit_order_sends_non_post_only_execution(monkeypatch, tmp_path):
+    monkeypatch.setenv("EXECUTION_MODE", "live")
+    monkeypatch.setenv("BITVAVO_DRY_RUN", "false")
+    monkeypatch.setenv("LIVE_EXECUTION_APPROVED", "true")
+    monkeypatch.setenv("LIVE_EXECUTION_ADAPTER_INSTALLED", "true")
+    monkeypatch.setenv("BITVAVO_LIVE_TRADING", "true")
+    monkeypatch.setenv("EMERGENCY_STOP", "false")
+    monkeypatch.setenv("LIVE_TRADING_CONFIRMATION", "I_UNDERSTAND_LIVE_ORDERS")
+    adapter = BitvavoAdapter(
+        api_key="key",
+        api_secret="secret",
+        journal=OrderJournal(str(tmp_path / "ioc.sqlite3")),
+        is_armed=lambda: True,
+    )
+    adapter.dry_run = False
+    monkeypatch.setattr(
+        adapter,
+        "markets",
+        lambda market=None: [{
+            "market": market or "AXS-EUR",
+            "status": "trading",
+            "orderTypes": ["limit", "market"],
+            "quantityDecimals": 8,
+            "tickSize": "0.0001",
+            "minOrderInBaseAsset": "0.1",
+            "minOrderInQuoteAsset": "5",
+        }],
+    )
+    monkeypatch.setattr(adapter, "ticker_price", lambda market: Decimal("1.1110"))
+    seen = {}
+
+    def fake_private(method, endpoint, body=None, query=None):
+        seen.update(method=method, endpoint=endpoint, body=body, query=query)
+        return {
+            "orderId": "11111111-1111-1111-1111-111111111111",
+            "clientOrderId": body["clientOrderId"],
+            "status": "canceled",
+            "filledAmount": "0",
+            "fills": [],
+        }
+
+    monkeypatch.setattr(adapter, "_private_request", fake_private)
+    result = adapter.place_limit_order(
+        "AXS-EUR",
+        "buy",
+        Decimal("5.39"),
+        Decimal("1.1123"),
+        "22222222-2222-2222-2222-222222222222",
+        time_in_force="IOC",
+        post_only=False,
+    )
+
+    assert result["status"] == "canceled"
+    assert seen["method"] == "POST"
+    assert seen["endpoint"] == "/order"
+    assert seen["body"]["orderType"] == "limit"
+    assert seen["body"]["timeInForce"] == "IOC"
+    assert seen["body"]["postOnly"] is False
+
+
+def test_ioc_limit_rejects_post_only_combination(monkeypatch):
+    monkeypatch.setenv("EXECUTION_MODE", "shadow")
+    monkeypatch.setenv("BITVAVO_DRY_RUN", "true")
+    adapter = BitvavoAdapter(api_key="key", api_secret="secret")
+    with pytest.raises(BitvavoError, match="cannot be post-only"):
+        adapter._place(
+            "AXS-EUR",
+            "buy",
+            Decimal("5.4"),
+            Decimal("1.11"),
+            "33333333-3333-3333-3333-333333333333",
+            1,
+            "limit",
+            time_in_force="IOC",
+            post_only=True,
+        )

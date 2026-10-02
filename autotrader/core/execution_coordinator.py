@@ -171,13 +171,26 @@ class ExecutionCoordinator:
                         continue
 
                 if order.order_type is OrderType.LIMIT:
-                    response = self.adapter.place_limit_order(
-                        order.symbol,
-                        order.side.value.lower(),
-                        __import__("decimal").Decimal(str(order.quantity)),
-                        __import__("decimal").Decimal(str(order.price)),
-                        order.order_id,
-                    )
+                    if order.time_in_force != "GTC" or not order.post_only:
+                        response = self.adapter.place_limit_order(
+                            order.symbol,
+                            order.side.value.lower(),
+                            __import__("decimal").Decimal(str(order.quantity)),
+                            __import__("decimal").Decimal(str(order.price)),
+                            order.order_id,
+                            time_in_force=order.time_in_force,
+                            post_only=order.post_only,
+                        )
+                    else:
+                        # Preserve compatibility with existing adapter/test
+                        # doubles for the normal passive GTC maker path.
+                        response = self.adapter.place_limit_order(
+                            order.symbol,
+                            order.side.value.lower(),
+                            __import__("decimal").Decimal(str(order.quantity)),
+                            __import__("decimal").Decimal(str(order.price)),
+                            order.order_id,
+                        )
                 else:
                     response = self.adapter.place_market_order(
                         order.symbol,

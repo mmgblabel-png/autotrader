@@ -630,3 +630,92 @@ def test_dust_inventory_is_economically_flat_and_does_not_block_switch():
     assert row["flat"] is True
     assert row["desired_market"] == "ETH-EUR"
     assert row["may_switch"] is True
+
+
+def test_sniper_rejects_high_score_when_execution_quality_or_momentum_is_weak():
+    agent = _agent()
+    agent._strategies["sniper"]._config.update({
+        "autonomous_min_score": 82,
+        "autonomous_min_signal_strength": 80,
+        "autonomous_min_confidence": 0.75,
+        "autonomous_min_momentum_pct": 0.12,
+        "autonomous_max_momentum_pct": 0.80,
+        "autonomous_max_spread_bps": 15.0,
+        "autonomous_min_liquidity_eur": 100.0,
+        "autonomous_max_expected_slippage_bps": 5.0,
+    })
+    payload = _router()
+    payload["rankings"]["sniper"] = [{
+        "market": "AXS-EUR",
+        "score": 94,
+        "signal_strength": 90,
+        "signal_direction": "LONG",
+        "eligible": True,
+        "live_execution_supported_now": True,
+        "momentum_pct": 0.02,
+        "spread_bps": 8.0,
+        "liquidity_eur": 500.0,
+        "expected_slippage_bps": 1.0,
+    }]
+    engine = AutonomousDecisionEngine({
+        "enabled": True,
+        "apply_live": True,
+        "min_score": 68,
+        "min_confidence": 0.62,
+        "min_signal_strength": 62,
+        "strategy_markets": {
+            "market_maker": ["BTC-EUR"],
+            "grid": ["SOL-EUR"],
+            "sniper": ["*"],
+        },
+    })
+    plan = engine.plan(agent=agent, router_payload=payload, risk_payload=_risk(), armed=True)
+    row = next(x for x in plan["rows"] if x["strategy"] == "SniperBot")
+    assert row["market_score"] == 94
+    assert row["execution_quality_ok"] is False
+    assert row["quality_ok"] is False
+    assert row["entry_allowed"] is False
+
+
+def test_sniper_accepts_only_bounded_high_quality_momentum_candidate():
+    agent = _agent()
+    agent._strategies["sniper"]._config.update({
+        "autonomous_min_score": 82,
+        "autonomous_min_signal_strength": 80,
+        "autonomous_min_confidence": 0.75,
+        "autonomous_min_momentum_pct": 0.12,
+        "autonomous_max_momentum_pct": 0.80,
+        "autonomous_max_spread_bps": 15.0,
+        "autonomous_min_liquidity_eur": 100.0,
+        "autonomous_max_expected_slippage_bps": 5.0,
+    })
+    payload = _router()
+    payload["rankings"]["sniper"] = [{
+        "market": "AXS-EUR",
+        "score": 94,
+        "signal_strength": 90,
+        "signal_direction": "LONG",
+        "eligible": True,
+        "live_execution_supported_now": True,
+        "momentum_pct": 0.22,
+        "spread_bps": 8.0,
+        "liquidity_eur": 500.0,
+        "expected_slippage_bps": 1.0,
+    }]
+    engine = AutonomousDecisionEngine({
+        "enabled": True,
+        "apply_live": True,
+        "min_score": 68,
+        "min_confidence": 0.62,
+        "min_signal_strength": 62,
+        "strategy_markets": {
+            "market_maker": ["BTC-EUR"],
+            "grid": ["SOL-EUR"],
+            "sniper": ["*"],
+        },
+    })
+    plan = engine.plan(agent=agent, router_payload=payload, risk_payload=_risk(), armed=True)
+    row = next(x for x in plan["rows"] if x["strategy"] == "SniperBot")
+    assert row["execution_quality_ok"] is True
+    assert row["quality_ok"] is True
+    assert row["momentum_pct"] == 0.22

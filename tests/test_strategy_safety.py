@@ -274,3 +274,69 @@ def test_market_maker_kill_switch_allows_risk_reducing_sell(tmp_path):
     orders = om.open_orders("MarketMaker")
     assert len(orders) == 1
     assert orders[0].side is OrderSide.SELL
+
+
+def _autonomous_sniper_config(momentum_pct: float) -> dict:
+    return {
+        "enabled": True,
+        "symbol": "AXS-EUR",
+        "exchange": "bitvavo",
+        "order_value_eur": 6.0,
+        "momentum_pct": 0.5,
+        "take_profit_pct": 1.5,
+        "stop_loss_pct": 0.35,
+        "cooldown_seconds": 0,
+        "entry_attempt_cooldown_seconds": 1,
+        "entry_max_slippage_pct": 0.12,
+        "autonomous_min_momentum_pct": 0.12,
+        "autonomous_max_momentum_pct": 0.80,
+        "max_slippage_pct": 0.12,
+        "_current_price": 1.1110,
+        "_autonomous_entry_allowed": True,
+        "_autonomous_signal_direction": "LONG",
+        "_autonomous_signal_strength": 84.0,
+        "_autonomous_min_signal_strength": 80.0,
+        "_autonomous_momentum_pct": momentum_pct,
+        "_required_entry_edge_pct": 0.75,
+        "_live_balance_snapshot_ready": True,
+        "_available_quote": 50.0,
+        "_available_base": 0.0,
+        "_bot_base_inventory": 0.0,
+        "_bot_average_entry_price": 0.0,
+        "_exchange_open_orders_snapshot_ready": True,
+        "_exchange_open_order_count": 0,
+    }
+
+
+def test_sniper_high_router_score_without_real_momentum_does_not_enter(tmp_path):
+    om = OrderManager()
+    strategy = SniperBot(
+        om,
+        RiskManager(),
+        ProfitEngine(export_dir=str(tmp_path)),
+        _autonomous_sniper_config(0.02),
+    )
+    strategy.start()
+    strategy.tick()
+    assert om.open_orders("SniperBot") == []
+
+
+def test_sniper_uses_bounded_ioc_limit_entry_instead_of_market_chase(tmp_path):
+    om = OrderManager()
+    strategy = SniperBot(
+        om,
+        RiskManager(),
+        ProfitEngine(export_dir=str(tmp_path)),
+        _autonomous_sniper_config(0.20),
+    )
+    strategy.start()
+    strategy.tick()
+    orders = om.open_orders("SniperBot")
+    assert len(orders) == 1
+    order = orders[0]
+    assert order.side is OrderSide.BUY
+    assert order.order_type is OrderType.LIMIT
+    assert order.time_in_force == "IOC"
+    assert order.post_only is False
+    assert order.price <= 1.1110 * 1.0012 + 1e-12
+    assert order.quantity * order.price <= 6.000001

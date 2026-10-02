@@ -11,6 +11,7 @@ def _cfg(path: Path) -> dict:
         "lookback": 12,
         "evaluation_window": 4,
         "change_cooldown": 2,
+        "rollback_cooldown_exits": 6,
         "good_winrate_pct": 60.0,
         "max_regression_pct": 20.0,
     }
@@ -99,3 +100,44 @@ def test_buy_fills_never_train_parameter_model(tmp_path):
     assert result["changed"] is False
     assert result["reason"] == "not_eligible"
     assert strategy["entry_offset_pct"] == 0.60
+
+
+def test_rollback_starts_fresh_holdoff_instead_of_immediate_readjust(tmp_path):
+    learner = AdaptiveLearning(_cfg(tmp_path / "learning.json"))
+    strategy = {"momentum_pct": 0.50}
+
+    for i in range(6):
+        learner.record_realized_outcome(
+            strategy_name="SniperBot",
+            side="SELL",
+            net_pnl_delta_eur=-0.05,
+            strategy_config=strategy,
+            outcome_key=f"seed-holdoff-{i}",
+        )
+    assert strategy["momentum_pct"] == 0.525
+
+    result = None
+    for i in range(4):
+        result = learner.record_realized_outcome(
+            strategy_name="SniperBot",
+            side="SELL",
+            net_pnl_delta_eur=-0.20,
+            strategy_config=strategy,
+            outcome_key=f"rollback-holdoff-{i}",
+        )
+
+    assert result is not None
+    assert result["action"] == "rollback"
+    assert strategy["momentum_pct"] == 0.50
+
+    immediate = learner.record_realized_outcome(
+        strategy_name="SniperBot",
+        side="SELL",
+        net_pnl_delta_eur=-0.20,
+        strategy_config=strategy,
+        outcome_key="after-rollback-1",
+    )
+    assert immediate["changed"] is False
+    assert immediate["reason"] == "rollback_cooldown"
+    assert immediate["remaining_exits"] > 0
+    assert strategy["momentum_pct"] == 0.50

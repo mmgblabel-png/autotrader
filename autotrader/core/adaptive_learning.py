@@ -64,6 +64,10 @@ class AdaptiveLearning:
         self.lookback = max(self.min_samples, int(raw.get("lookback", 24)))
         self.evaluation_window = max(4, int(raw.get("evaluation_window", 6)))
         self.change_cooldown = max(2, int(raw.get("change_cooldown", 4)))
+        self.rollback_cooldown_exits = max(
+            self.change_cooldown,
+            int(raw.get("rollback_cooldown_exits", 12)),
+        )
         self.good_winrate_pct = float(raw.get("good_winrate_pct", 62.0))
         self.max_regression_pct = max(1.0, float(raw.get("max_regression_pct", 20.0)))
         self._state = self._load()
@@ -78,6 +82,7 @@ class AdaptiveLearning:
             "current_overrides": {},
             "last_change_exit": -10_000,
             "pending_change": None,
+            "rollback_cooldown_until_exit": -1,
             "history": [],
             "seen_outcome_keys": [],
         }
@@ -221,15 +226,33 @@ class AdaptiveLearning:
                         "baseline_score": before,
                         "evaluation_score": after,
                     })
+                action = state["history"][-1]["action"]
                 state["pending_change"] = None
+                # Evaluation trades must not count as already-served cooldown.
+                # Otherwise the learner can immediately propose the same change
+                # it just rolled back, causing parameter oscillation.
+                state["last_change_exit"] = exit_count
+                if action == "rollback":
+                    state["rollback_cooldown_until_exit"] = (
+                        exit_count + self.rollback_cooldown_exits
+                    )
                 self._save()
-                return {"changed": True, "action": state["history"][-1]["action"], "parameter": tunable.parameter}
+                return {"changed": True, "action": action, "parameter": tunable.parameter}
             self._save()
             return {"changed": False, "reason": "evaluating_change", "evaluation_samples": len(post)}
 
         if len(outcomes) < self.min_samples:
             self._save()
             return {"changed": False, "reason": "insufficient_samples"}
+
+        rollback_cooldown_until = int(state.get("rollback_cooldown_until_exit", -1))
+        if exit_count < rollback_cooldown_until:
+            self._save()
+            return {
+                "changed": False,
+                "reason": "rollback_cooldown",
+                "remaining_exits": rollback_cooldown_until - exit_count,
+            }
 
         if exit_count - int(state.get("last_change_exit", -10_000)) < self.change_cooldown:
             self._save()
@@ -304,6 +327,7 @@ class AdaptiveLearning:
             "lookback": self.lookback,
             "evaluation_window": self.evaluation_window,
             "change_cooldown": self.change_cooldown,
+            "rollback_cooldown_exits": self.rollback_cooldown_exits,
             "good_winrate_pct": self.good_winrate_pct,
             "max_regression_pct": self.max_regression_pct,
             "tunables": {name: vars(item) for name, item in _TUNABLES.items()},

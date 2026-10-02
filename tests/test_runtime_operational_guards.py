@@ -230,3 +230,39 @@ def test_execution_v2_keeps_competitive_profitable_sell_hanging():
     )
     assert unsafe_requote["cancel"] is False
     assert unsafe_requote["reason"] == "sell_profit_guard_holds"
+
+
+def test_execution_v2_keeps_competitive_buy_during_transient_quality_failure():
+    decision = _execution_v2_cancel_decision(
+        advisor=_execution_advisor(),
+        record={"market": "QNT-EUR", "side": "buy", "price": 220.0},
+        plan_row={
+            "desired_market": "IMX-EUR",
+            "score_improvement": 26.0,
+            "current_market_quality_ok": False,
+        },
+        book={"bid": 220.0, "ask": 220.2},
+        age_seconds=195,
+        desired_stable_seconds=15,
+    )
+    assert decision["price_lag_bps"] == 0.0
+    assert decision["cancel"] is False
+    assert decision["reason"] == "keep_queue_position"
+
+
+def test_execution_v2_quality_failure_can_cancel_when_price_also_degrades():
+    decision = _execution_v2_cancel_decision(
+        advisor=_execution_advisor(),
+        record={"market": "QNT-EUR", "side": "buy", "price": 220.0},
+        plan_row={
+            "desired_market": "IMX-EUR",
+            "score_improvement": 26.0,
+            "current_market_quality_ok": False,
+        },
+        book={"bid": 220.50, "ask": 220.70},
+        age_seconds=195,
+        desired_stable_seconds=15,
+    )
+    assert decision["cancel"] is True
+    assert decision["reason"] == "buy_quality_failed_price_lag"
+    assert decision["price_lag_bps"] >= 10.0
