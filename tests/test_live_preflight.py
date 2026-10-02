@@ -105,7 +105,7 @@ def test_preflight_fails_when_exchange_order_is_still_open():
     assert report["passed"] is False
     assert report["open_orders_clear"] is False
     assert report["total_open_orders"] == 1
-    assert "exchange_open_orders_present" in report["strategies"][0]["errors"]
+    assert "unmanaged_exchange_open_orders_present" in report["strategies"][0]["errors"]
 
 
 def test_preflight_rounds_order_value_amount_down():
