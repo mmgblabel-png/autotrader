@@ -122,21 +122,28 @@ class AutonomousFundScheduler:
     def _write_reports(self, agent: Any, now: float) -> list[str]:
         keys = self._utc_keys(now)
         fund = agent.fund
-        snapshot = fund.status()
-        if not bool((snapshot.get("risk") or {}).get("nav_verified")):
-            return []
-        written: list[str] = []
         periods = (
             ("daily", self.report_daily),
             ("weekly", self.report_weekly),
             ("monthly", self.report_monthly),
         )
-        for period, enabled in periods:
-            if not enabled:
-                continue
-            event_id = f"fund-report:{period}:{keys[period]}"
-            if fund.ledger.has_event_id(event_id):
-                continue
+        pending = [
+            (period, f"fund-report:{period}:{keys[period]}")
+            for period, enabled in periods
+            if enabled
+            and not fund.ledger.has_event_id(
+                f"fund-report:{period}:{keys[period]}"
+            )
+        ]
+        if not pending:
+            return []
+
+        snapshot = fund.status()
+        if not bool((snapshot.get("risk") or {}).get("nav_verified")):
+            return []
+
+        written: list[str] = []
+        for period, event_id in pending:
             payload = {
                 "period": period,
                 "period_key": keys[period],
