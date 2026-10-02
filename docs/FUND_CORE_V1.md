@@ -48,6 +48,35 @@ The branch ships with conservative small-account defaults for a EUR 50 fund:
 
 These are hard ceilings, not return targets. Risk-reducing exits remain allowed when entry gates are closed.
 
+## EUR 25,000 target and protected-capital lock
+
+The fund target is **EUR 25,000**. This is a target, not a guaranteed account
+balance. The software never fabricates NAV and never increases risk simply
+because the account is behind the target.
+
+Configured controls:
+
+- `target_nav_eur: 25000`
+- `protected_capital_floor_eur: 25000`
+- `lock_floor_after_target_reached: true`
+- `capital_floor_buffer_pct: 2.0`
+
+The floor is dormant while the account grows. Once historical NAV reaches
+EUR 25,000, the floor latches permanently. From that point onward:
+
+1. risk-reducing exits remain allowed;
+2. new risk may use only NAV above the protected EUR 25,000 plus its buffer;
+3. existing open exposure counts against that surplus risk capital;
+4. if existing exposure exceeds available surplus, all risk-increasing orders
+   are blocked until exposure is reduced;
+5. the one-way floor transition is written to the hash-chained ledger and is
+   restored after a restart.
+
+This mechanism cannot guarantee EUR 25,000 against market gaps, exchange
+failure, custody loss, slippage, fees or external withdrawals. Its purpose is
+to prevent AutoTrader from intentionally putting protected capital back at
+risk after the target has been achieved.
+
 ## Fund ledger
 
 Every accepted live fill can be recorded in the SQLite ledger together with NAV snapshots. Events are chained with SHA-256 hashes. Each row contains the previous event hash, which makes later modification or reordering detectable by `FundLedger.verify()`.
