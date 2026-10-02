@@ -44,3 +44,5 @@
 - Grid allocation failures retry after a short allocation-specific cooldown instead of the generic 60-second failure cooldown.
 - Strategy allocation now uses the existing EUR 50 global live budget more fully: MarketMaker EUR 18, GridRunner EUR 10, GridRunnerETH EUR 10, SniperBot EUR 12.
 - Hard global live exposure remains EUR 50; leverage and martingale remain disabled.
+
+- Railway deployment tests run in an isolated paper/dry-run environment so production live variables cannot affect regression results.
