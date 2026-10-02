@@ -2389,7 +2389,7 @@ def allocator_v2_status() -> dict[str, object]:
     merged = dict(agent._config.get("strategies", {}) or {})
     for key, value in (shadow_cfg.get("strategies", {}) or {}).items():
         merged[key] = dict(value or {})
-    budget = float((agent._config.get("portfolio", {}) or {}).get("global_live_budget_eur", 50.0))
+    budget = float(agent._allocator.global_budget_eur)
     fee_rows = fee_efficiency_rows(_live_profit_snapshots(agent)).get("rows", [])
     return app.state.allocator_v2.recommendations(
         merged,
@@ -2410,10 +2410,21 @@ def portfolio_goal_status() -> dict[str, object]:
     agent = get_agent()
     rows = _live_profit_snapshots(agent)
     economic_pnl = sum(float(row.get("economic_pnl_eur") or 0.0) for row in rows)
-    current_equity = app.state.portfolio_goal.starting_equity_eur + economic_pnl
+    fund_state = agent.fund.status()
+    verified_nav = fund_state.get("nav_eur") if fund_state.get("nav_verified") else None
+    current_equity = (
+        float(verified_nav)
+        if verified_nav is not None
+        else app.state.portfolio_goal.starting_equity_eur + economic_pnl
+    )
     payload = app.state.portfolio_goal.status(current_equity, rows)
-    payload["equity_basis"] = "starting_equity_plus_fee_aware_economic_pnl"
-    payload["note"] = "The €25,000 target is a shared tracking objective, never a reason to increase risk."
+    payload["equity_basis"] = (
+        "verified_live_nav"
+        if verified_nav is not None
+        else "starting_equity_plus_fee_aware_economic_pnl"
+    )
+    payload["capital_policy"] = agent._allocator.capital_status()
+    payload["note"] = "Growth milestones are reporting targets only; they never relax hard risk controls."
     return payload
 
 
