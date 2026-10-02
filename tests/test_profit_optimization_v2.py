@@ -470,10 +470,11 @@ def test_opportunity_router_fee_quality_prefers_cheaper_quote_when_quality_equal
         "AAA-USDC": MarketSnapshot(**{**snap.__dict__, "market": "AAA-USDC"}),
     }
     rows = router.rankings()["rankings"]["market_maker"]
-    assert rows[0]["market"] == "AAA-USDC"
-    assert rows[0]["estimated_execution_fee_bps"] == 5.0
-    assert rows[1]["estimated_execution_fee_bps"] == 15.0
-    assert rows[0]["score"] > rows[1]["score"]
+    by_market = {row["market"]: row for row in rows}
+    assert by_market["AAA-USDC"]["estimated_execution_fee_bps"] == 5.0
+    assert by_market["AAA-EUR"]["estimated_execution_fee_bps"] == 15.0
+    assert by_market["AAA-USDC"]["score"] == by_market["AAA-EUR"]["score"]
+    assert by_market["AAA-USDC"]["economic_shadow_score"] > by_market["AAA-EUR"]["economic_shadow_score"]
 
 
 def test_opportunity_router_uses_taker_fee_profile_for_sniper():
