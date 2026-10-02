@@ -232,7 +232,7 @@ class MarketMaker(BaseStrategy):
         placed = False
         if can_bid:
             bid_notional = size * bid_price
-            if self._rm.check_order(self.name, bid_notional):
+            if self._rm.check_order(self.name, bid_notional, symbol=symbol):
                 bid = Order(exchange=exchange, symbol=symbol, side=OrderSide.BUY,
                             order_type=OrderType.LIMIT, quantity=size, price=bid_price,
                             strategy=self.name)
@@ -242,7 +242,7 @@ class MarketMaker(BaseStrategy):
 
         if can_ask:
             ask_notional = size * ask_price
-            if self._rm.check_order(self.name, ask_notional, risk_reducing=True):
+            if self._rm.check_order(self.name, ask_notional, symbol=symbol, risk_reducing=True):
                 ask = Order(exchange=exchange, symbol=symbol, side=OrderSide.SELL,
                             order_type=OrderType.LIMIT, quantity=size, price=ask_price,
                             strategy=self.name)
