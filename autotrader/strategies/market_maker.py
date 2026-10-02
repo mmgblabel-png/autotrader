@@ -106,8 +106,9 @@ class MarketMaker(BaseStrategy):
         import time
         now = time.monotonic()
         last_quote = float(cfg.get("_last_quote_ts", 0.0))
-        if now - last_quote < float(cfg.get("quote_refresh_seconds", 10)):
-            return
+        quote_refresh_ready = (
+            now - last_quote >= float(cfg.get("quote_refresh_seconds", 10))
+        )
         local_open = bool(self._om.open_orders(self.name))
         exchange_open = (
             bool(cfg.get("_exchange_open_orders_snapshot_ready", False))
@@ -300,6 +301,9 @@ class MarketMaker(BaseStrategy):
                 log.info("MM bid skipped: insufficient available quote balance.")
             if not can_ask and (not cycle_mode or bot_inventory >= min_size):
                 log.info("MM ask skipped: insufficient available bot-owned base balance.")
+
+        if not quote_refresh_ready:
+            return
 
         placed = False
         if can_bid:
