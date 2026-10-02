@@ -22,8 +22,6 @@ class GridRunner(BaseStrategy):
         cfg = self._config
         entry_killed = self._rm.is_killed(self.name)
         cooldown_until = float(cfg.get("_failure_cooldown_until", 0.0))
-        if cooldown_until > time.time():
-            return
         current_price = float(cfg.get("_current_price", 0.0))
         if current_price <= 0:
             return
@@ -83,6 +81,9 @@ class GridRunner(BaseStrategy):
         if entry_killed:
             cfg["_autonomous_entry_allowed"] = False
             cfg["_autonomous_entry_reason"] = "risk_kill_switch"
+            return
+
+        if cooldown_until > time.time():
             return
 
         if not bool(cfg.get("_autonomous_entry_allowed", True)):
