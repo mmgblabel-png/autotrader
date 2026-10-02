@@ -1,4 +1,4 @@
-from autotrader.api.server import _execution_v2_retry_seconds, _readiness_log_worthy, _router_status_log_worthy
+from autotrader.api.server import _dashboard_snapshot_section, _execution_v2_retry_seconds, _readiness_log_worthy, _router_status_log_worthy
 from autotrader.connectors.bitvavo import BitvavoError
 from autotrader.core.profit_optimization import ExecutionV2Advisor
 
@@ -79,3 +79,12 @@ def test_readiness_log_debounce_logs_changes_and_slow_heartbeats():
         last_log_at=100,
         now_mono=401,
     ) is True
+
+
+def test_dashboard_snapshot_sections_fail_independently():
+    ok = _dashboard_snapshot_section("ok", lambda: {"value": 7})
+    assert ok == {"ok": True, "data": {"value": 7}}
+
+    failed = _dashboard_snapshot_section("bad", lambda: (_ for _ in ()).throw(RuntimeError("boom")))
+    assert failed["ok"] is False
+    assert failed["error"] == "RuntimeError"

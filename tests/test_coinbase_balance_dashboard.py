@@ -65,6 +65,7 @@ def test_dashboard_contains_coinbase_balance_view():
 
     html = dashboard_html()
     assert "Exchange connectivity & balances" in html
-    assert "/api/coinbase/live-state" in html
+    assert "/api/dashboard/snapshot" in html
+    assert "section('coinbase_live_state')" in html
     assert "coinbaseassets" in html
     assert "Coinbase ↔ Bitvavo arbitrage" in html

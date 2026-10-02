@@ -197,37 +197,38 @@ def test_dashboard_contains_shadow_lab_and_allocator():
     assert "PROMOTE" in html
     assert "DROP" in html
     assert "Strategy Allocator v2" in html
-    assert "/api/shadow/strategies" in html
-    assert "/api/allocator/v2" in html
+    assert "/api/dashboard/snapshot" in html
+    assert "Promise.allSettled" not in html
     assert "NO LIVE ORDERS" in html
     assert "Order Control Center" in html
-    assert "/api/orders/activity?limit=100" in html
+    assert "section('orders')" in html
     assert 'id="orderactivity"' in html
     assert "setInterval(()=>{if(!$('app').classList.contains('hidden'))refresh()},15000)" in html
+    assert "section('live_readiness')" in html
     assert "Profit Optimization v2" in html
-    assert "/api/optimization/execution-v2" in html
-    assert "/api/optimization/opportunities" in html
-    assert "/api/optimization/fee-efficiency" in html
+    assert "section('execution_v2')" in html
+    assert "section('opportunities')" in html
+    assert "section('fee_efficiency')" in html
     assert 'id="execv2rows"' in html
     assert 'id="routerrows"' in html
     assert 'id="feerows"' in html
     assert "Gezamenlijk botdoel" in html
     assert "€25K TARGET" in html
-    assert "/api/goals/portfolio" in html
-    assert "/api/reference/binance-btc" in html
+    assert "section('portfolio_goal')" in html
+    assert "section('binance_reference')" in html
     assert 'id="goalbar"' in html
     assert 'id="binanceprice"' in html
     assert "Autonomous Control Loop" in html
     assert "SET → EXECUTE → LEARN → REPEAT" in html
-    assert "/api/autonomy/status" in html
+    assert "section('autonomy')" in html
     assert 'id="autonomyrows"' in html
     assert "Full Market Opportunity Router" in html
     assert 'id="routerconfigured"' in html
     assert 'id="routerscanned"' in html
-    assert "/api/risk-lab/leverage-martingale" in html
+    assert "section('risk_lab')" in html
     assert "Leverage + Capped Martingale Lab" in html
     assert 'id="risklabpnl"' in html
-    assert "/api/report/three-hour" in html
+    assert "section('three_hour')" in html
     assert 'id="threehOrders"' in html
     assert 'id="threehOpportunities"' in html
     assert "Actieve bot-exposure" in html
@@ -236,7 +237,7 @@ def test_dashboard_contains_shadow_lab_and_allocator():
     assert "60-market scanner" in html
     assert "LIVE MANAGER" in html
     assert "Fee & Margin Reality" in html
-    assert "/api/fees/live" in html
+    assert "section('fees_live')" in html
     assert 'id="actualmakerfee"' in html
     assert 'id="feerealityrows"' in html
 
