@@ -102,11 +102,11 @@ def _router():
             "market_maker": [{"market": "BTC-EUR", "score": 90, "eligible": True}],
             "grid": [
                 {"market": "ETH-EUR", "score": 88, "eligible": True},
-                {"market": "SOL-EUR", "score": 75, "eligible": True},
+                {"market": "SOL-EUR", "score": 86, "eligible": True},
             ],
             "sniper": [
                 {"market": "ADA-EUR", "score": 91, "eligible": True},
-                {"market": "XRP-EUR", "score": 73, "eligible": True},
+                {"market": "XRP-EUR", "score": 86, "eligible": True},
             ],
         }
     }
@@ -161,9 +161,9 @@ def test_autonomous_plan_exposes_current_market_quality_and_score_delta():
     })
     plan = engine.plan(agent=agent, router_payload=_router(), risk_payload=_risk(), armed=True)
     row = next(x for x in plan["rows"] if x["strategy"] == "GridRunner")
-    assert row["current_market_score"] == 75.0
+    assert row["current_market_score"] == 86.0
     assert row["market_score"] == 88.0
-    assert row["score_improvement"] == 13.0
+    assert row["score_improvement"] == 2.0
     assert row["current_market_quality_ok"] is True
 
 
@@ -278,8 +278,8 @@ def test_extended_market_requires_higher_quality_gate():
     agent = _agent()
     payload = _router()
     payload["rankings"]["sniper"] = [
-        {"market": "PEPE-EUR", "score": 72, "eligible": True},
-        {"market": "ADA-EUR", "score": 71, "eligible": True},
+        {"market": "PEPE-EUR", "score": 85, "eligible": True},
+        {"market": "ADA-EUR", "score": 86, "eligible": True},
     ]
     engine = AutonomousDecisionEngine({
         "enabled": True,
@@ -719,3 +719,63 @@ def test_sniper_accepts_only_bounded_high_quality_momentum_candidate():
     assert row["execution_quality_ok"] is True
     assert row["quality_ok"] is True
     assert row["momentum_pct"] == 0.22
+
+
+def test_live_entry_score_is_strictly_greater_than_85():
+    agent = _agent()
+    payload = _router()
+    payload["rankings"]["grid"] = [
+        {"market": "ETH-EUR", "score": 85.0, "signal_strength": 90, "eligible": True},
+        {"market": "SOL-EUR", "score": 85.0, "signal_strength": 90, "eligible": True},
+    ]
+    engine = AutonomousDecisionEngine({
+        "enabled": True,
+        "apply_live": True,
+        "min_score": 1,
+        "min_confidence": 0.62,
+        "min_signal_strength": 62,
+        "strategy_markets": {
+            "market_maker": ["BTC-EUR"],
+            "grid": ["SOL-EUR", "ETH-EUR"],
+            "sniper": ["XRP-EUR", "ADA-EUR"],
+        },
+    })
+    plan = engine.plan(agent=agent, router_payload=payload, risk_payload=_risk(), armed=True)
+    row = next(x for x in plan["rows"] if x["strategy"] == "GridRunner")
+    assert engine.min_score == 85.0
+    assert row["quality_ok"] is False
+    assert row["entry_allowed"] is False
+
+    payload["rankings"]["grid"][0]["score"] = 85.01
+    plan = engine.plan(agent=agent, router_payload=payload, risk_payload=_risk(), armed=True)
+    row = next(x for x in plan["rows"] if x["strategy"] == "GridRunner")
+    assert row["market_score"] == 85.01
+    assert row["quality_ok"] is True
+
+
+def test_high_volatility_halves_recommended_live_size():
+    agent = _agent()
+    payload = _router()
+    payload["rankings"]["grid"][0].update({
+        "score": 90,
+        "signal_strength": 90,
+        "volatility_pct": 2.0,
+    })
+    engine = AutonomousDecisionEngine({
+        "enabled": True,
+        "apply_live": True,
+        "min_score": 85,
+        "min_confidence": 0.62,
+        "min_signal_strength": 62,
+        "high_volatility_bps": 180,
+        "high_volatility_size_multiplier": 0.50,
+        "strategy_markets": {
+            "market_maker": ["BTC-EUR"],
+            "grid": ["SOL-EUR", "ETH-EUR"],
+            "sniper": ["XRP-EUR", "ADA-EUR"],
+        },
+    })
+    plan = engine.plan(agent=agent, router_payload=payload, risk_payload=_risk(), armed=True)
+    row = next(x for x in plan["rows"] if x["strategy"] == "GridRunner")
+    assert row["high_volatility"] is True
+    assert row["recommended_order_eur"] == 3.5
