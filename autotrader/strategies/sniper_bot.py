@@ -71,14 +71,16 @@ class SniperBot(BaseStrategy):
         now = time.monotonic()
         entry_killed = self._rm.is_killed(self.name)
 
-        if self._om.open_orders(self.name):
-            self._prev_price = current_price
-            return
-        if bool(cfg.get("_exchange_open_orders_snapshot_ready", False)) and int(cfg.get("_exchange_open_order_count", 0)) > 0:
-            self._prev_price = current_price
-            return
+        local_open = bool(self._om.open_orders(self.name))
+        exchange_open = (
+            bool(cfg.get("_exchange_open_orders_snapshot_ready", False))
+            and int(cfg.get("_exchange_open_order_count", 0)) > 0
+        )
 
         if self._position <= 0:
+            if local_open or exchange_open:
+                self._prev_price = current_price
+                return
             if entry_killed:
                 cfg["_autonomous_entry_allowed"] = False
                 cfg["_autonomous_entry_reason"] = "risk_kill_switch"
@@ -195,6 +197,12 @@ class SniperBot(BaseStrategy):
                 current_price=current_price,
                 quantity=self._position,
             )
+            if protection.exit_required and (local_open or exchange_open):
+                self._prev_price = current_price
+                return
+            if not protection.exit_required and (local_open or exchange_open):
+                self._prev_price = current_price
+                return
             if protection.exit_required:
                 fraction = protection.fraction
                 self._close_position(
