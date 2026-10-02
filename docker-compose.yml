@@ -1,0 +1,24 @@
+services:
+  autotrader:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "8000:8000"
+    environment:
+      AUTOTRADER_CONFIG: /app/config.yaml
+      FUND_LEDGER_PATH: /data/fund_ledger.sqlite3
+      EXECUTION_MODE: shadow
+      EMERGENCY_STOP: "true"
+      BITVAVO_DRY_RUN: "true"
+      BITVAVO_LIVE_TRADING: "false"
+      LIVE_EXECUTION_APPROVED: "false"
+      LIVE_EXECUTION_ADAPTER_INSTALLED: "false"
+      LIVE_TRADING_CONFIRMATION: ""
+      CORS_ORIGINS: http://localhost:3000
+    volumes:
+      - fund-data:/data
+    restart: unless-stopped
+
+volumes:
+  fund-data:
