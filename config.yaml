@@ -1,6 +1,31 @@
 # AutoTrader – safe Bitvavo defaults
 export_dir: exports
 
+fund:
+  enabled: true
+  fund_id: autotrader-personal-fund
+  base_currency: EUR
+  initial_nav_eur: 50
+  ledger_path: data/fund_ledger.sqlite3
+  max_portfolio_drawdown_pct: 8.0
+  max_daily_loss_pct: 2.0
+  max_single_trade_pct: 20.0
+  max_gross_exposure_pct: 85.0
+  max_strategy_exposure_pct: 40.0
+  max_asset_exposure_pct: 35.0
+  min_cash_reserve_pct: 15.0
+  min_signal_confidence: 0.62
+  signal_half_life_seconds: 900
+  signal_buffer_size: 5000
+  agent_weights:
+    market_research: 1.0
+    trend_detection: 1.0
+    onchain_analysis: 0.9
+    whale_tracking: 0.8
+    sentiment: 0.7
+    risk: 1.25
+    portfolio_allocation: 1.1
+
 portfolio:
   global_live_budget_eur: 50
   max_total_open_orders: 4
