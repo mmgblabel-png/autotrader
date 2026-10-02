@@ -29,6 +29,10 @@ class FundMandate:
     enabled: bool = True
     base_currency: str = "EUR"
     initial_nav_eur: float = 50.0
+    target_nav_eur: float = 25000.0
+    protected_capital_floor_eur: float = 25000.0
+    lock_floor_after_target_reached: bool = True
+    capital_floor_buffer_pct: float = 2.0
     max_portfolio_drawdown_pct: float = 8.0
     max_daily_loss_pct: float = 2.0
     max_single_trade_pct: float = 20.0
@@ -47,6 +51,10 @@ class FundMandate:
             enabled=bool(raw.get("enabled", True)),
             base_currency=str(raw.get("base_currency", "EUR")).upper().strip() or "EUR",
             initial_nav_eur=float(raw.get("initial_nav_eur", 50.0)),
+            target_nav_eur=float(raw.get("target_nav_eur", 25000.0)),
+            protected_capital_floor_eur=float(raw.get("protected_capital_floor_eur", 25000.0)),
+            lock_floor_after_target_reached=bool(raw.get("lock_floor_after_target_reached", True)),
+            capital_floor_buffer_pct=float(raw.get("capital_floor_buffer_pct", 2.0)),
             max_portfolio_drawdown_pct=float(raw.get("max_portfolio_drawdown_pct", 8.0)),
             max_daily_loss_pct=float(raw.get("max_daily_loss_pct", 2.0)),
             max_single_trade_pct=float(raw.get("max_single_trade_pct", 20.0)),
@@ -67,6 +75,16 @@ class FundMandate:
             raise ValueError("AutoTrader Fund Core v1 currently requires EUR as base currency")
         if not math.isfinite(self.initial_nav_eur) or self.initial_nav_eur <= 0:
             raise ValueError("initial_nav_eur must be positive")
+        if not math.isfinite(self.target_nav_eur) or self.target_nav_eur <= 0:
+            raise ValueError("target_nav_eur must be positive")
+        if (
+            not math.isfinite(self.protected_capital_floor_eur)
+            or self.protected_capital_floor_eur <= 0
+        ):
+            raise ValueError("protected_capital_floor_eur must be positive")
+        if self.protected_capital_floor_eur > self.target_nav_eur:
+            raise ValueError("protected_capital_floor_eur cannot exceed target_nav_eur")
+        _bounded_float("capital_floor_buffer_pct", self.capital_floor_buffer_pct, 0.0, 100.0)
         for name in (
             "max_portfolio_drawdown_pct",
             "max_daily_loss_pct",
@@ -150,6 +168,11 @@ class RiskDecision:
     gross_exposure_pct: float
     strategy_exposure_pct: float
     asset_exposure_pct: float
+    capital_floor_armed: bool = False
+    protected_capital_floor_eur: float = 0.0
+    protected_zone_eur: float = 0.0
+    risk_capital_available_eur: float = 0.0
+    required_deleveraging_eur: float = 0.0
 
     def as_dict(self) -> dict[str, object]:
         return {
@@ -162,4 +185,9 @@ class RiskDecision:
             "gross_exposure_pct": round(self.gross_exposure_pct, 6),
             "strategy_exposure_pct": round(self.strategy_exposure_pct, 6),
             "asset_exposure_pct": round(self.asset_exposure_pct, 6),
+            "capital_floor_armed": self.capital_floor_armed,
+            "protected_capital_floor_eur": round(self.protected_capital_floor_eur, 6),
+            "protected_zone_eur": round(self.protected_zone_eur, 6),
+            "risk_capital_available_eur": round(self.risk_capital_available_eur, 6),
+            "required_deleveraging_eur": round(self.required_deleveraging_eur, 6),
         }
