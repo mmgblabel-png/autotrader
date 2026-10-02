@@ -9,6 +9,7 @@ import os
 import time
 from typing import Any, Iterable, Mapping
 
+from autotrader.fund.growth import FundGrowthController
 from autotrader.fund.ledger import FundLedger
 from autotrader.fund.models import AgentSignal, FundMandate, RiskDecision
 from autotrader.fund.portfolio import SignalBlender
@@ -29,6 +30,10 @@ class HedgeFundEngine:
         )
         self.ledger = FundLedger(ledger_path)
         self.risk = FundRiskEngine(self.mandate)
+        self.growth = FundGrowthController(
+            track_record_min_days=int(self.config.get("track_record_min_days", 365)),
+            track_record_min_fills=int(self.config.get("track_record_min_fills", 100)),
+        )
         historical_peak = self.ledger.max_verified_nav_eur()
         if historical_peak > 0:
             self.risk.restore_peak_nav(historical_peak)
@@ -53,6 +58,8 @@ class HedgeFundEngine:
                 "protected_capital_floor_eur": self.mandate.protected_capital_floor_eur,
                 "lock_floor_after_target_reached": self.mandate.lock_floor_after_target_reached,
                 "live_nav_max_age_seconds": self.mandate.live_nav_max_age_seconds,
+                "track_record_min_days": self.growth.track_record_min_days,
+                "track_record_min_fills": self.growth.track_record_min_fills,
             },
         )
 
@@ -236,11 +243,20 @@ class HedgeFundEngine:
 
     def status(self) -> dict[str, object]:
         integrity = self.ledger.verify()
+        risk_status = self.risk.status()
+        track = self.ledger.track_record_stats()
+        growth = self.growth.status(
+            nav_eur=float(risk_status["nav_eur"]),
+            ledger_valid=bool(integrity.get("valid")),
+            track_record_days=float(track["days"]),
+            fill_count=int(track["fill_count"]),
+        )
         return {
             "fund_id": self.mandate.fund_id,
             "enabled": self.mandate.enabled,
             "base_currency": self.mandate.base_currency,
-            "risk": self.risk.status(),
+            "risk": risk_status,
+            "growth": growth,
             "research": {
                 "signal_buffer_count": len(self._signals),
                 "blended_signals": self.blended_signals()[:20],

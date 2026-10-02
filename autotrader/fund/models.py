@@ -29,7 +29,7 @@ class FundMandate:
     enabled: bool = True
     base_currency: str = "EUR"
     initial_nav_eur: float = 50.0
-    target_nav_eur: float = 25000.0
+    target_nav_eur: float = 50000.0
     protected_capital_floor_eur: float = 25000.0
     lock_floor_after_target_reached: bool = True
     capital_floor_buffer_pct: float = 2.0
@@ -52,7 +52,7 @@ class FundMandate:
             enabled=bool(raw.get("enabled", True)),
             base_currency=str(raw.get("base_currency", "EUR")).upper().strip() or "EUR",
             initial_nav_eur=float(raw.get("initial_nav_eur", 50.0)),
-            target_nav_eur=float(raw.get("target_nav_eur", 25000.0)),
+            target_nav_eur=float(raw.get("target_nav_eur", 50000.0)),
             protected_capital_floor_eur=float(raw.get("protected_capital_floor_eur", 25000.0)),
             lock_floor_after_target_reached=bool(raw.get("lock_floor_after_target_reached", True)),
             capital_floor_buffer_pct=float(raw.get("capital_floor_buffer_pct", 2.0)),

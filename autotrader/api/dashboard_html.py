@@ -38,7 +38,7 @@ DASHBOARD_HTML = r'''<!doctype html>
     </div>
     <div class="order-kpis">
       <div class="order-kpi"><div class="k">Fund NAV</div><div id="fundnav" class="v">—</div></div>
-      <div class="order-kpi"><div class="k">Doel</div><div id="fundtarget" class="v blue">€25.000,00</div></div>
+      <div class="order-kpi"><div class="k">Doel</div><div id="fundtarget" class="v blue">€50.000,00</div></div>
       <div class="order-kpi"><div class="k">Drawdown</div><div id="funddrawdown" class="v amber">—</div></div>
       <div class="order-kpi"><div class="k">Risk capital beschikbaar</div><div id="fundriskcapital" class="v">—</div></div>
     </div>
@@ -49,6 +49,10 @@ DASHBOARD_HTML = r'''<!doctype html>
     <div class="metric"><span>Gross exposure</span><b id="fundgross">—</b></div>
     <div class="metric"><span>Required deleveraging</span><b id="funddelever">—</b></div>
     <div class="metric"><span>NAV verificatie</span><b id="fundnavverified">—</b></div>
+    <div class="metric"><span>Growth stage</span><b id="fundstage">—</b></div>
+    <div class="metric"><span>Volgende milestone</span><b id="fundnext">—</b></div>
+    <div class="metric"><span>Track record</span><b id="fundtrack">—</b></div>
+    <div class="metric"><span>Operating roles</span><b id="fundroles">—</b></div>
     <div class="metric"><span>Ledger integrity</span><b id="fundledger">—</b></div>
   </div>
 </section>
@@ -254,7 +258,7 @@ function renderGoal(d){
  $('goalprogress').textContent=p.toFixed(3)+'%';
  $('goalnext').textContent=d.next_milestone_eur==null?'DOEL BEREIKT':money(d.next_milestone_eur);
  $('goalbar').style.width=p+'%';
- $('goalbadge').textContent=d.target_reached?'TARGET REACHED':'€25K TARGET';
+ $('goalbadge').textContent=d.target_reached?'TARGET REACHED':'€50K GROWTH TARGET';
  $('goalbadge').className='badge '+(d.target_reached?'ok':'');
  $('goalnote').textContent='Dagstand = benodigde gemiddelde netto groei vanaf de huidige equity over '+Number(d.target_days||0).toFixed(0)+' dagen. Dit is een doelmeter, geen reden om slechtere trades te forceren.';
 }
@@ -351,7 +355,7 @@ function renderRiskLab(d){
  $('risklabnote').textContent='Trades '+(d.completed_trades||0)+' · winrate '+Number(d.winrate_pct||0).toFixed(1)+'% · martingale-stap max '+(d.max_martingale_steps||0)+' · live_capable: '+(d.live_capable?'JA':'nee');
 }
 function renderFund(d){
- let r=d.risk||{},l=d.ledger||{},p=Math.max(0,Math.min(100,Number(r.target_progress_pct||0)));
+ let r=d.risk||{},l=d.ledger||{},g=d.growth||{},stage=g.stage||{},tr=g.track_record||{},p=Math.max(0,Math.min(100,Number(r.target_progress_pct||0)));
  $('fundnav').textContent=money(r.nav_eur||0);
  $('fundtarget').textContent=money(r.target_nav_eur||25000);
  $('funddrawdown').textContent=Number(r.drawdown_pct||0).toFixed(2)+'%';
@@ -368,7 +372,12 @@ function renderFund(d){
  let navAge=r.nav_age_seconds==null?'—':Number(r.nav_age_seconds).toFixed(1)+'s';
  $('fundnavverified').textContent=(r.nav_verified?'VERIFIED':'BLOCKED')+' · '+esc(r.nav_source||'unknown')+' · '+navAge;
  $('fundnavverified').className=r.nav_verified?'green':'red';
- $('fundledger').textContent=l.valid===true?'VALID · '+Number(l.event_count||0)+' events':'CONTROLEREN';
+ $('fundstage').textContent=esc(stage.label||stage.key||'—');
+ $('fundnext').textContent=g.next_milestone_eur==null?'TRACK RECORD':money(g.next_milestone_eur);
+ $('fundtrack').textContent=(g.verified_track_record?'VERIFIED':'BUILDING')+' · '+Number(tr.days||0).toFixed(1)+'/'+Number(tr.minimum_days||365)+' dagen · '+Number(tr.fills||0)+'/'+Number(tr.minimum_fills||100)+' fills';
+ $('fundtrack').className=g.verified_track_record?'green':'amber';
+ $('fundroles').textContent=(g.active_roles||[]).join(' · ')||'—';
+ $('fundledger').textContent=l.valid===true?'VALID · '+Number(l.count||0)+' events':'CONTROLEREN';
  $('fundledger').className=l.valid===true?'green':'red';
  let preservation=!!r.capital_preservation_mode,armed=!!r.capital_floor_armed,reached=!!r.target_reached;
  $('fundmode').textContent=preservation?'CAPITAL PRESERVATION':armed?'FLOOR ARMED':reached?'TARGET REACHED':'GROEI';
@@ -380,7 +389,7 @@ function renderFund(d){
    :armed
      ?'€25.000 floor is permanent gelatcht; nieuwe exposure mag alleen uit vermogen boven de beschermde zone komen.'
      :(r.nav_verified
-       ?'Groei naar €25.000 onder normale fund-risklimieten; het target verhoogt nooit automatisch het risico.'
+       ?'Groei naar €50.000 onder automatische stage-limieten; bij €25.000 wordt de protected-capital floor permanent gelatcht; het target verhoogt nooit automatisch het risico.'
        :'Live NAV is niet geverifieerd of te oud: nieuwe risicoverhogende orders blijven fail-closed.');
 }
 function renderRisk(d){let pos=d.open_positions||d.positions||[];if(!Array.isArray(pos))pos=[];$('positions').innerHTML=pos.length?pos.map(x=>`<tr><td>${esc(x.symbol||x.market)}</td><td>${esc(x.side)}</td><td>${money(x.notional_eur??x.notional)}</td><td>${money(x.pnl_eur??x.pnl)}</td></tr>`).join(''):'<tr><td colspan="4" class="sub">Geen open posities</td></tr>'}

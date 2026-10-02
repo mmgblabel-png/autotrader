@@ -8,6 +8,7 @@ import math
 import time
 from typing import Dict
 
+from autotrader.fund.growth import FundGrowthController
 from autotrader.fund.models import FundMandate, RiskDecision
 
 
@@ -45,8 +46,9 @@ class FundRiskEngine:
         initial = float(mandate.initial_nav_eur)
         floor_armed = bool(
             mandate.lock_floor_after_target_reached
-            and initial >= mandate.target_nav_eur
+            and initial >= mandate.protected_capital_floor_eur
         )
+        self.growth = FundGrowthController()
         self.state = FundRiskState(
             current_nav_eur=initial,
             peak_nav_eur=initial,
@@ -95,7 +97,7 @@ class FundRiskEngine:
             self.state.capital_floor_armed = True
             self.state.peak_nav_eur = max(
                 self.state.peak_nav_eur,
-                float(self.mandate.target_nav_eur),
+                float(self.mandate.protected_capital_floor_eur),
             )
 
     def restore_peak_nav(self, peak_nav_eur: float) -> None:
@@ -131,7 +133,7 @@ class FundRiskEngine:
             self.state.peak_nav_eur = max(self.state.peak_nav_eur, value)
             if (
                 self.mandate.lock_floor_after_target_reached
-                and self.state.peak_nav_eur >= self.mandate.target_nav_eur
+                and self.state.peak_nav_eur >= self.mandate.protected_capital_floor_eur
             ):
                 self.state.capital_floor_armed = True
         return self.state.capital_floor_armed and not was_armed
@@ -227,6 +229,16 @@ class FundRiskEngine:
         risk_capital = self.risk_capital_available_eur
         deleveraging = self.required_deleveraging_eur
         nav_age = self.nav_age_seconds()
+        effective_limits = self.growth.effective_limits(
+            nav_eur=nav,
+            mandate_limits={
+                "max_single_trade_pct": self.mandate.max_single_trade_pct,
+                "max_gross_exposure_pct": self.mandate.max_gross_exposure_pct,
+                "max_strategy_exposure_pct": self.mandate.max_strategy_exposure_pct,
+                "max_asset_exposure_pct": self.mandate.max_asset_exposure_pct,
+                "min_cash_reserve_pct": self.mandate.min_cash_reserve_pct,
+            },
+        )
 
         def decision(accepted: bool, reason: str) -> RiskDecision:
             return RiskDecision(
@@ -284,14 +296,14 @@ class FundRiskEngine:
             return decision(False, "maximum daily fund loss reached")
 
         trade_pct = notional / nav * 100.0
-        if trade_pct > self.mandate.max_single_trade_pct:
-            return decision(False, "single-trade fund limit exceeded")
-        if gross + trade_pct > self.mandate.max_gross_exposure_pct:
-            return decision(False, "maximum gross exposure exceeded")
-        if strategy_exposure + trade_pct > self.mandate.max_strategy_exposure_pct:
-            return decision(False, "maximum strategy exposure exceeded")
-        if symbol_key and asset_exposure + trade_pct > self.mandate.max_asset_exposure_pct:
-            return decision(False, "maximum asset exposure exceeded")
+        if trade_pct > effective_limits["max_single_trade_pct"]:
+            return decision(False, "single-trade growth-stage limit exceeded")
+        if gross + trade_pct > effective_limits["max_gross_exposure_pct"]:
+            return decision(False, "maximum growth-stage gross exposure exceeded")
+        if strategy_exposure + trade_pct > effective_limits["max_strategy_exposure_pct"]:
+            return decision(False, "maximum growth-stage strategy exposure exceeded")
+        if symbol_key and asset_exposure + trade_pct > effective_limits["max_asset_exposure_pct"]:
+            return decision(False, "maximum growth-stage asset exposure exceeded")
 
         return decision(True, "fund risk checks passed")
 
@@ -301,6 +313,17 @@ class FundRiskEngine:
         target = max(float(self.mandate.target_nav_eur), 1e-12)
         risk_capital = self.risk_capital_available_eur
         required_deleveraging = self.required_deleveraging_eur
+        effective_limits = self.growth.effective_limits(
+            nav_eur=nav,
+            mandate_limits={
+                "max_single_trade_pct": self.mandate.max_single_trade_pct,
+                "max_gross_exposure_pct": self.mandate.max_gross_exposure_pct,
+                "max_strategy_exposure_pct": self.mandate.max_strategy_exposure_pct,
+                "max_asset_exposure_pct": self.mandate.max_asset_exposure_pct,
+                "min_cash_reserve_pct": self.mandate.min_cash_reserve_pct,
+            },
+        )
+        growth_stage = self.growth.stage_for_nav(nav)
         return {
             "nav_eur": round(self.state.current_nav_eur, 6),
             "peak_nav_eur": round(self.state.peak_nav_eur, 6),
@@ -327,6 +350,7 @@ class FundRiskEngine:
                 else round(float(self.nav_age_seconds()), 6)
             ),
             "live_nav_max_age_seconds": round(self.mandate.live_nav_max_age_seconds, 6),
+            "growth_stage": growth_stage.as_dict(),
             "capital_preservation_mode": bool(
                 self.state.capital_floor_armed
                 and (required_deleveraging > 1e-9 or risk_capital <= 1e-9)
@@ -342,6 +366,9 @@ class FundRiskEngine:
             "limits": {
                 "max_portfolio_drawdown_pct": self.mandate.max_portfolio_drawdown_pct,
                 "max_daily_loss_pct": self.mandate.max_daily_loss_pct,
+                **effective_limits,
+            },
+            "mandate_ceiling_limits": {
                 "max_single_trade_pct": self.mandate.max_single_trade_pct,
                 "max_gross_exposure_pct": self.mandate.max_gross_exposure_pct,
                 "max_strategy_exposure_pct": self.mandate.max_strategy_exposure_pct,

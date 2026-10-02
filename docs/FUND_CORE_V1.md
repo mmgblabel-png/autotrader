@@ -35,34 +35,55 @@ AI output never has direct exchange credentials and never bypasses the existing 
 
 ## Capital-preservation defaults
 
-The branch ships with conservative small-account defaults for a EUR 50 fund:
+Fund Core now applies a NAV-aware growth envelope below the absolute mandate
+ceilings. The active stage is derived from verified Fund NAV:
 
-- 8% maximum portfolio drawdown
-- 2% maximum daily realized loss
-- 20% maximum single-trade notional
-- 85% maximum gross spot exposure
-- 40% maximum strategy exposure
-- 35% maximum single-asset exposure
-- 15% minimum cash reserve
-- 0.62 minimum accepted AI signal confidence
+| Stage | NAV | Max trade | Max gross | Max strategy | Max asset | Min cash |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| bootstrap | < EUR 500 | 16% | 65% | 30% | 30% | 35% |
+| developing | EUR 500-5,000 | 12% | 70% | 30% | 25% | 30% |
+| professional | EUR 5,000-50,000 | 8% | 75% | 25% | 20% | 25% |
+| track_record | >= EUR 50,000 | 5% | 70% | 20% | 15% | 30% |
 
-These are hard ceilings, not return targets. Risk-reducing exits remain allowed when entry gates are closed.
+At EUR 50 the bootstrap single-trade limit is exactly EUR 8. The configured
+mandate remains an outer ceiling; the stricter of mandate and stage limits is
+always enforced. Risk-reducing exits remain allowed when entry gates are closed.
 
-## EUR 25,000 target and protected-capital lock
+The operating model expands with capital:
 
-The fund target is **EUR 25,000**. This is a target, not a guaranteed account
-balance. The software never fabricates NAV and never increases risk simply
+~~~text
+EUR 50 -> 500:
+Fund Manager / Research / Risk / Execution
+
+EUR 500 -> 5,000:
++ Operations
+
+EUR 5,000 -> 50,000:
++ Accounting
+
+EUR 50,000 -> verified track record:
++ Compliance
+~~~
+
+Investor readiness is not triggered by capital alone. The default evidence gate
+requires at least EUR 50,000 NAV, a valid hash-chained ledger, 365 days of track
+record and 100 recorded fills.
+
+## EUR 50,000 growth target and EUR 25,000 protected-capital lock
+
+The current growth target is **EUR 50,000**. The protected-capital floor remains
+**EUR 25,000**. Neither number is a guaranteed account balance. The software never fabricates NAV and never increases risk simply
 because the account is behind the target.
 
 Configured controls:
 
-- `target_nav_eur: 25000`
+- `target_nav_eur: 50000`
 - `protected_capital_floor_eur: 25000`
 - `lock_floor_after_target_reached: true`
 - `capital_floor_buffer_pct: 2.0`
 
-The floor is dormant while the account grows. Once historical NAV reaches
-EUR 25,000, the floor latches permanently. From that point onward:
+The floor is independent from the EUR 50,000 growth target. Once verified
+historical NAV reaches EUR 25,000, the floor latches permanently. From that point onward:
 
 1. risk-reducing exits remain allowed;
 2. new risk may use only NAV above the protected EUR 25,000 plus its buffer;
@@ -167,4 +188,39 @@ pytest -q tests
 5. Run shadow/paper evidence collection.
 6. Only after the existing live preflight and profitability/evidence gates pass should a reviewed change be merged to `main`.
 
-Do not use the target-equity goal as a reason to raise risk. The existing `portfolio_goal.goal_is_risk_input=false` and `increase_risk_to_catch_up=false` settings should remain unchanged.
+Do not use the target-equity goal as a reason to raise risk. The existing
+`portfolio_goal.goal_is_risk_input=false` and
+`increase_risk_to_catch_up=false` settings remain authoritative.
+
+## Growth pipeline
+
+The fund lifecycle is represented directly in the runtime status:
+
+~~~text
+Research Engine
+    |
+Market Scanner
+    |
+AI Agent
+    |
+Risk Manager
+    |
+Execution Engine
+    |
+Portfolio Dashboard
+~~~
+
+The intended capital path is:
+
+~~~text
+EUR 50
+  -> EUR 500
+  -> EUR 5,000
+  -> EUR 50,000
+  -> verified track record
+  -> potential investor diligence
+~~~
+
+Potential investors are an operating milestone only. The software does not
+accept third-party capital or bypass any legal, compliance, custody or
+authorization requirement.

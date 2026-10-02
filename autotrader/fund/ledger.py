@@ -247,6 +247,37 @@ class FundLedger:
                 maximum = value
         return maximum
 
+    def track_record_stats(self) -> dict[str, object]:
+        """Return durable track-record age and fill count for growth governance."""
+        with self._lock, self._connect() as conn:
+            row = conn.execute(
+                """
+                SELECT
+                    MIN(timestamp) AS first_ts,
+                    MAX(timestamp) AS last_ts,
+                    SUM(CASE WHEN event_type = 'fill' THEN 1 ELSE 0 END) AS fill_count,
+                    COUNT(*) AS event_count
+                FROM fund_events
+                """
+            ).fetchone()
+        if row is None or row["event_count"] in (None, 0):
+            return {
+                "first_timestamp": None,
+                "last_timestamp": None,
+                "days": 0.0,
+                "fill_count": 0,
+                "event_count": 0,
+            }
+        first_ts = float(row["first_ts"])
+        last_ts = float(row["last_ts"])
+        return {
+            "first_timestamp": first_ts,
+            "last_timestamp": last_ts,
+            "days": max(0.0, (last_ts - first_ts) / 86400.0),
+            "fill_count": int(row["fill_count"] or 0),
+            "event_count": int(row["event_count"] or 0),
+        }
+
     def tail(self, limit: int = 25) -> list[dict[str, object]]:
         safe_limit = max(1, min(500, int(limit)))
         with self._lock, self._connect() as conn:
