@@ -77,11 +77,8 @@ class MarketMaker(BaseStrategy):
         if not self._running:
             return
 
-        if self._rm.is_killed(self.name):
-            log.warning("Kill-switch active – skipping tick.")
-            return
-
         cfg = self._config
+        entry_killed = self._rm.is_killed(self.name)
         symbol: str = cfg.get("symbol", "BTC/USDT")
         exchange: str = cfg.get("exchange", "binance")
         mid_price: float = cfg.get("_mid_price", 30_000.0)
@@ -144,10 +141,6 @@ class MarketMaker(BaseStrategy):
             )
         notional = size * mid_price
 
-        # Risk gate
-        if not self._rm.check_order(self.name, notional):
-            return
-
         live_snapshot = bool(cfg.get("_live_balance_snapshot_ready", False))
         can_bid = True
         can_ask = True
@@ -158,21 +151,33 @@ class MarketMaker(BaseStrategy):
             bot_inventory = max(0.0, float(cfg.get("_bot_base_inventory", 0.0)))
             min_size = max(
                 float(cfg.get("min_order_size", 0.0001)),
-                float(cfg.get("_min_order_base", 0.0) or 0.0),
+                self.minimum_tradable_base(mid_price),
             )
+            tradable_inventory = bot_inventory >= min_size
+            if bot_inventory > 0 and not tradable_inventory:
+                self.mark_dust_inventory(bot_inventory, mid_price)
+                log.info(
+                    "MM dust ignored: %s inventory %.8f below tradable minimum %.8f.",
+                    symbol,
+                    bot_inventory,
+                    min_size,
+                )
+            else:
+                self.clear_dust_inventory()
             if cycle_mode:
-                if bot_inventory >= min_size:
+                if tradable_inventory:
                     can_bid = False
                     can_ask = available_base >= min_size
                     size = min(size, bot_inventory, available_base)
                     log.info("MM inventory cycle: bot inventory %.8f, quoting SELL only.", bot_inventory)
-                elif bot_inventory > 0:
-                    can_bid = False
-                    can_ask = False
-                    log.info("MM inventory cycle paused: bot inventory %.8f is below minimum %.8f.", bot_inventory, min_size)
                 else:
                     can_bid = available_quote >= (size * bid_price)
                     can_ask = False
+                    if entry_killed:
+                        can_bid = False
+                        cfg["_autonomous_entry_allowed"] = False
+                        cfg["_autonomous_entry_reason"] = "risk_kill_switch"
+                        log.info("MM BUY paused: risk kill-switch active.")
                     if not bool(cfg.get("_autonomous_entry_allowed", True)):
                         can_bid = False
                         log.info(
@@ -211,13 +216,13 @@ class MarketMaker(BaseStrategy):
                             adaptive_momentum * 10000,
                             guard * 10000,
                         )
-                    else:
+                    elif can_bid:
                         log.info(
-                            "MM inventory cycle: no bot inventory, quoting BUY only (adaptive spread %.3f%%).",
+                            "MM inventory cycle: economically flat, quoting BUY only (adaptive spread %.3f%%).",
                             spread_pct * 100,
                         )
             else:
-                can_bid = available_quote >= (size * bid_price)
+                can_bid = available_quote >= (size * bid_price) and not entry_killed
                 can_ask = available_base >= size
             if not can_bid and (not cycle_mode or bot_inventory <= 0):
                 log.info("MM bid skipped: insufficient available quote balance.")
@@ -226,20 +231,24 @@ class MarketMaker(BaseStrategy):
 
         placed = False
         if can_bid:
-            bid = Order(exchange=exchange, symbol=symbol, side=OrderSide.BUY,
-                        order_type=OrderType.LIMIT, quantity=size, price=bid_price,
-                        strategy=self.name)
-            self._om.register(bid)
-            placed = True
-            log.info("BID  %s %.4f @ %.2f  (notional=%.2f)", symbol, size, bid_price, notional)
+            bid_notional = size * bid_price
+            if self._rm.check_order(self.name, bid_notional):
+                bid = Order(exchange=exchange, symbol=symbol, side=OrderSide.BUY,
+                            order_type=OrderType.LIMIT, quantity=size, price=bid_price,
+                            strategy=self.name)
+                self._om.register(bid)
+                placed = True
+                log.info("BID  %s %.4f @ %.2f  (notional=%.2f)", symbol, size, bid_price, bid_notional)
 
         if can_ask:
-            ask = Order(exchange=exchange, symbol=symbol, side=OrderSide.SELL,
-                        order_type=OrderType.LIMIT, quantity=size, price=ask_price,
-                        strategy=self.name)
-            self._om.register(ask)
-            placed = True
-            log.info("ASK  %s %.4f @ %.2f  (notional=%.2f)", symbol, size, ask_price, notional)
+            ask_notional = size * ask_price
+            if self._rm.check_order(self.name, ask_notional, risk_reducing=True):
+                ask = Order(exchange=exchange, symbol=symbol, side=OrderSide.SELL,
+                            order_type=OrderType.LIMIT, quantity=size, price=ask_price,
+                            strategy=self.name)
+                self._om.register(ask)
+                placed = True
+                log.info("ASK  %s %.4f @ %.2f  (notional=%.2f)", symbol, size, ask_price, ask_notional)
 
         if placed:
             cfg["_last_quote_ts"] = now
