@@ -1735,6 +1735,12 @@ def fund_status() -> dict[str, object]:
     return get_agent().fund.status()
 
 
+@app.get("/api/fund/report", tags=["fund"])
+def fund_report() -> dict[str, object]:
+    """Return internal accounting/risk/performance/investor-readiness report."""
+    return get_agent().fund_report()
+
+
 @app.get("/api/fund/agents", tags=["fund"])
 def fund_agents() -> dict[str, object]:
     """Expose specialized research-agent contracts and current signal buffer."""
