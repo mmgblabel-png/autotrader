@@ -203,7 +203,21 @@ class AutonomousDecisionEngine:
             )
             durable_open = int(journal_state.get("nonterminal_count") or 0) > 0
             inventory = agent._bitvavo.journal.inventory_cost_basis(current, display) if current else {"quantity": 0}
-            flat = float(inventory.get("quantity") or 0.0) <= 0.0
+            inventory_quantity = max(0.0, float(inventory.get("quantity") or 0.0))
+            current_price = max(
+                0.0,
+                float(cfg.get("_current_price", cfg.get("_mid_price", 0.0)) or 0.0),
+            )
+            if hasattr(strategy, "minimum_tradable_base"):
+                min_tradable_base = max(0.0, float(strategy.minimum_tradable_base(current_price)))
+            else:
+                min_tradable_base = max(0.0, float(cfg.get("_min_order_base", 0.0) or 0.0))
+            dust_inventory = (
+                inventory_quantity > 0
+                and min_tradable_base > 0
+                and inventory_quantity < min_tradable_base
+            )
+            flat = inventory_quantity <= 0.0 or dust_inventory
             switch_ready = now - float(self._last_switch.get(display, 0.0)) >= self.switch_cooldown_seconds
             score = float(best.get("score") or 0.0) if best else 0.0
             signal_strength = float(best.get("signal_strength", best.get("score", 0.0)) or 0.0) if best else 0.0
@@ -340,6 +354,9 @@ class AutonomousDecisionEngine:
                 "max_size_signal": use_max_size,
                 "quality_ok": quality_ok,
                 "flat": flat,
+                "dust_inventory": dust_inventory,
+                "dust_inventory_quantity": round(inventory_quantity, 12),
+                "minimum_tradable_base": round(min_tradable_base, 12),
                 "open_local_order": open_local,
                 "durable_open_order": durable_open,
                 "may_switch": may_switch,
@@ -420,7 +437,15 @@ class AutonomousDecisionEngine:
                     cfg["symbol"] = desired
                     cfg["_tick_size"] = float(rules.get("tickSize") or 0.0)
                     cfg["_min_order_base"] = float(rules.get("minOrderInBaseAsset") or 0.0)
+                    cfg["_min_order_quote"] = float(rules.get("minOrderInQuoteAsset") or 0.0)
+                    cfg["_quantity_decimals"] = int(rules.get("quantityDecimals") or 18)
+                    cfg["_market_rules_symbol"] = desired
                     strategy.on_market_switch(previous, desired)
+                    cfg["_tick_size"] = float(rules.get("tickSize") or 0.0)
+                    cfg["_min_order_base"] = float(rules.get("minOrderInBaseAsset") or 0.0)
+                    cfg["_min_order_quote"] = float(rules.get("minOrderInQuoteAsset") or 0.0)
+                    cfg["_quantity_decimals"] = int(rules.get("quantityDecimals") or 18)
+                    cfg["_market_rules_symbol"] = desired
                 except Exception:
                     cfg["symbol"] = previous
                     continue
