@@ -107,11 +107,15 @@ class ShadowStrategyEngine:
 
     @staticmethod
     def _learner_name(name: str) -> str:
+        # Dynamic fast-lane candidates are named "kind@MARKET". Learning is
+        # strategy-family bounded, so normalize the dynamic suffix before
+        # looking up the allow-listed tunable.
+        base_name = str(name).split("@", 1)[0]
         return {
             "mean_reversion": "MeanReversionShadow",
             "volatility_breakout": "VolatilityBreakoutShadow",
             "sniper_v2": "SniperV2Shadow",
-        }.get(name, name)
+        }.get(base_name, name)
 
     def _ensure_version(self, name: str, cfg: dict[str, Any]) -> ShadowStats:
         state = self._state(name)
