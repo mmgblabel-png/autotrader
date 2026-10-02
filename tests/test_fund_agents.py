@@ -1,5 +1,6 @@
 """Specialized fund research agent tests."""
 
+from autotrader.agent import AutoTrader
 from autotrader.agents.research import (
     OnChainAnalysisAgent,
     ResearchAgentSuite,
@@ -130,3 +131,25 @@ def test_sentiment_agent_rejects_low_quality_and_decays_old_news():
     assert fresh is not None
     assert old is not None
     assert fresh.confidence > old.confidence
+
+
+def test_autotrader_exposes_nine_fund_agent_roles(tmp_path, monkeypatch):
+    monkeypatch.setenv("FUND_LEDGER_PATH", str(tmp_path / "fund.sqlite3"))
+    agent = AutoTrader("config.yaml")
+    status = agent.research_agent_status()
+
+    assert set(status["agents"]) == {
+        "market_research",
+        "trend_detection",
+        "onchain_analysis",
+        "whale_tracking",
+        "sentiment",
+        "risk",
+        "portfolio_allocation",
+        "execution",
+        "performance_review",
+    }
+    assert status["execution_authority"] is False
+    assert status["orders_can_be_sent_by_research_agents"] is False
+    assert status["agents"]["risk"]["implementation"] == "FundRiskEngine + GrowthController"
+    assert status["agents"]["execution"]["implementation"] == "ExecutionCoordinator + ExecutionGateway"
