@@ -394,17 +394,129 @@ class AutoTrader:
         return self._executor.reconcile()
 
     def research_agent_status(self) -> dict[str, object]:
+        agents = {
+            name: {
+                "responsibilities": list(descriptor.responsibilities),
+                "inputs": list(descriptor.inputs),
+                "outputs": list(descriptor.outputs),
+                "decision_process": list(descriptor.decision_process),
+                "kpis": list(descriptor.kpis),
+                "implementation": "evidence_only",
+            }
+            for name, descriptor in self._research_agents.descriptors.items()
+        }
+        agents.update(
+            {
+                "risk": {
+                    "responsibilities": [
+                        "independent capital-preservation veto",
+                        "drawdown/daily-loss/exposure enforcement",
+                        "verified-NAV and growth-stage enforcement",
+                    ],
+                    "inputs": [
+                        "verified NAV",
+                        "fund exposures",
+                        "strategy/order intent",
+                        "growth-stage policy",
+                    ],
+                    "outputs": ["APPROVE", "RESIZE", "BLOCK"],
+                    "decision_process": [
+                        "deterministic hard limits",
+                        "growth-stage overlay",
+                        "sector concentration veto",
+                    ],
+                    "kpis": ["risk breaches = 0", "max drawdown", "risk of ruin"],
+                    "implementation": "FundRiskEngine + GrowthController",
+                },
+                "portfolio_allocation": {
+                    "responsibilities": [
+                        "blend alpha evidence",
+                        "allocate deployable capital",
+                        "enforce asset/sector diversification",
+                    ],
+                    "inputs": [
+                        "blended AgentSignal",
+                        "NAV",
+                        "sector taxonomy",
+                        "risk budget",
+                    ],
+                    "outputs": ["target notionals", "target weights"],
+                    "decision_process": [
+                        "cost-aware signal blending",
+                        "asset cap",
+                        "sector cap",
+                        "cash reserve",
+                    ],
+                    "kpis": [
+                        "risk-adjusted return",
+                        "concentration",
+                        "capital utilization",
+                    ],
+                    "implementation": "PortfolioAllocationEngine",
+                },
+                "execution": {
+                    "responsibilities": [
+                        "convert approved targets into exchange orders",
+                        "maker-first execution",
+                        "reconcile durable order state",
+                    ],
+                    "inputs": [
+                        "approved order intent",
+                        "order book",
+                        "fees/slippage",
+                        "exchange rules",
+                    ],
+                    "outputs": ["orders", "fills", "reconciliation events"],
+                    "decision_process": [
+                        "allocator gate",
+                        "risk gate",
+                        "execution gateway",
+                        "exchange adapter",
+                    ],
+                    "kpis": [
+                        "implementation shortfall",
+                        "fill quality",
+                        "reconciliation failures",
+                    ],
+                    "implementation": "ExecutionCoordinator + ExecutionGateway",
+                },
+                "performance_review": {
+                    "responsibilities": [
+                        "measure live/shadow evidence",
+                        "promote/keep/drop strategies",
+                        "build verified track record",
+                    ],
+                    "inputs": [
+                        "fills",
+                        "NAV checkpoints",
+                        "fees",
+                        "drawdown",
+                        "walk-forward and Monte Carlo evidence",
+                    ],
+                    "outputs": [
+                        "PROMOTE",
+                        "KEEP",
+                        "DROP",
+                        "verified-track-record status",
+                    ],
+                    "decision_process": [
+                        "durable performance metrics",
+                        "minimum sample requirements",
+                        "cost and drawdown gates",
+                    ],
+                    "kpis": [
+                        "profit factor",
+                        "Sharpe",
+                        "Sortino",
+                        "max drawdown",
+                        "net PnL",
+                    ],
+                    "implementation": "FundLedger + ShadowStrategyEngine + GrowthController",
+                },
+            }
+        )
         return {
-            "agents": {
-                name: {
-                    "responsibilities": list(descriptor.responsibilities),
-                    "inputs": list(descriptor.inputs),
-                    "outputs": list(descriptor.outputs),
-                    "decision_process": list(descriptor.decision_process),
-                    "kpis": list(descriptor.kpis),
-                }
-                for name, descriptor in self._research_agents.descriptors.items()
-            },
+            "agents": agents,
             "execution_authority": False,
             "orders_can_be_sent_by_research_agents": False,
         }
