@@ -32,7 +32,7 @@ class FundMandate:
     max_portfolio_drawdown_pct: float = 8.0
     max_daily_loss_pct: float = 2.0
     max_single_trade_pct: float = 20.0
-    max_gross_exposure_pct: float = 100.0
+    max_gross_exposure_pct: float = 85.0
     max_strategy_exposure_pct: float = 40.0
     max_asset_exposure_pct: float = 35.0
     min_cash_reserve_pct: float = 15.0
