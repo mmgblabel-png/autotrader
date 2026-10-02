@@ -41,9 +41,16 @@ class StrategyAllocator:
 
     def __init__(self, config: dict) -> None:
         portfolio = config.get("portfolio", {}) or {}
-        self.global_budget_eur = Decimal(str(portfolio.get("global_live_budget_eur", "50")))
-        self.max_total_open_orders = max(1, int(portfolio.get("max_total_open_orders", 4)))
+        self.configured_global_budget_eur = Decimal(
+            str(portfolio.get("global_live_budget_eur", "50"))
+        )
+        self.global_budget_eur = self.configured_global_budget_eur
+        self.configured_max_total_open_orders = max(
+            1, int(portfolio.get("max_total_open_orders", 4))
+        )
+        self.max_total_open_orders = self.configured_max_total_open_orders
         self._allocations: dict[str, StrategyAllocation] = {}
+        self._base_allocations: dict[str, StrategyAllocation] = {}
 
         autonomous_markets = (
             (config.get("autonomous_execution", {}) or {}).get("strategy_markets", {}) or {}
@@ -60,7 +67,7 @@ class StrategyAllocator:
             if symbol and symbol not in allowed:
                 allowed.append(symbol)
             symbols = frozenset(allowed or ([symbol] if symbol else []))
-            self._allocations[name] = StrategyAllocation(
+            allocation = StrategyAllocation(
                 allocation_eur=Decimal(str(cfg.get("allocation_eur", "0"))),
                 max_order_eur=Decimal(str(cfg.get("max_order_eur", "10"))),
                 max_open_orders=max(1, int(cfg.get("max_open_orders", 1))),
@@ -68,6 +75,74 @@ class StrategyAllocator:
                 exclusive_symbol=bool(cfg.get("exclusive_symbol", True)),
                 live_capable=bool(cfg.get("live_capable", False)),
             )
+            self._allocations[name] = allocation
+            self._base_allocations[name] = allocation
+
+    def apply_growth_policy(self, policy: dict) -> dict[str, object]:
+        """Apply a NAV-derived portfolio envelope without widening eligibility."""
+        budget = Decimal(
+            str(max(0.0, float(policy.get("effective_live_budget_eur", 0.0))))
+        )
+        max_order = Decimal(
+            str(max(0.0, float(policy.get("effective_max_order_eur", 0.0))))
+        )
+        max_open_orders = max(1, int(policy.get("max_open_orders", 1)))
+        live_bases = {
+            name: allocation
+            for name, allocation in self._base_allocations.items()
+            if allocation.live_capable and allocation.allocation_eur > 0
+        }
+        weight_total = sum(
+            (allocation.allocation_eur for allocation in live_bases.values()),
+            Decimal("0"),
+        )
+        updated: dict[str, StrategyAllocation] = {}
+        for name, base in self._base_allocations.items():
+            if (
+                not base.live_capable
+                or base.allocation_eur <= 0
+                or weight_total <= 0
+                or budget <= 0
+            ):
+                effective_allocation = (
+                    Decimal("0") if base.live_capable else base.allocation_eur
+                )
+                effective_order = (
+                    Decimal("0") if base.live_capable else base.max_order_eur
+                )
+            else:
+                share = base.allocation_eur / weight_total
+                effective_allocation = budget * share
+                effective_order = min(max_order, effective_allocation)
+            updated[name] = StrategyAllocation(
+                allocation_eur=effective_allocation,
+                max_order_eur=effective_order,
+                max_open_orders=base.max_open_orders,
+                symbols=base.symbols,
+                exclusive_symbol=base.exclusive_symbol,
+                live_capable=base.live_capable,
+            )
+        self._allocations = updated
+        self.global_budget_eur = budget
+        self.max_total_open_orders = max_open_orders
+        return self.status()
+
+    def status(self) -> dict[str, object]:
+        return {
+            "configured_global_budget_eur": float(self.configured_global_budget_eur),
+            "effective_global_budget_eur": float(self.global_budget_eur),
+            "configured_max_total_open_orders": self.configured_max_total_open_orders,
+            "effective_max_total_open_orders": self.max_total_open_orders,
+            "allocations": {
+                name: {
+                    "allocation_eur": float(allocation.allocation_eur),
+                    "max_order_eur": float(allocation.max_order_eur),
+                    "max_open_orders": allocation.max_open_orders,
+                    "live_capable": allocation.live_capable,
+                }
+                for name, allocation in sorted(self._allocations.items())
+            },
+        }
 
     @staticmethod
     def _notional(order: Order, fallback_price: Decimal | None = None) -> Decimal | None:
