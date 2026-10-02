@@ -291,7 +291,7 @@ class HedgeFundEngine:
 
     def current_growth_policy(self) -> dict[str, object]:
         risk_status = self.risk.status()
-        return dict(
+        policy = dict(
             self.growth.status(
                 nav_eur=float(risk_status.get("nav_eur") or 0.0),
                 risk_status=risk_status,
@@ -299,6 +299,8 @@ class HedgeFundEngine:
                 ledger_valid=True,
             )["policy"]
         )
+        policy["enabled"] = self.growth.enabled
+        return policy
 
     @staticmethod
     def _signal_event_id(signal: AgentSignal) -> str:
