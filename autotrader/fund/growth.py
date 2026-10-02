@@ -134,7 +134,7 @@ class GrowthController:
 
     def __init__(self, config: Mapping[str, Any] | None = None) -> None:
         self.config = dict(config or {})
-        self.enabled = bool(self.config.get("enabled", True))
+        self.enabled = bool(self.config.get("enabled", False))
         self.auto_scale_live_budget = bool(
             self.config.get("auto_scale_live_budget", True)
         )
