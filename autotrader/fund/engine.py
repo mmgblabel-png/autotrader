@@ -374,17 +374,28 @@ class HedgeFundEngine:
 
     @staticmethod
     def _signal_event_id(signal: AgentSignal) -> str:
-        payload = {
-            "agent": signal.agent,
-            "strategy": signal.strategy,
-            "symbol": signal.symbol,
-            "direction": signal.direction,
-            "confidence": signal.confidence,
-            "score": signal.score,
-            "horizon_seconds": signal.horizon_seconds,
-            "timestamp": signal.timestamp,
-            "metadata": dict(signal.metadata),
-        }
+        metadata = dict(signal.metadata)
+        dedupe_bucket = metadata.get("dedupe_bucket")
+        if dedupe_bucket is not None and metadata.get("source") == "opportunity_router":
+            payload = {
+                "agent": signal.agent,
+                "strategy": signal.strategy,
+                "symbol": signal.symbol,
+                "source": metadata.get("source"),
+                "dedupe_bucket": int(dedupe_bucket),
+            }
+        else:
+            payload = {
+                "agent": signal.agent,
+                "strategy": signal.strategy,
+                "symbol": signal.symbol,
+                "direction": signal.direction,
+                "confidence": signal.confidence,
+                "score": signal.score,
+                "horizon_seconds": signal.horizon_seconds,
+                "timestamp": signal.timestamp,
+                "metadata": metadata,
+            }
         return HedgeFundEngine._payload_event_id("signal", payload)
 
     @staticmethod
