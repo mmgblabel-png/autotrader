@@ -85,10 +85,13 @@ class ExecutionGateway:
         if request.timestamp>now+5 or now-request.timestamp>30: return self._reject(request,"request timestamp is stale or invalid")
         if request.venue not in {"binance_spot","bitvavo","polymarket"}: return self._reject(request,"venue is not allowlisted")
         if request.side not in {"BUY","SELL"}: return self._reject(request,"side is invalid")
-        if request.notional_eur<=0 or request.notional_eur>self.limits.max_trade_eur: return self._reject(request,"per-trade EUR limit exceeded")
+        if request.notional_eur<=0: return self._reject(request,"per-trade EUR limit exceeded")
+        if (not request.risk_reducing) and request.notional_eur>self.limits.max_trade_eur:
+            return self._reject(request,"per-trade EUR limit exceeded")
         if (not request.risk_reducing) and self.daily_exposure_eur+request.notional_eur>self.limits.max_daily_exposure_eur:
             return self._reject(request,"daily exposure limit exceeded")
-        if self.daily_loss_eur>=self.limits.max_daily_loss_eur: return self._reject(request,"daily loss stop is active")
+        if (not request.risk_reducing) and self.daily_loss_eur>=self.limits.max_daily_loss_eur:
+            return self._reject(request,"daily loss stop is active")
         if request.expected_price<=0 or request.observed_price<=0: return self._reject(request,"price must be positive")
         if request.side=="BUY":
             adverse_move=max(Decimal("0"),request.expected_price-request.observed_price)
