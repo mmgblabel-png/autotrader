@@ -155,6 +155,7 @@ autonomous_execution:
   min_score: 68.0
   min_confidence: 0.62
   min_signal_strength: 62.0
+  minimum_live_order_eur: 5.0
   max_size_score: 82.0
   max_size_confidence: 0.75
   exposure_safety_buffer_eur: 0.10
