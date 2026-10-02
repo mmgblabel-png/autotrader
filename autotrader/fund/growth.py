@@ -26,6 +26,7 @@ class GrowthStage:
     max_gross_exposure_pct: float
     max_strategy_exposure_pct: float
     max_asset_exposure_pct: float
+    max_sector_exposure_pct: float
     min_cash_reserve_pct: float
 
     def validate(self) -> None:
@@ -51,6 +52,7 @@ class GrowthStage:
             "max_gross_exposure_pct",
             "max_strategy_exposure_pct",
             "max_asset_exposure_pct",
+            "max_sector_exposure_pct",
             "min_cash_reserve_pct",
         ):
             value = float(getattr(self, name))
@@ -80,6 +82,7 @@ class GrowthController:
             max_gross_exposure_pct=40.0,
             max_strategy_exposure_pct=20.0,
             max_asset_exposure_pct=20.0,
+            max_sector_exposure_pct=30.0,
             min_cash_reserve_pct=60.0,
         ),
         GrowthStage(
@@ -96,6 +99,7 @@ class GrowthController:
             max_gross_exposure_pct=50.0,
             max_strategy_exposure_pct=22.5,
             max_asset_exposure_pct=20.0,
+            max_sector_exposure_pct=30.0,
             min_cash_reserve_pct=50.0,
         ),
         GrowthStage(
@@ -112,6 +116,7 @@ class GrowthController:
             max_gross_exposure_pct=60.0,
             max_strategy_exposure_pct=20.0,
             max_asset_exposure_pct=15.0,
+            max_sector_exposure_pct=25.0,
             min_cash_reserve_pct=40.0,
         ),
         GrowthStage(
@@ -128,6 +133,7 @@ class GrowthController:
             max_gross_exposure_pct=65.0,
             max_strategy_exposure_pct=20.0,
             max_asset_exposure_pct=12.5,
+            max_sector_exposure_pct=20.0,
             min_cash_reserve_pct=35.0,
         ),
     )
@@ -209,6 +215,7 @@ class GrowthController:
                     item["max_strategy_exposure_pct"]
                 ),
                 max_asset_exposure_pct=float(item["max_asset_exposure_pct"]),
+                max_sector_exposure_pct=float(item["max_sector_exposure_pct"]),
                 min_cash_reserve_pct=float(item["min_cash_reserve_pct"]),
             )
             stage.validate()
@@ -383,6 +390,7 @@ class GrowthController:
                 "max_gross_exposure_pct": stage.max_gross_exposure_pct,
                 "max_strategy_exposure_pct": stage.max_strategy_exposure_pct,
                 "max_asset_exposure_pct": stage.max_asset_exposure_pct,
+                "max_sector_exposure_pct": stage.max_sector_exposure_pct,
                 "min_cash_reserve_pct": stage.min_cash_reserve_pct,
             },
             "track_record": {
