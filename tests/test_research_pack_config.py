@@ -16,9 +16,11 @@ def test_research_pack_config_is_valid_and_does_not_raise_live_budget():
         for key, value in cfg["strategies"].items()
         if value.get("enabled") and value.get("live_capable")
     }
-    assert sum(float(row.get("allocation_eur", 0)) for row in live.values()) == 40
-    assert live["grid"]["allocation_eur"] == 8
-    assert live["grid_eth"]["allocation_eur"] == 7
+    assert sum(float(row.get("allocation_eur", 0)) for row in live.values()) == 50
+    assert live["market_maker"]["allocation_eur"] == 18
+    assert live["grid"]["allocation_eur"] == 10
+    assert live["grid_eth"]["allocation_eur"] == 10
+    assert live["sniper"]["allocation_eur"] == 12
     assert live["grid"]["symbol"] == "SOL-EUR"
     assert live["grid_eth"]["symbol"] == "ETH-EUR"
     assert live["grid_eth"]["strategy_name"] == "GridRunnerETH"
