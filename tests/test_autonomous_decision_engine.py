@@ -546,7 +546,11 @@ def test_below_minimum_recommendation_does_not_switch_or_mutate_order_value():
 def test_sniper_uses_stricter_strategy_specific_thresholds():
     agent = _agent()
     payload = _router()
-    payload["rankings"]["sniper"][0].update({
+    xrp = next(
+        row for row in payload["rankings"]["sniper"]
+        if row["market"] == "XRP-EUR"
+    )
+    xrp.update({
         "score": 90,
         "signal_strength": 77,
         "signal_direction": "LONG",
