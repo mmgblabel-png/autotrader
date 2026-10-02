@@ -24,9 +24,12 @@ MAINNET_MAX_GAS_ETH         Future offline-policy fee cap; defaults 0.
 The Mainnet settings configure only the non-executing proposal validator. They
 never add a wallet, approval, signing, or broadcast capability.
 
-This application intentionally operates in paper mode. The included strategy,
-exchange, and blockchain layers are simulations/stubs and must not be presented
-as live MetaMask or exchange trading.
+This application supports explicitly gated live Bitvavo execution. Live orders
+remain fail-closed until execution mode, credentials, security/preflight,
+operator confirmation, runtime arm, risk, allocation and profit gates all pass.
+Coinbase/arbitrage, leverage/martingale and blockchain/mainnet paths remain
+research, market-data, shadow or non-executing unless separately implemented
+and approved.
 """
 
 from __future__ import annotations
