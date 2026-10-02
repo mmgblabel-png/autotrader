@@ -318,11 +318,9 @@ class AutoTrader:
                 and age <= max_age
                 and not self._live_fund_nav_unpriced_assets
             ):
-                self._fund.refresh_nav(
-                    self._live_fund_nav_eur,
-                    source="bitvavo_account_liquidation_nav",
-                    verified=True,
-                )
+                # Keep the timestamp of the underlying private balance snapshot.
+                # Re-stamping cached NAV on every strategy tick would make stale
+                # exchange data appear artificially fresh to the risk layer.
                 return self._live_fund_nav_eur
 
             self._fund.mark_nav_unverified("bitvavo_account_nav_missing_or_stale")
