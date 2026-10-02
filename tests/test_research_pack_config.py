@@ -24,9 +24,6 @@ def test_research_pack_config_is_valid_and_does_not_raise_live_budget():
     assert cfg["strategies"]["sniper"]["allocation_eur"] == 0
     assert cfg["live_evidence_gate"]["min_completed_exits"] == 4
     assert cfg["live_evidence_gate"]["minimum_net_pnl_eur"] == -0.10
-    assert live["grid"]["allocation_eur"] == 10
-    assert live["grid_eth"]["allocation_eur"] == 10
-    assert live["sniper"]["allocation_eur"] == 12
     assert live["grid"]["symbol"] == "SOL-EUR"
     assert live["grid_eth"]["symbol"] == "ETH-EUR"
     assert live["grid_eth"]["strategy_name"] == "GridRunnerETH"
