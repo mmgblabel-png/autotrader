@@ -1894,8 +1894,24 @@ def live_readiness():
     profit_policy_satisfied = bool(target_edges) and all(
         edge >= required_entry_edge_pct for edge in target_edges.values()
     )
-    fund_risk_status = agent.fund.risk.status()
+    fund_status = agent.fund.status()
+    fund_risk_status = fund_status.get("risk", {}) or {}
+    fund_growth_status = fund_status.get("growth", {}) or {}
+    fund_growth_policy = fund_growth_status.get("policy", {}) or {}
+    fund_ledger_status = fund_status.get("ledger", {}) or {}
     fund_nav_verified_fresh = agent.fund.risk.live_nav_is_fresh()
+    growth_stage_risk_clear = bool(
+        float(fund_risk_status.get("drawdown_pct") or 0.0)
+        < float(fund_growth_policy.get("max_portfolio_drawdown_pct") or 0.0)
+        and float(fund_risk_status.get("daily_loss_pct") or 0.0)
+        < float(fund_growth_policy.get("max_daily_loss_pct") or 0.0)
+    )
+    growth_stage_allows_live = bool(
+        float(fund_growth_policy.get("effective_live_budget_eur") or 0.0)
+        >= float((agent._config.get("autonomous_execution", {}) or {}).get("minimum_live_order_eur", 5.0))
+        and float(fund_growth_policy.get("effective_max_order_eur") or 0.0)
+        >= float((agent._config.get("autonomous_execution", {}) or {}).get("minimum_live_order_eur", 5.0))
+    )
     gates = {
         "execution_mode_live": os.getenv("EXECUTION_MODE", "paper").strip().lower() == "live",
         "live_execution_approved": os.getenv("LIVE_EXECUTION_APPROVED", "false").strip().lower() == "true",
@@ -1911,6 +1927,9 @@ def live_readiness():
         "journal_state_reconciled": journal_state_reconciled,
         "profit_policy_satisfied": profit_policy_satisfied,
         "fund_nav_verified_fresh": fund_nav_verified_fresh,
+        "fund_ledger_valid": bool(fund_ledger_status.get("valid")),
+        "growth_stage_risk_clear": growth_stage_risk_clear,
+        "growth_stage_allows_live": growth_stage_allows_live,
         "live_strategy_configured": bool(approved_live),
         "live_strategy_running": any(state.get("running") for state in approved_live),
         "running_strategies_approved": all(
@@ -1982,6 +2001,12 @@ def live_readiness():
             "fund_nav_source": fund_risk_status.get("nav_source"),
             "fund_nav_age_seconds": fund_risk_status.get("nav_age_seconds"),
             "fund_nav_eur": fund_risk_status.get("nav_eur"),
+            "fund_growth_stage": fund_growth_status.get("active_stage"),
+            "fund_growth_stage_label": fund_growth_status.get("active_stage_label"),
+            "fund_live_budget_eur": fund_growth_policy.get("effective_live_budget_eur"),
+            "fund_max_order_eur": fund_growth_policy.get("effective_max_order_eur"),
+            "track_record_verified": (fund_growth_status.get("track_record") or {}).get("verified"),
+            "investor_outreach_ready": (fund_growth_status.get("governance") or {}).get("investor_outreach_ready"),
         },
         "journal": journal_state,
         "journals": journal_states,
