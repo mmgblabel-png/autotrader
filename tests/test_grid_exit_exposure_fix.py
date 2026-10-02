@@ -105,3 +105,45 @@ def test_grid_failure_enters_cooldown_and_prevents_immediate_retry():
 
     strategy.tick()
     assert om.open_orders("GridRunner") == []
+
+
+def test_risk_reducing_sell_bypasses_entry_trade_cap_and_loss_stop():
+    gateway = ExecutionGateway(
+        ExecutionLimits(
+            max_trade_eur=Decimal("10"),
+            max_daily_exposure_eur=Decimal("10"),
+            max_daily_loss_eur=Decimal("5"),
+            max_slippage_bps=50,
+        )
+    )
+    gateway.daily_loss_eur = Decimal("5")
+    result = gateway.evaluate(
+        _req("sell-000000000000099", "SELL", "20", risk_reducing=True)
+    )
+    assert result.accepted is True
+
+
+def test_grid_allocation_failure_uses_short_retry_cooldown():
+    om = OrderManager()
+    strategy = GridRunner(
+        order_manager=om,
+        risk_manager=RiskManager(),
+        profit_engine=ProfitEngine(),
+        config={
+            "enabled": True,
+            "allocation_failure_cooldown_seconds": 5,
+        },
+    )
+    failed = Order(
+        exchange="bitvavo",
+        symbol="DOGE-EUR",
+        side=OrderSide.BUY,
+        order_type=OrderType.LIMIT,
+        quantity=70,
+        price=0.085,
+        strategy="GridRunner",
+    )
+    before = time.time()
+    strategy.on_order_failure(failed, "allocation", "strategy per-order allocation exceeded")
+    remaining = strategy._config["_failure_cooldown_until"] - before
+    assert 4.0 <= remaining <= 6.0
