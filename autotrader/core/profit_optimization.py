@@ -60,6 +60,29 @@ class OpportunityRouter:
         self.max_snapshot_age_seconds = max(
             1.0, float(self.config.get("max_snapshot_age_seconds", 30.0))
         )
+        # Fee-aware ranking stays read-only. Values are conservative low-tier
+        # Bitvavo estimates and can be overridden in config without changing
+        # live execution support.
+        self.maker_fee_bps_by_quote = {
+            str(key).upper(): max(0.0, float(value))
+            for key, value in (self.config.get("maker_fee_bps_by_quote", {
+                "EUR": 15.0,
+                "USDC": 5.0,
+            }) or {}).items()
+        }
+        self.taker_fee_bps_by_quote = {
+            str(key).upper(): max(0.0, float(value))
+            for key, value in (self.config.get("taker_fee_bps_by_quote", {
+                "EUR": 25.0,
+                "USDC": 5.0,
+            }) or {}).items()
+        }
+        self.default_maker_fee_bps = max(
+            0.0, float(self.config.get("default_maker_fee_bps", 25.0))
+        )
+        self.default_taker_fee_bps = max(
+            0.0, float(self.config.get("default_taker_fee_bps", 25.0))
+        )
         self._history: dict[str, deque[float]] = defaultdict(lambda: deque(maxlen=self.history_size))
         self._latest: dict[str, MarketSnapshot] = {}
         self._last_error: dict[str, str] = {}
@@ -209,6 +232,19 @@ class OpportunityRouter:
         self._last_error = errors
         self.updated_at = time.time()
 
+    def _fee_bps(self, market: str, *, maker: bool) -> float:
+        quote = market.rsplit("-", 1)[1].upper() if "-" in market else ""
+        table = self.maker_fee_bps_by_quote if maker else self.taker_fee_bps_by_quote
+        default = self.default_maker_fee_bps if maker else self.default_taker_fee_bps
+        return max(0.0, float(table.get(quote, default)))
+
+    @staticmethod
+    def _fee_quality(one_way_fee_bps: float) -> float:
+        # 0 bps => 100 quality, 50 bps => 0 quality. This is deliberately
+        # simple and transparent; it ranks execution cost without pretending
+        # fees alone predict returns.
+        return max(0.0, min(100.0, 100.0 - max(0.0, one_way_fee_bps) * 2.0))
+
     def _features(self, snap: MarketSnapshot) -> dict[str, float]:
         spread_quality = max(0.0, min(100.0, 100.0 * (1.0 - snap.spread_bps / self.max_spread_bps)))
         liquidity = max(0.0, min(100.0, snap.liquidity_eur / self.min_top_depth_eur * 100.0))
@@ -315,7 +351,18 @@ class OpportunityRouter:
             rows = []
             for snap in self._latest.values():
                 features = self._features(snap)
-                score = self._weighted(features, weights)
+                maker_profile = strategy in {"market_maker", "grid", "mean_reversion"}
+                fee_bps = self._fee_bps(snap.market, maker=maker_profile)
+                fee_quality = self._fee_quality(fee_bps)
+                # Preserve the original market-quality score as the dominant
+                # signal while allowing materially cheaper execution to break
+                # ties and improve shadow discovery.
+                base_score = self._weighted(features, weights)
+                fee_weight = max(
+                    0.0,
+                    min(0.25, float(self.config.get("fee_quality_weight", 0.10))),
+                )
+                score = base_score * (1.0 - fee_weight) + fee_quality * fee_weight
                 signal_strength, signal_direction = self._signal_strength(
                     strategy, features, snap
                 )
@@ -338,6 +385,10 @@ class OpportunityRouter:
                     "orderbook_imbalance_pct": round(snap.imbalance_pct, 3),
                     "snapshot_age_seconds": round(max(0.0, time.time() - snap.observed_at), 3),
                     "expected_slippage_bps": round(snap.expected_slippage_bps, 3),
+                    "estimated_execution_fee_bps": round(fee_bps, 3),
+                    "estimated_round_trip_fee_bps": round(fee_bps * 2.0, 3),
+                    "fee_quality": round(fee_quality, 2),
+                    "fee_profile": "maker" if maker_profile else "taker",
                     "momentum_pct": round(snap.momentum_pct, 4),
                     "volatility_pct": round(snap.volatility_pct, 4),
                     "features": {k: round(v, 2) for k, v in features.items()},
