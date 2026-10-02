@@ -10,6 +10,7 @@ from typing import Dict, Optional
 
 import yaml
 
+from autotrader.agents.research import ResearchAgentSuite
 from autotrader.core.logger import get_logger
 from autotrader.core.adaptive_learning import AdaptiveLearning
 from autotrader.connectors.bitvavo import BitvavoAdapter
@@ -44,6 +45,7 @@ class AutoTrader:
     def __init__(self, config_path: str = "config.yaml") -> None:
         self._config = self._load_config(config_path)
         self._fund = HedgeFundEngine(self._config.get("fund", {}))
+        self._research_agents = ResearchAgentSuite()
         self._om = OrderManager()
         self._rm = RiskManager()
         self._pe = ProfitEngine(export_dir=self._config.get("export_dir", "exports"))
@@ -109,6 +111,10 @@ class AutoTrader:
     @property
     def research_lab(self) -> "ResearchLab":
         return self._research_lab
+
+    @property
+    def research_agents(self) -> "ResearchAgentSuite":
+        return self._research_agents
 
     # ------------------------------------------------------------------
     # Public API
@@ -386,6 +392,33 @@ class AutoTrader:
         if os.getenv("EXECUTION_MODE", "paper").strip().lower() != "live":
             return []
         return self._executor.reconcile()
+
+    def ingest_router_research(
+        self,
+        router_payload: dict,
+    ) -> dict[str, object]:
+        """Convert read-only router evidence into durable normalized AI signals."""
+        signals = self._research_agents.from_router(router_payload)
+        accepted = 0
+        for signal in signals:
+            try:
+                self._fund.ingest_signal(signal)
+                accepted += 1
+            except ValueError:
+                continue
+        return {
+            "signals_ingested": accepted,
+            "agents": {
+                name: {
+                    "responsibilities": list(descriptor.responsibilities),
+                    "inputs": list(descriptor.inputs),
+                    "outputs": list(descriptor.outputs),
+                    "decision_process": list(descriptor.decision_process),
+                    "kpis": list(descriptor.kpis),
+                }
+                for name, descriptor in self._research_agents.descriptors.items()
+            },
+        }
 
     def shadow_tick(self, *, pair: str, price: float) -> None:
         """Process one market tick using only local paper-order machinery."""
