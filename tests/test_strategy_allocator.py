@@ -151,3 +151,22 @@ def test_allocator_wildcard_accepts_router_selected_market_with_same_caps():
     assert decision.accepted
     assert allocator.allocation_for("GridRunnerETH").max_order_eur == Decimal("7")
     assert allocator.global_budget_eur == Decimal("50")
+
+
+def test_allocator_exposes_resizable_entry_capacity():
+    allocator = StrategyAllocator(config())
+    order = Order(
+        "bitvavo", "SOL-EUR", OrderSide.BUY, OrderType.LIMIT,
+        0.08, 100, strategy="GridRunner",
+    )
+    assert allocator.max_entry_notional(order, []) == Decimal("7")
+
+
+def test_allocator_allows_risk_reducing_sell_above_entry_caps():
+    allocator = StrategyAllocator(config())
+    order = Order(
+        "bitvavo", "SOL-EUR", OrderSide.SELL, OrderType.LIMIT,
+        0.20, 100, strategy="GridRunner",
+    )
+    decision = allocator.evaluate(order, [], observed_price=Decimal("100"))
+    assert decision.accepted is True

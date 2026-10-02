@@ -1,6 +1,7 @@
 from autotrader.core.execution_coordinator import ExecutionCoordinator
 from autotrader.core.order_manager import Order, OrderManager, OrderSide, OrderStatus, OrderType
 from autotrader.core.profit_engine import ProfitEngine
+from autotrader.core.strategy_allocator import StrategyAllocator
 from autotrader.strategies.market_maker import MarketMaker
 
 
@@ -311,3 +312,43 @@ def test_market_maker_cooldown_blocks_immediate_rebuy(monkeypatch):
     strategy.start()
     strategy.tick()
     assert list(om._orders.values()) == []
+
+
+def test_coordinator_auto_resizes_buy_to_allocator_headroom():
+    om = OrderManager()
+    adapter = FilledAdapter()
+    allocator = StrategyAllocator({
+        "portfolio": {"global_live_budget_eur": 50, "max_total_open_orders": 4},
+        "strategies": {
+            "market_maker": {
+                "symbol": "BTC-EUR",
+                "live_capable": True,
+                "allocation_eur": 10,
+                "max_order_eur": 7,
+                "max_open_orders": 1,
+                "exclusive_symbol": True,
+            }
+        },
+    })
+    coordinator = ExecutionCoordinator(
+        om,
+        adapter,
+        is_armed=lambda: True,
+        profit_engine=ProfitEngine(export_dir="/tmp/autotrader-test-exports-resize"),
+        allocator=allocator,
+    )
+    order = om.register(Order(
+        exchange="bitvavo",
+        symbol="BTC-EUR",
+        side=OrderSide.BUY,
+        order_type=OrderType.LIMIT,
+        quantity=0.08,
+        price=100.0,
+        strategy="MarketMaker",
+    ))
+
+    result = coordinator.submit_pending()
+
+    assert result[0]["status"] == "filled"
+    assert order.status is OrderStatus.FILLED
+    assert 0 < order.quantity * 100 < 7

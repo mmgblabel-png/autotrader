@@ -9,7 +9,7 @@ from dataclasses import dataclass
 from decimal import Decimal
 from typing import Iterable
 
-from autotrader.core.order_manager import Order
+from autotrader.core.order_manager import Order, OrderSide
 
 
 @dataclass(frozen=True)
@@ -84,6 +84,39 @@ class StrategyAllocator:
     def allocation_for(self, strategy: str) -> StrategyAllocation | None:
         return self._allocations.get(strategy)
 
+    def max_entry_notional(
+        self,
+        order: Order,
+        active_orders: Iterable[Order],
+    ) -> Decimal:
+        """Return remaining BUY capacity under strategy and portfolio caps.
+
+        This is used to resize an otherwise valid entry instead of rejecting it
+        when a small rounding/price difference would exceed an allocation cap.
+        Unknown active notionals fail closed by returning zero capacity.
+        """
+        allocation = self._allocations.get(order.strategy)
+        if allocation is None or not allocation.live_capable or allocation.allocation_eur <= 0:
+            return Decimal("0")
+
+        active = [o for o in active_orders if o.order_id != order.order_id and o.is_active]
+        own = [o for o in active if o.strategy == order.strategy]
+        own_values = [self._notional(o) for o in own]
+        active_values = [self._notional(o) for o in active]
+        if any(value is None for value in own_values) or any(value is None for value in active_values):
+            return Decimal("0")
+
+        own_notional = sum((value for value in own_values if value is not None), Decimal("0"))
+        total_notional = sum((value for value in active_values if value is not None), Decimal("0"))
+        return max(
+            Decimal("0"),
+            min(
+                allocation.max_order_eur,
+                allocation.allocation_eur - own_notional,
+                self.global_budget_eur - total_notional,
+            ),
+        )
+
     def evaluate(
         self,
         order: Order,
@@ -106,7 +139,8 @@ class StrategyAllocator:
             return AllocationDecision(False, "symbol is outside strategy allocation")
 
         active = [o for o in active_orders if o.order_id != order.order_id and o.is_active]
-        if len(active) >= self.max_total_open_orders:
+        risk_reducing = order.side is OrderSide.SELL
+        if not risk_reducing and len(active) >= self.max_total_open_orders:
             return AllocationDecision(False, "global open-order limit reached")
 
         own = [o for o in active if o.strategy == order.strategy]
@@ -116,29 +150,34 @@ class StrategyAllocator:
         new_notional = self._notional(order, observed_price)
         if new_notional is None:
             return AllocationDecision(False, "order notional must be positive")
-        if new_notional > allocation.max_order_eur:
-            return AllocationDecision(False, "strategy per-order allocation exceeded")
 
-        own_values = [self._notional(o) for o in own]
-        if any(value is None for value in own_values):
-            return AllocationDecision(False, "active strategy order notional is unknown")
-        own_notional = sum((value for value in own_values if value is not None), Decimal("0"))
-        if own_notional + new_notional > allocation.allocation_eur:
-            return AllocationDecision(False, "strategy allocation exceeded")
+        # Existing inventory exits reduce risk and must not be trapped behind
+        # entry budget caps. Exchange rules, ownership and the execution gateway
+        # still validate the actual order before it can be sent.
+        if not risk_reducing:
+            if new_notional > allocation.max_order_eur:
+                return AllocationDecision(False, "strategy per-order allocation exceeded")
 
-        active_values = [self._notional(o) for o in active]
-        if any(value is None for value in active_values):
-            return AllocationDecision(False, "active portfolio order notional is unknown")
-        total_notional = sum((value for value in active_values if value is not None), Decimal("0"))
-        if total_notional + new_notional > self.global_budget_eur:
-            return AllocationDecision(False, "global live budget exceeded")
+            own_values = [self._notional(o) for o in own]
+            if any(value is None for value in own_values):
+                return AllocationDecision(False, "active strategy order notional is unknown")
+            own_notional = sum((value for value in own_values if value is not None), Decimal("0"))
+            if own_notional + new_notional > allocation.allocation_eur:
+                return AllocationDecision(False, "strategy allocation exceeded")
 
-        if allocation.exclusive_symbol:
-            for other in active:
-                if (
-                    other.strategy != order.strategy
-                    and other.symbol.upper() == order.symbol.upper()
-                ):
-                    return AllocationDecision(False, "symbol is already owned by another strategy")
+            active_values = [self._notional(o) for o in active]
+            if any(value is None for value in active_values):
+                return AllocationDecision(False, "active portfolio order notional is unknown")
+            total_notional = sum((value for value in active_values if value is not None), Decimal("0"))
+            if total_notional + new_notional > self.global_budget_eur:
+                return AllocationDecision(False, "global live budget exceeded")
+
+            if allocation.exclusive_symbol:
+                for other in active:
+                    if (
+                        other.strategy != order.strategy
+                        and other.symbol.upper() == order.symbol.upper()
+                    ):
+                        return AllocationDecision(False, "symbol is already owned by another strategy")
 
         return AllocationDecision(True)

@@ -157,8 +157,8 @@ autonomous_execution:
   min_signal_strength: 62.0
   max_size_score: 82.0
   max_size_confidence: 0.75
-  exposure_safety_buffer_eur: 0.25
-  switch_cooldown_seconds: 120
+  exposure_safety_buffer_eur: 0.10
+  switch_cooldown_seconds: 90
   strategy_markets:
     market_maker:
       - "*"
@@ -243,8 +243,8 @@ strategies:
   market_maker:
     enabled: true
     live_capable: true
-    allocation_eur: 15
-    max_order_eur: 10
+    allocation_eur: 18
+    max_order_eur: 12
     max_open_orders: 1
     exclusive_symbol: true
     symbol: BTC-EUR
@@ -296,8 +296,8 @@ strategies:
   grid:
     enabled: true
     live_capable: true
-    allocation_eur: 8
-    max_order_eur: 7
+    allocation_eur: 10
+    max_order_eur: 9
     max_open_orders: 1
     exclusive_symbol: true
     symbol: SOL-EUR
@@ -307,6 +307,8 @@ strategies:
     entry_offset_pct: 0.60
     exit_markup_pct: 0.80
     cycle_cooldown_seconds: 60
+    failure_cooldown_seconds: 15
+    allocation_failure_cooldown_seconds: 5
     max_daily_loss: 25.0
     max_position_size: 300.0
     max_slippage_pct: 0.5
@@ -316,8 +318,8 @@ strategies:
     enabled: true
     live_capable: true
     strategy_name: GridRunnerETH
-    allocation_eur: 7
-    max_order_eur: 7
+    allocation_eur: 10
+    max_order_eur: 9
     max_open_orders: 1
     exclusive_symbol: true
     symbol: ETH-EUR
@@ -327,6 +329,8 @@ strategies:
     entry_offset_pct: 0.60
     exit_markup_pct: 0.80
     cycle_cooldown_seconds: 60
+    failure_cooldown_seconds: 15
+    allocation_failure_cooldown_seconds: 5
     max_daily_loss: 20.0
     max_position_size: 300.0
     max_slippage_pct: 0.5
@@ -335,8 +339,8 @@ strategies:
   sniper:
     enabled: true
     live_capable: true
-    allocation_eur: 10
-    max_order_eur: 7
+    allocation_eur: 12
+    max_order_eur: 10
     max_open_orders: 1
     exclusive_symbol: true
     symbol: XRP-EUR

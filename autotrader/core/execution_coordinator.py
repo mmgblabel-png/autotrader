@@ -125,6 +125,39 @@ class ExecutionCoordinator:
                         self.om.open_orders(),
                         observed_price=observed_price,
                     )
+                    resizable_reasons = {
+                        "strategy per-order allocation exceeded",
+                        "strategy allocation exceeded",
+                        "global live budget exceeded",
+                    }
+                    if (
+                        not allocation.accepted
+                        and order.side is OrderSide.BUY
+                        and allocation.reason in resizable_reasons
+                    ):
+                        permitted = self.allocator.max_entry_notional(
+                            order,
+                            self.om.open_orders(),
+                        )
+                        sizing_price = Decimal(str(order.price)) if order.price is not None else observed_price
+                        original_notional = Decimal(str(order.quantity)) * sizing_price
+                        # Keep a tiny margin below the cap so exchange quantity
+                        # precision cannot round the resized order back above it.
+                        target_notional = permitted * Decimal("0.999")
+                        if sizing_price > 0 and target_notional > 0 and target_notional < original_notional:
+                            order.quantity = float(target_notional / sizing_price)
+                            allocation = self.allocator.evaluate(
+                                order,
+                                self.om.open_orders(),
+                                observed_price=observed_price,
+                            )
+                            if allocation.accepted:
+                                log.info(
+                                    "Order %s auto-resized from %.4f EUR to %.4f EUR to fit allocation headroom.",
+                                    order.order_id,
+                                    float(original_notional),
+                                    float(target_notional),
+                                )
                     if not allocation.accepted:
                         self.om.update(order.order_id, OrderStatus.FAILED)
                         if self.failure_handler is not None:

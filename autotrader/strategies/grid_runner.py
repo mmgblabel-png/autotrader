@@ -113,7 +113,10 @@ class GridRunner(BaseStrategy):
         log.info("GRID BUY %s %.8f @ %.8f", symbol, buy_size, buy_price)
 
     def on_order_failure(self, order: Order, category: str, reason: str) -> None:
-        cooldown = max(5.0, float(self._config.get("failure_cooldown_seconds", 60.0)))
+        if category == "allocation":
+            cooldown = max(1.0, float(self._config.get("allocation_failure_cooldown_seconds", 5.0)))
+        else:
+            cooldown = max(5.0, float(self._config.get("failure_cooldown_seconds", 60.0)))
         if "daily exposure limit exceeded" in reason.lower():
             cooldown = max(cooldown, float(self._config.get("exposure_reject_cooldown_seconds", 300.0)))
         self._config["_failure_cooldown_until"] = time.time() + cooldown
