@@ -33,3 +33,14 @@
 - Router continues to scan up to 60 EUR markets without sending orders.
 - No new live cancel/replace capability is introduced by Execution v2.
 - No increase to global budget, hard risk limits, leverage or martingale.
+
+
+## 2026-10-02 07:00 CEST — Execution v3 runtime findings
+
+- Overnight live fills confirmed positive realized GridRunner exits on DOGE-EUR and PEPE-EUR while SUI-EUR and AVNT-EUR inventory remained open.
+- The main missed-opportunity failure mode was repeated `strategy per-order allocation exceeded` rejection followed by a 60-second GridRunner failure cooldown.
+- Execution v3 now resizes BUY entries down to available strategy/global headroom instead of dropping a valid opportunity for a small cap overrun.
+- Risk-reducing SELL exits are not trapped behind entry allocation, per-trade, daily-exposure, or daily-loss entry gates; price/slippage/live activation validation remains active.
+- Grid allocation failures retry after a short allocation-specific cooldown instead of the generic 60-second failure cooldown.
+- Strategy allocation now uses the existing EUR 50 global live budget more fully: MarketMaker EUR 18, GridRunner EUR 10, GridRunnerETH EUR 10, SniperBot EUR 12.
+- Hard global live exposure remains EUR 50; leverage and martingale remain disabled.
