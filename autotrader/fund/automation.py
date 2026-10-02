@@ -123,6 +123,8 @@ class AutonomousFundScheduler:
         keys = self._utc_keys(now)
         fund = agent.fund
         snapshot = fund.status()
+        if not bool((snapshot.get("risk") or {}).get("nav_verified")):
+            return []
         written: list[str] = []
         periods = (
             ("daily", self.report_daily),
@@ -176,6 +178,13 @@ class AutonomousFundScheduler:
             router_payload,
             self.policy.research_top_markets,
         )
+        if not markets:
+            return {
+                "ran": False,
+                "reason": "no_eligible_markets_yet",
+                "slot": slot,
+                "markets": [],
+            }
         completed: list[str] = []
         summaries: list[dict[str, Any]] = []
         for market in markets:
@@ -259,9 +268,21 @@ class AutonomousFundScheduler:
         if research_result.get("ran"):
             last_research_at = current
             last_markets = list(research_result.get("markets") or [])
+            latest_research = list(research_result.get("reports") or [])
         else:
             last_research_at = self.last_status.get("last_research_at")
             last_markets = list(self.last_status.get("last_research_markets") or [])
+            latest_research = list(self.last_status.get("latest_research") or [])
+            if not latest_research:
+                durable = agent.fund.ledger.latest_event("autonomous_research_report")
+                if durable is not None:
+                    payload = durable.get("payload") or {}
+                    latest_research = [dict(payload)] if isinstance(payload, Mapping) else []
+                    if last_research_at is None:
+                        last_research_at = durable.get("timestamp")
+                    if not last_markets and isinstance(payload, Mapping):
+                        market = str(payload.get("market") or "")
+                        last_markets = [market] if market else []
 
         self.last_status = {
             "enabled": True,
@@ -272,6 +293,7 @@ class AutonomousFundScheduler:
             "last_research_markets": last_markets,
             "last_research_error": research_error,
             "research_result": research_result,
+            "latest_research": latest_research,
             "last_report_events": last_reports,
             "live_orders_sent": False,
         }
