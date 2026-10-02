@@ -685,6 +685,21 @@ async def _tick_loop(app: FastAPI, agent: AutoTrader) -> None:
                         strategy._config["_mid_price"] = price
                         strategy._config["_current_price"] = price
                         agent.profit_engine.mark_to_market(strategy.name, symbol, price)
+                        if str(strategy._config.get("_market_rules_symbol") or "").upper() != symbol:
+                            try:
+                                rule_rows = agent._bitvavo.markets(symbol)
+                                rules = rule_rows[0] if rule_rows else {}
+                                strategy._config["_min_order_base"] = float(rules.get("minOrderInBaseAsset") or 0.0)
+                                strategy._config["_min_order_quote"] = float(rules.get("minOrderInQuoteAsset") or 0.0)
+                                strategy._config["_quantity_decimals"] = int(rules.get("quantityDecimals") or 18)
+                                strategy._config["_tick_size"] = float(rules.get("tickSize") or 0.0)
+                                strategy._config["_market_rules_symbol"] = symbol
+                            except Exception as rules_exc:
+                                log.warning(
+                                    "Bitvavo market-rule refresh failed safely: market=%s error=%s",
+                                    symbol,
+                                    type(rules_exc).__name__,
+                                )
                         base, _, quote = symbol.partition("-")
                         balances = getattr(app.state, "bitvavo_balances", {})
                         strategy._config["_live_balance_snapshot_ready"] = bool(
