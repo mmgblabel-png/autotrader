@@ -303,6 +303,8 @@ def test_capital_floor_latch_survives_engine_restart(tmp_path):
     restarted.refresh_nav(100.0, source="restart-test")
     status = restarted.status()["risk"]
     assert status["capital_floor_armed"] is True
+    assert status["target_reached"] is True
+    assert status["peak_nav_eur"] >= 250.0
     assert status["risk_capital_available_eur"] == 0.0
     assert restarted.pretrade_check(
         strategy="GridRunner",
