@@ -230,17 +230,18 @@ class AutonomousDecisionEngine:
                 and confidence >= market_conf_min
                 and profit_gate
             )
+            minimum_live_order_eur = max(
+                0.0, float(self.config.get("minimum_live_order_eur", 5.0))
+            )
             use_max_size = (
                 quality_ok
+                and suggested_eur >= minimum_live_order_eur
                 and score >= self.max_size_score
                 and confidence >= self.max_size_confidence
             )
             if use_max_size and hard_cap > 0:
                 suggested_eur = hard_cap
 
-            minimum_live_order_eur = max(
-                0.0, float(self.config.get("minimum_live_order_eur", 5.0))
-            )
             failure_cooldown_until = float(cfg.get("_failure_cooldown_until", 0.0) or 0.0)
             entry_runtime_ready = failure_cooldown_until <= time.time()
             headroom_before = virtual_headroom_eur
