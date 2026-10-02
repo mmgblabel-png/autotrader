@@ -241,32 +241,48 @@ class BitvavoAdapter:
         return books
 
     def ticker_price(self, market: str) -> Decimal:
-        query = urllib.parse.urlencode({"market": market.upper()})
+        payload = self._public_request("/ticker/price", {"market": market.upper()})
+        if isinstance(payload, list):
+            if not payload:
+                raise BitvavoError("Empty Bitvavo ticker response", category="invalid_response")
+            payload = payload[0]
+        if not isinstance(payload, dict) or "price" not in payload:
+            raise BitvavoError("Unexpected Bitvavo ticker response", category="invalid_response")
         try:
-            with urllib.request.urlopen(f"{self.BASE_URL}/ticker/price?{query}", timeout=self.timeout) as response:
-                payload = json.loads(response.read().decode())
-            if isinstance(payload, list):
-                if not payload:
-                    raise BitvavoError("Empty Bitvavo ticker response", category="invalid_response")
-                payload = payload[0]
-            if not isinstance(payload, dict) or "price" not in payload:
-                raise BitvavoError("Unexpected Bitvavo ticker response", category="invalid_response")
-            return Decimal(str(payload["price"]))
-        except BitvavoError:
-            raise
-        except Exception as exc:
-            raise BitvavoError(f"Bitvavo ticker failed: {exc}") from exc
+            price = Decimal(str(payload["price"]))
+        except (InvalidOperation, TypeError, ValueError) as exc:
+            raise BitvavoError("Unexpected Bitvavo ticker price", category="invalid_response") from exc
+        if not price.is_finite() or price <= 0:
+            raise BitvavoError("Invalid Bitvavo ticker price", category="invalid_response")
+        return price
 
     def _public_request(self, endpoint: str, query: dict[str, str] | None = None) -> Any:
+        """Retry idempotent public reads on transient network/5xx failures."""
         url = self.BASE_URL + endpoint
         if query:
             url += "?" + urllib.parse.urlencode(query)
-        request = urllib.request.Request(url, method="GET", headers={"Accept": "application/json"})
-        try:
-            with urllib.request.urlopen(request, timeout=self.timeout) as response:
-                return json.loads(response.read().decode())
-        except Exception as exc:
-            raise BitvavoError("Bitvavo public request failed", category="network_error") from exc
+        attempts = max(1, min(4, int(os.getenv("BITVAVO_PUBLIC_READ_ATTEMPTS", "3"))))
+        last_exc: Exception | None = None
+        for attempt in range(attempts):
+            request = urllib.request.Request(url, method="GET", headers={"Accept": "application/json"})
+            try:
+                with urllib.request.urlopen(request, timeout=self.timeout) as response:
+                    return json.loads(response.read().decode())
+            except urllib.error.HTTPError as exc:
+                # 4xx errors other than rate limiting are deterministic and
+                # should fail immediately. 429/5xx are safe to retry.
+                if 400 <= exc.code < 500 and exc.code != 429:
+                    raise BitvavoError(
+                        "Bitvavo public request rejected",
+                        category="bitvavo_http_error",
+                        status=exc.code,
+                    ) from exc
+                last_exc = exc
+            except Exception as exc:
+                last_exc = exc
+            if attempt + 1 < attempts:
+                time.sleep(0.10 * (2 ** attempt))
+        raise BitvavoError("Bitvavo public request failed", category="network_error") from last_exc
 
     def markets(self, market: str | None = None) -> list[dict[str, Any]]:
         result = self._public_request("/markets", {"market": market.upper()} if market else None)
@@ -422,17 +438,61 @@ class BitvavoAdapter:
         report["position_close_status"] = "completed"
         return report
 
-    def place_limit_order(self, market: str, side: str, amount: Decimal, price: Decimal, client_order_id: str, operator_id: int = 0) -> dict[str, Any]:
-        return self._place(market, side, amount, price, client_order_id, operator_id, "limit")
+    def place_limit_order(
+        self,
+        market: str,
+        side: str,
+        amount: Decimal,
+        price: Decimal,
+        client_order_id: str,
+        operator_id: int = 0,
+        *,
+        time_in_force: str = "GTC",
+        post_only: bool = True,
+    ) -> dict[str, Any]:
+        return self._place(
+            market,
+            side,
+            amount,
+            price,
+            client_order_id,
+            operator_id,
+            "limit",
+            time_in_force=time_in_force,
+            post_only=post_only,
+        )
 
     def place_market_order(self, market: str, side: str, amount: Decimal, client_order_id: str, operator_id: int = 0) -> dict[str, Any]:
         return self._place(market, side, amount, None, client_order_id, operator_id, "market")
 
-    def _place(self, market: str, side: str, amount: Decimal, price: Decimal | None, client_order_id: str, operator_id: int, order_type: str) -> dict[str, Any]:
+    def _place(
+        self,
+        market: str,
+        side: str,
+        amount: Decimal,
+        price: Decimal | None,
+        client_order_id: str,
+        operator_id: int,
+        order_type: str,
+        *,
+        time_in_force: str = "GTC",
+        post_only: bool = True,
+    ) -> dict[str, Any]:
         side = side.lower()
         market = market.upper()
         if side not in {"buy", "sell"}:
             raise BitvavoError("side must be buy or sell", category="invalid_order")
+        time_in_force = str(time_in_force or "GTC").upper()
+        if time_in_force not in {"GTC", "IOC", "FOK"}:
+            raise BitvavoError("unsupported time_in_force", category="invalid_order")
+        if order_type != "limit":
+            time_in_force = "GTC"
+            post_only = False
+        elif time_in_force in {"IOC", "FOK"} and post_only:
+            raise BitvavoError(
+                "IOC/FOK limit orders cannot be post-only",
+                category="invalid_order",
+            )
         if not client_order_id:
             client_order_id = str(uuid.uuid4())
         try:
@@ -451,7 +511,17 @@ class BitvavoAdapter:
         self.gateway.restore_daily_state(
             exposure_eur=self.journal.current_execution_exposure_eur()
         )
-        proposal = {"venue": "bitvavo", "market": market, "side": side, "orderType": order_type, "amount": str(amount), "price": str(price) if price else None, "clientOrderId": client_order_id}
+        proposal = {
+            "venue": "bitvavo",
+            "market": market,
+            "side": side,
+            "orderType": order_type,
+            "amount": str(amount),
+            "price": str(price) if price else None,
+            "clientOrderId": client_order_id,
+            "timeInForce": time_in_force if order_type == "limit" else None,
+            "postOnly": bool(post_only) if order_type == "limit" else False,
+        }
         new_intent = self.journal.record_intent(client_order_id=client_order_id, market=market, side=side, order_type=order_type, amount=str(amount), price=str(price) if price else None)
         if not new_intent:
             raise BitvavoError("duplicate client_order_id", category="duplicate_order")
@@ -482,7 +552,11 @@ class BitvavoAdapter:
             self.journal.record_execution_acceptance(client_order_id, str(notional_eur))
         body: dict[str, Any] = {"market": market, "side": side, "orderType": order_type, "operatorId": operator_id if operator_id > 0 else int(os.getenv("BITVAVO_OPERATOR_ID", "1")), "clientOrderId": client_order_id, "amount": str(amount), "responseRequired": True}
         if order_type == "limit":
-            body.update({"price": str(price), "timeInForce": "GTC", "postOnly": True})
+            body.update({
+                "price": str(price),
+                "timeInForce": time_in_force,
+                "postOnly": bool(post_only),
+            })
         try:
             response = self._private_request("POST", "/order", body)
             self.journal.update(client_order_id, str(response.get("status") or "submitted").lower(), response, exchange_order_id=str(response.get("orderId") or "") or None)
