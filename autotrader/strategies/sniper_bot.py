@@ -154,7 +154,7 @@ class SniperBot(BaseStrategy):
                 if bool(cfg.get("_live_balance_snapshot_ready", False)) and available_quote < notional:
                     self._prev_price = current_price
                     return
-                if not self._rm.check_order(self.name, notional, slippage_pct=slippage_pct):
+                if not self._rm.check_order(self.name, notional, slippage_pct=slippage_pct, symbol=symbol):
                     self._prev_price = current_price
                     return
                 order = Order(
@@ -209,7 +209,7 @@ class SniperBot(BaseStrategy):
             return
         self.clear_dust_inventory()
         notional = size * price
-        if not self._rm.check_order(self.name, notional, risk_reducing=True):
+        if not self._rm.check_order(self.name, notional, symbol=symbol, risk_reducing=True):
             return
         order = Order(
             exchange=exchange,

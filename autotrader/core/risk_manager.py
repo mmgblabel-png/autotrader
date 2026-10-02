@@ -10,6 +10,7 @@ from autotrader.core.logger import get_logger
 
 if TYPE_CHECKING:
     from autotrader.core.profit_engine import ProfitEngine
+    from autotrader.fund.engine import HedgeFundEngine
 
 log = get_logger("RiskManager")
 
@@ -38,6 +39,7 @@ class RiskManager:
         self._error_counts: Dict[str, int] = {}
         self._killed: Dict[str, bool] = {}
         self._pe: Optional["ProfitEngine"] = profit_engine
+        self._fund_engine: Optional["HedgeFundEngine"] = None
         self._day_key = self._utc_day_key()
 
     # ------------------------------------------------------------------
@@ -51,16 +53,36 @@ class RiskManager:
         """Wire up the profit engine for event forwarding (avoids circular imports)."""
         self._pe = pe
 
+    def set_fund_engine(self, fund_engine: "HedgeFundEngine") -> None:
+        """Attach the fund-level capital preservation gate."""
+        self._fund_engine = fund_engine
+
     def check_order(
         self,
         strategy: str,
         notional: float,
         slippage_pct: float = 0.0,
         *,
+        symbol: str = "",
         risk_reducing: bool = False,
     ) -> bool:
-        """Return True if the order is allowed; exits can bypass entry kill gates."""
+        """Return True only when both fund-level and strategy-level risk allow the order."""
         self._ensure_current_day()
+        if self._fund_engine is not None:
+            fund_decision = self._fund_engine.pretrade_check(
+                strategy=strategy,
+                symbol=symbol,
+                notional_eur=notional,
+                risk_reducing=risk_reducing,
+            )
+            if not fund_decision.accepted:
+                log.warning(
+                    "[%s] Fund risk rejected %.2f notional: %s",
+                    strategy,
+                    notional,
+                    fund_decision.reason,
+                )
+                return False
         if risk_reducing:
             return True
         if self.is_killed(strategy):
@@ -91,6 +113,8 @@ class RiskManager:
         """Accumulate fee-aware realised PnL and latch the stop on true net drawdown."""
         self._ensure_current_day()
         self._daily_pnl[strategy] = self._daily_pnl.get(strategy, 0.0) + float(pnl_delta)
+        if self._fund_engine is not None:
+            self._fund_engine.record_realized_pnl(float(pnl_delta))
         cfg = self._get_cfg(strategy)
         daily_loss = max(0.0, -self._daily_pnl[strategy])
         if daily_loss >= cfg.max_daily_loss:
@@ -155,6 +179,7 @@ class RiskManager:
             "open_positions": {},   # populated by exchange connectors in production
             "any_killed": any_killed,
             "strategies": strategies,
+            "fund": self._fund_engine.status()["risk"] if self._fund_engine is not None else None,
         }
 
     # ------------------------------------------------------------------

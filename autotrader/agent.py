@@ -19,6 +19,8 @@ from autotrader.core.profit_engine import ProfitEngine, Trade
 from autotrader.core.profit_supervisor import ProfitSupervisor
 from autotrader.core.risk_manager import RiskManager, StrategyRiskConfig
 from autotrader.core.strategy_allocator import StrategyAllocator
+from autotrader.fund.engine import HedgeFundEngine
+from autotrader.research.lab import ResearchLab
 from autotrader.strategies.arbitrage_hunter import ArbitrageHunter
 from autotrader.strategies.base import BaseStrategy
 from autotrader.strategies.grid_runner import GridRunner
@@ -41,6 +43,7 @@ class AutoTrader:
 
     def __init__(self, config_path: str = "config.yaml") -> None:
         self._config = self._load_config(config_path)
+        self._fund = HedgeFundEngine(self._config.get("fund", {}))
         self._om = OrderManager()
         self._rm = RiskManager()
         self._pe = ProfitEngine(export_dir=self._config.get("export_dir", "exports"))
@@ -48,11 +51,17 @@ class AutoTrader:
         self._strategies: Dict[str, BaseStrategy] = {}
         self._allocator = StrategyAllocator(self._config)
         self._rm.set_profit_engine(self._pe)
+        self._rm.set_fund_engine(self._fund)
         self._setup_risk()
         self._is_live_armed = lambda: bool(getattr(__import__('autotrader.api.server', fromlist=['app']).app.state, 'live_armed', False))
         self._bitvavo = BitvavoAdapter(is_armed=self._is_live_armed)
         self._profit_supervisor = ProfitSupervisor(
             self._bitvavo.journal,
+            self._config.get("profit_policy", {}),
+        )
+        self._research_lab = ResearchLab(
+            self._bitvavo,
+            self._config.get("research_lab", {}),
             self._config.get("profit_policy", {}),
         )
         self._restore_profit_from_journal()
@@ -88,6 +97,14 @@ class AutoTrader:
     @property
     def adaptive_learning(self) -> "AdaptiveLearning":
         return self._learner
+
+    @property
+    def fund(self) -> "HedgeFundEngine":
+        return self._fund
+
+    @property
+    def research_lab(self) -> "ResearchLab":
+        return self._research_lab
 
     # ------------------------------------------------------------------
     # Public API
@@ -160,11 +177,62 @@ class AutoTrader:
                     symbol=order.symbol,
                     outcome_key=outcome_key,
                 )
+                try:
+                    quantity = float(fill.get("amount") or fill.get("filledAmount") or 0.0)
+                    price = float(fill.get("price") or fill.get("averagePrice") or order.price or 0.0)
+                except (TypeError, ValueError):
+                    quantity = 0.0
+                    price = 0.0
+                if quantity > 0 and price > 0:
+                    self._fund.record_fill(
+                        strategy=strategy.name,
+                        symbol=order.symbol,
+                        side=order.side.value,
+                        notional_eur=quantity * price,
+                        realized_net_pnl_delta_eur=float(realized_net_pnl_delta),
+                        fill_id=outcome_key,
+                    )
+                    nav = max(
+                        0.01,
+                        self._fund.mandate.initial_nav_eur
+                        + float(self._pe.as_summary().get("total_pnl", 0.0)),
+                    )
+                    self._fund.record_nav(
+                        nav,
+                        source="profit_engine_after_fill",
+                        event_id=f"nav:{outcome_key}",
+                    )
                 if result.get("changed"):
                     log.info("[%s] adaptive learning update: %s", strategy.name, result)
                 return
+    def refresh_fund_nav(self) -> float:
+        """Refresh fund NAV from mark-to-market economics before new entries are evaluated."""
+        mode = os.getenv("EXECUTION_MODE", "paper").strip().lower()
+        economic_pnl = 0.0
+        used_live_snapshots = False
+
+        if mode == "live":
+            for strategy in self._strategies.values():
+                snapshot = strategy._config.get("_profit_snapshot")
+                if isinstance(snapshot, dict):
+                    try:
+                        economic_pnl += float(snapshot.get("economic_pnl_eur") or 0.0)
+                        used_live_snapshots = True
+                    except (TypeError, ValueError):
+                        continue
+
+        if not used_live_snapshots:
+            for stats in self._pe.summary().values():
+                economic_pnl += float(stats.get("net_pnl") or 0.0)
+                economic_pnl += float(stats.get("unrealized_pnl") or 0.0)
+
+        nav = max(0.01, self._fund.mandate.initial_nav_eur + economic_pnl)
+        self._fund.refresh_nav(nav, source="runtime_mark_to_market")
+        return nav
+
     def tick_all(self) -> None:
-        """Run strategies; in live mode, do not even create intents until runtime-armed."""
+        """Run strategies only after mark-to-market fund risk is refreshed."""
+        self.refresh_fund_nav()
         live = os.getenv("EXECUTION_MODE", "paper").strip().lower() == "live"
         if live and not self._is_live_armed():
             return
@@ -200,6 +268,7 @@ class AutoTrader:
         return {
             "strategies": {n: s.is_running for n, s in self._strategies.items()},
             "risk": self._rm.status(),
+            "fund": self._fund.status(),
         }
 
     def pnl(self) -> dict:
@@ -237,11 +306,13 @@ class AutoTrader:
             strategy = str(row.get("strategy") or "")
             if not strategy:
                 continue
+            symbol = str(row.get("market") or "")
+            side = str(row.get("side") or "").upper()
             realized = self._pe.record_trade(
                 Trade(
                     strategy=strategy,
-                    symbol=str(row.get("market") or ""),
-                    side=str(row.get("side") or "").upper(),
+                    symbol=symbol,
+                    side=side,
                     quantity=amount,
                     price=price,
                     fee=fee,
@@ -249,6 +320,12 @@ class AutoTrader:
                     fill_key=str(row.get("fill_key") or ""),
                     timestamp=timestamp,
                 )
+            )
+            self._fund.restore_fill(
+                strategy=strategy,
+                symbol=symbol,
+                side=side,
+                notional_eur=amount * price,
             )
             fill_utc = time.gmtime(timestamp)
             if (
@@ -258,6 +335,13 @@ class AutoTrader:
                 self._rm.record_pnl_delta(strategy, realized)
                 if str(row.get("market") or "").upper().endswith("-EUR"):
                     self._bitvavo.gateway.record_pnl_delta(Decimal(str(realized)))
+
+        restored_nav = max(
+            0.01,
+            self._fund.mandate.initial_nav_eur
+            + float(self._pe.as_summary().get("total_pnl", 0.0)),
+        )
+        self._fund.refresh_nav(restored_nav, source="journal_restore")
 
     def _setup_risk(self) -> None:
         for key, strat_cfg in self._config.get("strategies", {}).items():
