@@ -79,6 +79,7 @@ class AutoTrader:
             failure_handler=self._on_order_failure,
         )
         self._register_strategies()
+        self._apply_growth_policy()
         self._restore_runtime_markets_from_journal()
 
     # ------------------------------------------------------------------
@@ -300,6 +301,7 @@ class AutoTrader:
             source="bitvavo_account_liquidation_nav",
             verified=True,
         )
+        valuation["growth_policy"] = self._apply_growth_policy()
         return valuation
 
     def refresh_fund_nav(self) -> float:
@@ -338,6 +340,29 @@ class AutoTrader:
             verified=True,
         )
         return nav
+
+    def _apply_growth_policy(self) -> dict[str, object]:
+        """Synchronize NAV-driven fund limits into the shared live allocator."""
+        policy = self._fund.current_growth_policy()
+        allocator_status = self._allocator.apply_growth_policy(policy)
+        for strategy in self._strategies.values():
+            allocation = self._allocator.allocation_for(strategy.name)
+            if allocation is None:
+                continue
+            strategy._config["allocation_eur"] = float(allocation.allocation_eur)
+            strategy._config["max_order_eur"] = float(allocation.max_order_eur)
+            if allocation.live_capable:
+                current_order = max(
+                    0.0, float(strategy._config.get("order_value_eur") or 0.0)
+                )
+                if current_order > float(allocation.max_order_eur):
+                    strategy._config["order_value_eur"] = float(
+                        allocation.max_order_eur
+                    )
+        return {
+            "policy": policy,
+            "allocator": allocator_status,
+        }
 
     def tick_all(self) -> None:
         """Run strategies only after mark-to-market fund risk is refreshed."""
