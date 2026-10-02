@@ -344,6 +344,11 @@ class AutoTrader:
     def _apply_growth_policy(self) -> dict[str, object]:
         """Synchronize NAV-driven fund limits into the shared live allocator."""
         policy = self._fund.current_growth_policy()
+        if not bool(policy.get("enabled")):
+            return {
+                "policy": policy,
+                "allocator": self._allocator.status(),
+            }
         allocator_status = self._allocator.apply_growth_policy(policy)
         for strategy in self._strategies.values():
             allocation = self._allocator.allocation_for(strategy.name)
