@@ -226,6 +226,15 @@ opportunity_router:
   max_spread_bps: 35
   probe_order_eur: 6
   max_snapshot_age_seconds: 30
+  fee_quality_weight: 0.10
+  maker_fee_bps_by_quote:
+    EUR: 15.0
+    USDC: 5.0
+  taker_fee_bps_by_quote:
+    EUR: 25.0
+    USDC: 5.0
+  default_maker_fee_bps: 25.0
+  default_taker_fee_bps: 25.0
   auto_discover_eur: true
   auto_discover_all: true
   max_markets: 500
