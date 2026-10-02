@@ -289,6 +289,17 @@ class HedgeFundEngine:
             "ledger": integrity,
         }
 
+    def current_growth_policy(self) -> dict[str, object]:
+        risk_status = self.risk.status()
+        return dict(
+            self.growth.status(
+                nav_eur=float(risk_status.get("nav_eur") or 0.0),
+                risk_status=risk_status,
+                track_metrics={},
+                ledger_valid=True,
+            )["policy"]
+        )
+
     @staticmethod
     def _signal_event_id(signal: AgentSignal) -> str:
         payload = {
