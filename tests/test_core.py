@@ -390,6 +390,42 @@ def test_api_strategy_control_rejects_invalid_token(api_client):
     assert response.status_code == 401
 
 
+def test_api_live_controls_require_control_token(api_client):
+    activate = api_client.post(
+        "/api/live/activate",
+        json={"confirmation": "I_UNDERSTAND_LIVE_ORDERS"},
+        headers={"X-AutoTrader-Token": "", "X-API-Key": "test-dashboard-key"},
+    )
+    assert activate.status_code == 401
+
+    deactivate = api_client.post(
+        "/api/live/deactivate",
+        headers={"X-AutoTrader-Token": "", "X-API-Key": "test-dashboard-key"},
+    )
+    assert deactivate.status_code == 401
+
+
+def test_api_live_controls_reject_wrong_control_token(api_client):
+    activate = api_client.post(
+        "/api/live/activate",
+        json={"confirmation": "I_UNDERSTAND_LIVE_ORDERS"},
+        headers={
+            "X-AutoTrader-Token": "wrong-token",
+            "X-API-Key": "test-dashboard-key",
+        },
+    )
+    assert activate.status_code == 401
+
+    deactivate = api_client.post(
+        "/api/live/deactivate",
+        headers={
+            "X-AutoTrader-Token": "wrong-token",
+            "X-API-Key": "test-dashboard-key",
+        },
+    )
+    assert deactivate.status_code == 401
+
+
 def test_api_stop_strategy(api_client):
     api_client.post("/api/strategies/start", json={"name": "grid"})
     r = api_client.post("/api/strategies/stop", json={"name": "grid"})
