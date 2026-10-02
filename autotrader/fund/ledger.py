@@ -4,10 +4,13 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 import os
 import sqlite3
+import statistics
 import threading
 import time
+from datetime import datetime, timezone
 from typing import Any, Mapping
 
 
@@ -246,6 +249,151 @@ class FundLedger:
             if value > maximum:
                 maximum = value
         return maximum
+
+    def track_record_metrics(self) -> dict[str, object]:
+        """Return durable live-only track-record metrics.
+
+        Only verified live NAV checkpoints and live fill events are included.
+        Legacy events without explicit execution_mode/live provenance are
+        intentionally excluded from investor-grade statistics.
+        """
+        with self._lock, self._connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT timestamp, event_type, payload_json
+                FROM fund_events
+                WHERE event_type IN (?, ?)
+                ORDER BY seq ASC
+                """,
+                ("nav_checkpoint", "fill"),
+            ).fetchall()
+
+        daily_nav: dict[str, tuple[float, float]] = {}
+        exit_pnls: list[float] = []
+        live_fill_count = 0
+        first_verified_at: float | None = None
+        last_verified_at: float | None = None
+
+        for row in rows:
+            ts = float(row["timestamp"])
+            try:
+                payload = json.loads(str(row["payload_json"]))
+            except (TypeError, json.JSONDecodeError):
+                continue
+            event_type = str(row["event_type"])
+
+            if event_type == "nav_checkpoint":
+                if (
+                    payload.get("verified") is not True
+                    or str(payload.get("execution_mode") or "").lower() != "live"
+                ):
+                    continue
+                try:
+                    nav = float(payload.get("nav_eur") or 0.0)
+                except (TypeError, ValueError):
+                    continue
+                if not math.isfinite(nav) or nav <= 0:
+                    continue
+                day = datetime.fromtimestamp(ts, tz=timezone.utc).date().isoformat()
+                existing = daily_nav.get(day)
+                if existing is None or ts >= existing[0]:
+                    daily_nav[day] = (ts, nav)
+                first_verified_at = ts if first_verified_at is None else min(first_verified_at, ts)
+                last_verified_at = ts if last_verified_at is None else max(last_verified_at, ts)
+                continue
+
+            if str(payload.get("execution_mode") or "").lower() != "live":
+                continue
+            live_fill_count += 1
+            if str(payload.get("side") or "").upper() != "SELL":
+                continue
+            try:
+                pnl = float(payload.get("realized_net_pnl_delta_eur") or 0.0)
+            except (TypeError, ValueError):
+                continue
+            if math.isfinite(pnl):
+                exit_pnls.append(pnl)
+
+        ordered_daily = [
+            daily_nav[key][1]
+            for key in sorted(daily_nav)
+        ]
+        returns: list[float] = []
+        for previous, current in zip(ordered_daily, ordered_daily[1:]):
+            if previous > 0:
+                returns.append(current / previous - 1.0)
+
+        max_drawdown_pct = 0.0
+        peak = 0.0
+        for nav in ordered_daily:
+            peak = max(peak, nav)
+            if peak > 0:
+                max_drawdown_pct = max(
+                    max_drawdown_pct,
+                    (peak - nav) / peak * 100.0,
+                )
+
+        sharpe_ratio: float | None = None
+        sortino_ratio: float | None = None
+        if len(returns) >= 2:
+            mean_return = statistics.fmean(returns)
+            stdev = statistics.stdev(returns)
+            if stdev > 0:
+                sharpe_ratio = mean_return / stdev * math.sqrt(365.0)
+            downside = [min(0.0, value) for value in returns]
+            downside_dev = math.sqrt(
+                sum(value * value for value in downside) / len(downside)
+            )
+            if downside_dev > 0:
+                sortino_ratio = mean_return / downside_dev * math.sqrt(365.0)
+
+        gross_profit = sum(value for value in exit_pnls if value > 0)
+        gross_loss = abs(sum(value for value in exit_pnls if value < 0))
+        if gross_loss > 0:
+            profit_factor: float | None = gross_profit / gross_loss
+        elif gross_profit > 0:
+            profit_factor = 999.0
+        else:
+            profit_factor = None
+
+        wins = sum(1 for value in exit_pnls if value > 0)
+        losses = sum(1 for value in exit_pnls if value < 0)
+        completed_exits = wins + losses
+        elapsed_days = 0
+        if first_verified_at is not None and last_verified_at is not None:
+            elapsed_days = int(
+                max(0.0, last_verified_at - first_verified_at) // 86400
+            ) + 1
+
+        return {
+            "first_verified_at": first_verified_at,
+            "last_verified_at": last_verified_at,
+            "elapsed_days": elapsed_days,
+            "observation_days": len(ordered_daily),
+            "daily_return_observations": len(returns),
+            "live_fill_count": live_fill_count,
+            "completed_exits": completed_exits,
+            "wins": wins,
+            "losses": losses,
+            "win_rate_pct": (
+                round(wins / completed_exits * 100.0, 6)
+                if completed_exits
+                else 0.0
+            ),
+            "net_realized_pnl_eur": round(sum(exit_pnls), 6),
+            "gross_profit_eur": round(gross_profit, 6),
+            "gross_loss_eur": round(gross_loss, 6),
+            "profit_factor": (
+                None if profit_factor is None else round(profit_factor, 6)
+            ),
+            "sharpe_ratio": (
+                None if sharpe_ratio is None else round(sharpe_ratio, 6)
+            ),
+            "sortino_ratio": (
+                None if sortino_ratio is None else round(sortino_ratio, 6)
+            ),
+            "max_drawdown_pct": round(max_drawdown_pct, 6),
+        }
 
     def tail(self, limit: int = 25) -> list[dict[str, object]]:
         safe_limit = max(1, min(500, int(limit)))
