@@ -74,6 +74,8 @@ class ShadowStrategyEngine:
         self.min_winrate_pct = float(self.config.get("promotion_min_winrate_pct", 52.0))
         self.max_drawdown_pct = float(self.config.get("promotion_max_drawdown_pct", 8.0))
         self.min_net_pnl_eur = float(self.config.get("promotion_min_net_pnl_eur", 0.50))
+        self.min_profit_factor = max(1.0, float(self.config.get("promotion_min_profit_factor", 1.10)))
+        self.cost_stress_multiplier = max(1.0, float(self.config.get("promotion_cost_stress_multiplier", 1.25)))
         self._states: dict[str, ShadowStats] = {}
         self._load()
 
@@ -363,11 +365,34 @@ class ShadowStrategyEngine:
             winrate = (state.wins / trades * 100) if trades else 0.0
             capital = max(1.0, float(cfg.get("shadow_order_eur", 6.0)))
             max_dd_pct = state.max_drawdown_eur / capital * 100
+            positive_outcomes = sum(value for value in state.outcomes if value > 0)
+            negative_outcomes = abs(sum(value for value in state.outcomes if value < 0))
+            profit_factor = (
+                positive_outcomes / negative_outcomes
+                if negative_outcomes > 1e-12
+                else (float("inf") if positive_outcomes > 0 else 0.0)
+            )
+            extra_stress_cost = (
+                trades
+                * capital
+                * (self.round_trip_cost_pct / 100.0)
+                * (self.cost_stress_multiplier - 1.0)
+            )
+            stressed_net_pnl = state.realized_net_pnl_eur - extra_stress_cost
+            learned_state = (
+                learned_states.get(self._learner_name(name), {})
+                if isinstance(learned_states.get(self._learner_name(name), {}), dict)
+                else {}
+            )
+            adaptive_change_pending = bool(learned_state.get("pending_change"))
             promotable = (
                 trades >= self.min_completed_trades
                 and state.realized_net_pnl_eur >= self.min_net_pnl_eur
+                and stressed_net_pnl > 0.0
                 and winrate >= self.min_winrate_pct
+                and profit_factor >= self.min_profit_factor
                 and max_dd_pct <= self.max_drawdown_pct
+                and not adaptive_change_pending
             )
 
             # Transparent 0-100 score for comparing shadow candidates only.
@@ -421,14 +446,15 @@ class ShadowStrategyEngine:
                 "winrate_pct": round(winrate, 2),
                 "realized_net_pnl_eur": round(state.realized_net_pnl_eur, 4),
                 "max_drawdown_pct": round(max_dd_pct, 2),
+                "profit_factor": round(profit_factor, 3) if math.isfinite(profit_factor) else None,
+                "stressed_net_pnl_eur": round(stressed_net_pnl, 4),
+                "cost_stress_multiplier": round(self.cost_stress_multiplier, 2),
+                "adaptive_change_pending": adaptive_change_pending,
                 "score": round(score, 1),
                 "review_status": review_status,
                 "last_signal": state.last_signal,
                 "strategy_version": state.strategy_version,
-                "adaptive_overrides": (
-                    learned_states.get(self._learner_name(name), {}).get("current_overrides", {})
-                    if isinstance(learned_states.get(self._learner_name(name), {}), dict) else {}
-                ),
+                "adaptive_overrides": learned_state.get("current_overrides", {}),
                 "promotable": promotable,
                 "promotion_ready": promotable,
                 "promotion_action": (
@@ -461,6 +487,9 @@ class ShadowStrategyEngine:
                 "min_completed_trades": self.min_completed_trades,
                 "min_winrate_pct": self.min_winrate_pct,
                 "min_net_pnl_eur": self.min_net_pnl_eur,
+                "min_profit_factor": self.min_profit_factor,
+                "cost_stress_multiplier": self.cost_stress_multiplier,
+                "require_no_pending_adaptive_change": True,
                 "max_drawdown_pct": self.max_drawdown_pct,
             },
             "strategies": rows,
