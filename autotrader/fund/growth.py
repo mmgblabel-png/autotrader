@@ -452,6 +452,8 @@ class GrowthController:
         risk_status: Mapping[str, Any],
         notional_eur: float,
         risk_reducing: bool,
+        strategy: str = "",
+        symbol: str = "",
     ) -> tuple[bool, str]:
         if not self.enabled or risk_reducing:
             return True, "growth-stage gate passed"
@@ -484,4 +486,37 @@ class GrowthController:
         gross_pct = gross_eur / nav * 100.0
         if gross_pct + trade_pct > float(policy["max_gross_exposure_pct"]) + 1e-9:
             return False, "growth-stage gross exposure exceeded"
+
+        strategy_key = str(strategy).strip()
+        strategy_exposure = dict(
+            risk_status.get("strategy_exposure_eur") or {}
+        )
+        if strategy_key:
+            current_strategy_eur = max(
+                0.0, float(strategy_exposure.get(strategy_key, 0.0) or 0.0)
+            )
+            projected_strategy_pct = (
+                current_strategy_eur + notional
+            ) / nav * 100.0
+            if (
+                projected_strategy_pct
+                > float(policy["max_strategy_exposure_pct"]) + 1e-9
+            ):
+                return False, "growth-stage strategy exposure exceeded"
+
+        symbol_key = str(symbol).upper().replace("/", "-").strip()
+        asset_exposure = dict(risk_status.get("asset_exposure_eur") or {})
+        if symbol_key:
+            current_asset_eur = max(
+                0.0, float(asset_exposure.get(symbol_key, 0.0) or 0.0)
+            )
+            projected_asset_pct = (
+                current_asset_eur + notional
+            ) / nav * 100.0
+            if (
+                projected_asset_pct
+                > float(policy["max_asset_exposure_pct"]) + 1e-9
+            ):
+                return False, "growth-stage asset exposure exceeded"
+
         return True, "growth-stage gate passed"
