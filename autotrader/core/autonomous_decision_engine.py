@@ -162,8 +162,9 @@ class AutonomousDecisionEngine:
             )
             allowed = set(self._allowed_markets(key, current))
             allow_any = "*" in allowed
+            router_rows = list(rankings.get(router_key, []) or [])
             candidates = [
-                row for row in rankings.get(router_key, [])
+                row for row in router_rows
                 if bool(row.get("eligible"))
                 and (
                     self.allow_non_eur_live
@@ -223,6 +224,26 @@ class AutonomousDecisionEngine:
             signal_strength = float(best.get("signal_strength", best.get("score", 0.0)) or 0.0) if best else 0.0
             signal_direction = str(best.get("signal_direction") or "WAIT") if best else "WAIT"
             desired = str(best.get("market") or current).upper() if best else current
+            current_candidate = next(
+                (
+                    row for row in router_rows
+                    if str(row.get("market") or "").upper() == current
+                ),
+                None,
+            )
+            current_market_score = (
+                float(current_candidate.get("score") or 0.0)
+                if current_candidate is not None else 0.0
+            )
+            current_market_signal = (
+                float(
+                    current_candidate.get(
+                        "signal_strength",
+                        current_candidate.get("score", 0.0),
+                    ) or 0.0
+                )
+                if current_candidate is not None else 0.0
+            )
             required_entry_edge = max(0.0, float(cfg.get("_required_entry_edge_pct", 0.0)))
             if key == "market_maker":
                 target_edge = float(cfg.get("cycle_exit_markup_pct", cfg.get("target_spread", 0.0)))
@@ -244,6 +265,27 @@ class AutonomousDecisionEngine:
                 and confidence >= market_conf_min
                 and profit_gate
             )
+            current_score_min, current_conf_min = self._thresholds_for_market(current)
+            current_score_min = max(current_score_min, strategy_min_score)
+            current_conf_min = max(current_conf_min, strategy_min_confidence)
+            current_market_quality_ok = (
+                bool(current_candidate)
+                and bool(current_candidate.get("eligible"))
+                and (
+                    self.allow_non_eur_live
+                    or bool(
+                        current_candidate.get(
+                            "live_execution_supported_now",
+                            current.endswith("-EUR"),
+                        )
+                    )
+                )
+                and current_market_score >= current_score_min
+                and current_market_signal >= strategy_min_signal
+                and confidence >= current_conf_min
+                and profit_gate
+            )
+            score_improvement = score - current_market_score
             minimum_live_order_eur = max(
                 0.0, float(self.config.get("minimum_live_order_eur", 5.0))
             )
@@ -319,6 +361,10 @@ class AutonomousDecisionEngine:
                 "current_market": current,
                 "desired_market": desired,
                 "market_score": round(score, 2),
+                "current_market_score": round(current_market_score, 2),
+                "current_market_signal_strength": round(current_market_signal, 2),
+                "current_market_quality_ok": current_market_quality_ok,
+                "score_improvement": round(score_improvement, 2),
                 "signal_strength": round(signal_strength, 2),
                 "signal_direction": signal_direction,
                 "min_signal_strength": round(strategy_min_signal, 2),

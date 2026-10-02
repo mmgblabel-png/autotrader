@@ -145,6 +145,28 @@ def test_autonomous_engine_never_arms_and_respects_hard_rules():
     assert result["applied"] is False
 
 
+def test_autonomous_plan_exposes_current_market_quality_and_score_delta():
+    agent = _agent()
+    engine = AutonomousDecisionEngine({
+        "enabled": True,
+        "apply_live": True,
+        "min_score": 68,
+        "min_confidence": 0.62,
+        "switch_cooldown_seconds": 30,
+        "strategy_markets": {
+            "market_maker": ["BTC-EUR"],
+            "grid": ["SOL-EUR", "ETH-EUR"],
+            "sniper": ["XRP-EUR", "ADA-EUR"],
+        },
+    })
+    plan = engine.plan(agent=agent, router_payload=_router(), risk_payload=_risk(), armed=True)
+    row = next(x for x in plan["rows"] if x["strategy"] == "GridRunner")
+    assert row["current_market_score"] == 75.0
+    assert row["market_score"] == 88.0
+    assert row["score_improvement"] == 13.0
+    assert row["current_market_quality_ok"] is True
+
+
 def test_autonomous_engine_switches_only_flat_order_free_strategy():
     agent = _agent()
     engine = AutonomousDecisionEngine({
