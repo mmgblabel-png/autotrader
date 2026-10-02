@@ -90,7 +90,7 @@ shadow_lab:
     volatility_breakout:
       enabled: true
       kind: volatility_breakout
-      strategy_version: v2
+      strategy_version: v3
       symbol: ADA-EUR
       exchange: bitvavo
       shadow_order_eur: 6.0
@@ -106,7 +106,7 @@ shadow_lab:
     sniper_v2:
       enabled: true
       kind: sniper_v2
-      strategy_version: v1
+      strategy_version: v2
       symbol: XRP-EUR
       exchange: bitvavo
       shadow_order_eur: 6.0
