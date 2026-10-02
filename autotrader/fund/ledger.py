@@ -195,6 +195,33 @@ class FundLedger:
             row = conn.execute("SELECT 1 FROM fund_events WHERE event_id = ? LIMIT 1", (key,)).fetchone()
         return row is not None
 
+    def latest_event(self, event_type: str) -> dict[str, object] | None:
+        """Return the latest decoded event of one type without exposing internals."""
+        key = str(event_type).strip()
+        if not key:
+            return None
+        with self._lock, self._connect() as conn:
+            row = conn.execute(
+                """
+                SELECT seq, event_id, timestamp, event_type, payload_json, event_hash
+                FROM fund_events
+                WHERE event_type = ?
+                ORDER BY seq DESC
+                LIMIT 1
+                """,
+                (key,),
+            ).fetchone()
+        if row is None:
+            return None
+        return {
+            "seq": int(row["seq"]),
+            "event_id": str(row["event_id"]),
+            "timestamp": float(row["timestamp"]),
+            "event_type": str(row["event_type"]),
+            "payload": json.loads(str(row["payload_json"])),
+            "event_hash": str(row["event_hash"]),
+        }
+
     def has_event_type(self, event_type: str) -> bool:
         """Return whether at least one event of the requested type exists."""
         key = str(event_type).strip()
