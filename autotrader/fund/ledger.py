@@ -248,12 +248,16 @@ class FundLedger:
         return maximum
 
     def track_record_stats(self) -> dict[str, object]:
-        """Return durable track-record age and fill count for growth governance."""
+        """Return durable live-track-record age and fill count.
+
+        The clock starts at the first recorded live fill, not at application
+        boot, so infrastructure uptime can never masquerade as trading history.
+        """
         with self._lock, self._connect() as conn:
             row = conn.execute(
                 """
                 SELECT
-                    MIN(timestamp) AS first_ts,
+                    MIN(CASE WHEN event_type = 'fill' THEN timestamp END) AS first_fill_ts,
                     MAX(timestamp) AS last_ts,
                     SUM(CASE WHEN event_type = 'fill' THEN 1 ELSE 0 END) AS fill_count,
                     COUNT(*) AS event_count
@@ -268,14 +272,91 @@ class FundLedger:
                 "fill_count": 0,
                 "event_count": 0,
             }
-        first_ts = float(row["first_ts"])
+        first_fill = row["first_fill_ts"]
         last_ts = float(row["last_ts"])
         return {
-            "first_timestamp": first_ts,
+            "first_timestamp": None if first_fill is None else float(first_fill),
             "last_timestamp": last_ts,
-            "days": max(0.0, (last_ts - first_ts) / 86400.0),
+            "days": (
+                0.0
+                if first_fill is None
+                else max(0.0, (last_ts - float(first_fill)) / 86400.0)
+            ),
             "fill_count": int(row["fill_count"] or 0),
             "event_count": int(row["event_count"] or 0),
+        }
+
+    def performance_stats(self, *, now: float | None = None) -> dict[str, object]:
+        """Aggregate immutable fill accounting into dashboard/reporting metrics."""
+        current = time.time() if now is None else float(now)
+        with self._lock, self._connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT timestamp, payload_json
+                FROM fund_events
+                WHERE event_type = ?
+                ORDER BY seq ASC
+                """,
+                ("fill",),
+            ).fetchall()
+
+        realized = 0.0
+        gross_profit = 0.0
+        gross_loss = 0.0
+        turnover = 0.0
+        positive = 0
+        negative = 0
+        zero = 0
+        pnl_24h = 0.0
+        pnl_7d = 0.0
+        pnl_30d = 0.0
+
+        for row in rows:
+            try:
+                payload = json.loads(str(row["payload_json"]))
+                pnl = float(payload.get("realized_net_pnl_delta_eur") or 0.0)
+                notional = max(0.0, float(payload.get("notional_eur") or 0.0))
+                ts = float(row["timestamp"])
+            except (TypeError, ValueError, json.JSONDecodeError):
+                continue
+            realized += pnl
+            turnover += notional
+            if pnl > 0:
+                positive += 1
+                gross_profit += pnl
+            elif pnl < 0:
+                negative += 1
+                gross_loss += abs(pnl)
+            else:
+                zero += 1
+            age = max(0.0, current - ts)
+            if age <= 86400.0:
+                pnl_24h += pnl
+            if age <= 7 * 86400.0:
+                pnl_7d += pnl
+            if age <= 30 * 86400.0:
+                pnl_30d += pnl
+
+        decisive = positive + negative
+        return {
+            "fill_count": len(rows),
+            "profitable_fill_count": positive,
+            "loss_fill_count": negative,
+            "flat_fill_count": zero,
+            "positive_fill_rate_pct": round(
+                (positive / decisive * 100.0) if decisive else 0.0,
+                6,
+            ),
+            "realized_net_pnl_eur": round(realized, 6),
+            "gross_profit_eur": round(gross_profit, 6),
+            "gross_loss_eur": round(gross_loss, 6),
+            "profit_factor": (
+                None if gross_loss <= 1e-12 else round(gross_profit / gross_loss, 6)
+            ),
+            "turnover_eur": round(turnover, 6),
+            "realized_net_pnl_24h_eur": round(pnl_24h, 6),
+            "realized_net_pnl_7d_eur": round(pnl_7d, 6),
+            "realized_net_pnl_30d_eur": round(pnl_30d, 6),
         }
 
     def tail(self, limit: int = 25) -> list[dict[str, object]]:
