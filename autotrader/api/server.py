@@ -421,6 +421,34 @@ def _calculated_risk_payload(agent: AutoTrader) -> dict[str, object]:
     )
 
 
+def _execution_v2_retry_seconds(advisor: ExecutionV2Advisor, exc: BitvavoError) -> float:
+    """Back off hard on authentication/signature faults to avoid API churn."""
+    base = max(30.0, float(advisor.config.get("cancel_retry_seconds", 60.0)))
+    sensitive = {"invalid_signature", "authentication_rejected", "trade_permission_missing"}
+    if exc.category in sensitive or exc.status in {401, 403}:
+        return max(base, float(advisor.config.get("auth_cancel_retry_seconds", 900.0)))
+    return base
+
+
+def _router_status_log_worthy(
+    previous: tuple[int, int] | None,
+    current: tuple[int, int],
+    *,
+    last_log_at: float,
+    now_mono: float,
+    min_scanned_delta: int = 5,
+    heartbeat_seconds: float = 300.0,
+) -> bool:
+    """Suppress one-market scan flapping while keeping useful heartbeats."""
+    if previous is None:
+        return True
+    if current[0] != previous[0]:
+        return True
+    if abs(current[1] - previous[1]) >= max(1, int(min_scanned_delta)):
+        return True
+    return now_mono - float(last_log_at or 0.0) >= max(30.0, float(heartbeat_seconds))
+
+
 def _manage_stale_bot_orders(app: FastAPI, agent: AutoTrader) -> dict[str, object]:
     """Cancel only durable bot-owned stale orders so autonomy can re-evaluate.
 
@@ -528,7 +556,8 @@ def _manage_stale_bot_orders(app: FastAPI, agent: AutoTrader) -> dict[str, objec
                 cancel_reason,
             )
         except BitvavoError as exc:
-            retry_at[client_order_id] = now_mono + retry_seconds
+            error_retry_seconds = _execution_v2_retry_seconds(advisor, exc)
+            retry_at[client_order_id] = now_mono + error_retry_seconds
             try:
                 agent.live_reconcile()
             except Exception:
@@ -552,7 +581,7 @@ def _manage_stale_bot_orders(app: FastAPI, agent: AutoTrader) -> dict[str, objec
                     "category": exc.category,
                     "status": exc.status,
                     "error_code": exc.error_code,
-                    "retry_after_seconds": round(retry_seconds, 1),
+                    "retry_after_seconds": round(error_retry_seconds, 1),
                 })
             log.warning(
                 "Execution v2 stale cancel failed safely: strategy=%s market=%s category=%s status=%s code=%s",
@@ -869,8 +898,16 @@ async def _opportunity_router_loop(app: FastAPI) -> None:
             payload = app.state.opportunity_router.rankings()
             scanned = int(payload.get("markets_scanned", 0) or 0)
             configured = int(payload.get("markets_configured", 0) or 0)
+            current_counts = (configured, scanned)
             previous = getattr(app.state, "opportunity_router_last_logged_count", None)
-            if previous != (configured, scanned):
+            now_mono = time.monotonic()
+            last_log_at = float(getattr(app.state, "opportunity_router_last_log_at", 0.0) or 0.0)
+            if _router_status_log_worthy(
+                previous,
+                current_counts,
+                last_log_at=last_log_at,
+                now_mono=now_mono,
+            ):
                 log.info(
                     "Opportunity router active: configured=%d scanned=%d cap=%d auto_discover=%s live_orders_sent=%s",
                     configured,
@@ -879,7 +916,8 @@ async def _opportunity_router_loop(app: FastAPI) -> None:
                     bool(payload.get("auto_discover_eur")),
                     bool(payload.get("live_orders_sent")),
                 )
-                app.state.opportunity_router_last_logged_count = (configured, scanned)
+                app.state.opportunity_router_last_logged_count = current_counts
+                app.state.opportunity_router_last_log_at = now_mono
         except Exception as exc:
             app.state.opportunity_router_error = type(exc).__name__
             log.warning("Opportunity router refresh failed: %s", type(exc).__name__)
@@ -1048,6 +1086,8 @@ async def _lifespan(app: FastAPI):
     except (TypeError, ValueError):
         app.state.opportunity_router_interval_seconds = 15.0
     app.state.opportunity_router_error = None
+    app.state.opportunity_router_last_logged_count = None
+    app.state.opportunity_router_last_log_at = 0.0
     app.state.execution_v2_advisor = ExecutionV2Advisor(agent._config.get("execution_v2", {}) or {})
     app.state.execution_v2_last_manage_at = 0.0
     app.state.execution_v2_live_actions = {
