@@ -25,6 +25,7 @@ class ShadowStats:
     position_qty: float = 0.0
     entry_price: float = 0.0
     entry_cost_eur: float = 0.0
+    position_peak_price: float = 0.0
     peak_equity_eur: float = 0.0
     realized_net_pnl_eur: float = 0.0
     completed_trades: int = 0
@@ -42,6 +43,7 @@ class ShadowStats:
             "position_qty": self.position_qty,
             "entry_price": self.entry_price,
             "entry_cost_eur": self.entry_cost_eur,
+            "position_peak_price": self.position_peak_price,
             "peak_equity_eur": self.peak_equity_eur,
             "realized_net_pnl_eur": self.realized_net_pnl_eur,
             "completed_trades": self.completed_trades,
@@ -72,6 +74,8 @@ class ShadowStrategyEngine:
         self.min_winrate_pct = float(self.config.get("promotion_min_winrate_pct", 52.0))
         self.max_drawdown_pct = float(self.config.get("promotion_max_drawdown_pct", 8.0))
         self.min_net_pnl_eur = float(self.config.get("promotion_min_net_pnl_eur", 0.50))
+        self.min_profit_factor = max(1.0, float(self.config.get("promotion_min_profit_factor", 1.10)))
+        self.cost_stress_multiplier = max(1.0, float(self.config.get("promotion_cost_stress_multiplier", 1.25)))
         self._states: dict[str, ShadowStats] = {}
         self._load()
 
@@ -103,11 +107,15 @@ class ShadowStrategyEngine:
 
     @staticmethod
     def _learner_name(name: str) -> str:
+        # Dynamic fast-lane candidates are named "kind@MARKET". Learning is
+        # strategy-family bounded, so normalize the dynamic suffix before
+        # looking up the allow-listed tunable.
+        base_name = str(name).split("@", 1)[0]
         return {
             "mean_reversion": "MeanReversionShadow",
             "volatility_breakout": "VolatilityBreakoutShadow",
             "sniper_v2": "SniperV2Shadow",
-        }.get(name, name)
+        }.get(base_name, name)
 
     def _ensure_version(self, name: str, cfg: dict[str, Any]) -> ShadowStats:
         state = self._state(name)
@@ -175,6 +183,7 @@ class ShadowStrategyEngine:
         state.position_qty = qty
         state.entry_price = effective
         state.entry_cost_eur = budget
+        state.position_peak_price = price
         state.last_signal = signal
         state.last_trade_at = time.time()
 
@@ -198,6 +207,7 @@ class ShadowStrategyEngine:
         state.position_qty = 0.0
         state.entry_price = 0.0
         state.entry_cost_eur = 0.0
+        state.position_peak_price = 0.0
         state.last_signal = signal
         state.last_trade_at = time.time()
 
@@ -279,14 +289,13 @@ class ShadowStrategyEngine:
                 and breakout_move <= max_entry_spike
             ):
                 self._buy(state, price, cfg, f"breakout_{avg_move:.3f}_x{expansion_ratio:.2f}")
-                cfg["_shadow_peak_price"] = price
             elif breakout_move > max_entry_spike:
                 state.last_signal = f"skip_spike_{breakout_move:.2f}%"
             else:
                 state.last_signal = f"wait_breakout_vol_{avg_move:.3f}_x{expansion_ratio:.2f}"
             return
-        peak = max(float(cfg.get("_shadow_peak_price", state.entry_price)), price)
-        cfg["_shadow_peak_price"] = peak
+        peak = max(state.position_peak_price or state.entry_price, price)
+        state.position_peak_price = peak
         move = (price / state.entry_price - 1) * 100
         trail_move = (price / peak - 1) * 100
         if move >= take_profit:
@@ -329,7 +338,6 @@ class ShadowStrategyEngine:
             trend_ok = fast_ema > slow_ema
             if trend_ok and min_momentum <= momentum <= max_spike:
                 self._buy(state, price, cfg, f"enter_mom_{momentum:.2f}")
-                cfg["_shadow_peak_price"] = price
             elif momentum > max_spike:
                 state.last_signal = f"skip_spike_{momentum:.2f}%"
             elif not trend_ok:
@@ -338,8 +346,8 @@ class ShadowStrategyEngine:
                 state.last_signal = f"wait_momentum_{momentum:.2f}%"
             return
 
-        peak = max(float(cfg.get("_shadow_peak_price", state.entry_price)), price)
-        cfg["_shadow_peak_price"] = peak
+        peak = max(state.position_peak_price or state.entry_price, price)
+        state.position_peak_price = peak
         move = (price / state.entry_price - 1.0) * 100
         trail_move = (price / peak - 1.0) * 100
         if move >= take_profit:
@@ -361,11 +369,34 @@ class ShadowStrategyEngine:
             winrate = (state.wins / trades * 100) if trades else 0.0
             capital = max(1.0, float(cfg.get("shadow_order_eur", 6.0)))
             max_dd_pct = state.max_drawdown_eur / capital * 100
+            positive_outcomes = sum(value for value in state.outcomes if value > 0)
+            negative_outcomes = abs(sum(value for value in state.outcomes if value < 0))
+            profit_factor = (
+                positive_outcomes / negative_outcomes
+                if negative_outcomes > 1e-12
+                else (float("inf") if positive_outcomes > 0 else 0.0)
+            )
+            extra_stress_cost = (
+                trades
+                * capital
+                * (self.round_trip_cost_pct / 100.0)
+                * (self.cost_stress_multiplier - 1.0)
+            )
+            stressed_net_pnl = state.realized_net_pnl_eur - extra_stress_cost
+            learned_state = (
+                learned_states.get(self._learner_name(name), {})
+                if isinstance(learned_states.get(self._learner_name(name), {}), dict)
+                else {}
+            )
+            adaptive_change_pending = bool(learned_state.get("pending_change"))
             promotable = (
                 trades >= self.min_completed_trades
                 and state.realized_net_pnl_eur >= self.min_net_pnl_eur
+                and stressed_net_pnl > 0.0
                 and winrate >= self.min_winrate_pct
+                and profit_factor >= self.min_profit_factor
                 and max_dd_pct <= self.max_drawdown_pct
+                and not adaptive_change_pending
             )
 
             # Transparent 0-100 score for comparing shadow candidates only.
@@ -419,14 +450,15 @@ class ShadowStrategyEngine:
                 "winrate_pct": round(winrate, 2),
                 "realized_net_pnl_eur": round(state.realized_net_pnl_eur, 4),
                 "max_drawdown_pct": round(max_dd_pct, 2),
+                "profit_factor": round(profit_factor, 3) if math.isfinite(profit_factor) else None,
+                "stressed_net_pnl_eur": round(stressed_net_pnl, 4),
+                "cost_stress_multiplier": round(self.cost_stress_multiplier, 2),
+                "adaptive_change_pending": adaptive_change_pending,
                 "score": round(score, 1),
                 "review_status": review_status,
                 "last_signal": state.last_signal,
                 "strategy_version": state.strategy_version,
-                "adaptive_overrides": (
-                    learned_states.get(self._learner_name(name), {}).get("current_overrides", {})
-                    if isinstance(learned_states.get(self._learner_name(name), {}), dict) else {}
-                ),
+                "adaptive_overrides": learned_state.get("current_overrides", {}),
                 "promotable": promotable,
                 "promotion_ready": promotable,
                 "promotion_action": (
@@ -459,6 +491,9 @@ class ShadowStrategyEngine:
                 "min_completed_trades": self.min_completed_trades,
                 "min_winrate_pct": self.min_winrate_pct,
                 "min_net_pnl_eur": self.min_net_pnl_eur,
+                "min_profit_factor": self.min_profit_factor,
+                "cost_stress_multiplier": self.cost_stress_multiplier,
+                "require_no_pending_adaptive_change": True,
                 "max_drawdown_pct": self.max_drawdown_pct,
             },
             "strategies": rows,

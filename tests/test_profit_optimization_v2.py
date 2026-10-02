@@ -286,6 +286,7 @@ def test_shared_portfolio_goal_never_changes_risk():
 def test_calculated_risk_sizer_can_upsize_only_within_hard_order_cap():
     sizer = CalculatedRiskSizer({
         "enabled": True,
+        "apply_live": True,
         "profile": "balanced_aggressive",
         "min_confidence": 0.50,
         "max_size_multiplier": 1.35,
@@ -313,6 +314,8 @@ def test_calculated_risk_sizer_can_upsize_only_within_hard_order_cap():
     row = result["rows"][0]
     assert row["size_multiplier"] > 1.0
     assert row["recommended_order_eur"] <= 10.0
+    assert result["apply_live"] is True
+    assert result["mode"] == "bounded_live_input"
     assert result["live_budget_changed"] is False
     assert result["hard_risk_limits_changed"] is False
     assert result["leverage_changed"] is False

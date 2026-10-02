@@ -507,6 +507,7 @@ class CalculatedRiskSizer:
     def __init__(self, config: dict[str, Any] | None = None) -> None:
         self.config = config or {}
         self.enabled = bool(self.config.get("enabled", True))
+        self.apply_live = bool(self.config.get("apply_live", False))
         self.profile = str(self.config.get("profile", "balanced_aggressive"))
         self.max_size_multiplier = max(
             1.0, min(2.0, float(self.config.get("max_size_multiplier", 1.35)))
@@ -602,7 +603,8 @@ class CalculatedRiskSizer:
             })
         return {
             "enabled": self.enabled,
-            "mode": "advisory",
+            "apply_live": self.apply_live,
+            "mode": "bounded_live_input" if self.apply_live else "advisory",
             "profile": self.profile,
             "max_size_multiplier": self.max_size_multiplier,
             "live_budget_changed": False,

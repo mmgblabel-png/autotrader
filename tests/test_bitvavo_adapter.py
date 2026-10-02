@@ -1,4 +1,6 @@
 from decimal import Decimal
+import io
+import urllib.error
 
 import pytest
 
@@ -206,3 +208,73 @@ def test_public_candles_are_normalized_and_sorted(monkeypatch):
     assert calls == [("/ETH-BTC/candles", {"interval": "1m", "limit": "120"})]
     assert [row["timestamp"] for row in rows] == [1000, 2000]
     assert rows[0]["close"] == Decimal("1.5")
+
+
+def test_private_delete_with_query_signs_empty_body(monkeypatch):
+    adapter = BitvavoAdapter(api_key="key", api_secret="secret")
+    captured = {}
+
+    def fake_signature(secret, timestamp, method, endpoint, body_text):
+        captured.update(
+            secret=secret,
+            timestamp=timestamp,
+            method=method,
+            endpoint=endpoint,
+            body_text=body_text,
+        )
+        return "signature"
+
+    class DummyResponse:
+        def __enter__(self):
+            return self
+        def __exit__(self, *args):
+            return False
+        def read(self):
+            return b'{"orderId":"11111111-1111-1111-1111-111111111111"}'
+
+    def fake_urlopen(request, timeout=None):
+        captured["request_data"] = request.data
+        captured["url"] = request.full_url
+        return DummyResponse()
+
+    monkeypatch.setattr(adapter, "_create_signature", fake_signature)
+    monkeypatch.setattr("urllib.request.urlopen", fake_urlopen)
+    adapter._private_request(
+        "DELETE",
+        "/order",
+        query={
+            "market": "BTC-EUR",
+            "orderId": "11111111-1111-1111-1111-111111111111",
+            "operatorId": "1",
+        },
+    )
+
+    assert captured["method"] == "DELETE"
+    assert captured["body_text"] == ""
+    assert captured["request_data"] is None
+    assert captured["endpoint"].startswith("/order?market=BTC-EUR&orderId=")
+    assert captured["url"].startswith("https://api.bitvavo.com/v2/order?market=BTC-EUR&orderId=")
+
+
+def test_bitvavo_error_309_is_classified_as_invalid_signature(monkeypatch):
+    adapter = BitvavoAdapter(api_key="key", api_secret="secret")
+    payload = b'{"errorCode":309,"error":"Your signature is invalid."}'
+
+    def fake_urlopen(*args, **kwargs):
+        raise urllib.error.HTTPError(
+            url="https://api.bitvavo.com/v2/order",
+            code=403,
+            msg="Forbidden",
+            hdrs=None,
+            fp=io.BytesIO(payload),
+        )
+
+    monkeypatch.setattr("urllib.request.urlopen", fake_urlopen)
+    with pytest.raises(BitvavoError) as exc:
+        adapter._private_request(
+            "DELETE",
+            "/order",
+            query={"market": "BTC-EUR", "orderId": "11111111-1111-1111-1111-111111111111", "operatorId": "1"},
+        )
+    assert exc.value.error_code == 309
+    assert exc.value.category == "invalid_signature"

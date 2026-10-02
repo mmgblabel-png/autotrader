@@ -62,9 +62,11 @@ shadow_lab:
   interval_seconds: 5
   fee_pct_each_leg: 0.25
   slippage_pct_each_leg: 0.05
-  promotion_min_completed_trades: 8
+  promotion_min_completed_trades: 24
   promotion_min_winrate_pct: 55.0
   promotion_min_net_pnl_eur: 0.15
+  promotion_min_profit_factor: 1.10
+  promotion_cost_stress_multiplier: 1.25
   promotion_max_drawdown_pct: 6.0
   dynamic_markets_per_strategy: 12
   backfill_candles: 120
@@ -88,7 +90,7 @@ shadow_lab:
     volatility_breakout:
       enabled: true
       kind: volatility_breakout
-      strategy_version: v2
+      strategy_version: v3
       symbol: ADA-EUR
       exchange: bitvavo
       shadow_order_eur: 6.0
@@ -104,7 +106,7 @@ shadow_lab:
     sniper_v2:
       enabled: true
       kind: sniper_v2
-      strategy_version: v1
+      strategy_version: v2
       symbol: XRP-EUR
       exchange: bitvavo
       shadow_order_eur: 6.0
@@ -132,6 +134,8 @@ execution_v2:
   apply_live: true
   stale_after_seconds: 90
   manage_interval_seconds: 15
+  cancel_retry_seconds: 60
+  auth_cancel_retry_seconds: 900
   min_reprice_move_bps: 4.0
   order_refresh_tolerance_bps: 4.0
   max_order_age_seconds: 300
@@ -144,7 +148,9 @@ calculated_risk:
   max_size_multiplier: 1.35
   max_drawdown_pct: 8.0
   max_fee_drag_pct: 55.0
-  apply_live: false
+  # This payload is consumed by AutonomousDecisionEngine for bounded sizing.
+  # It cannot raise max_order_eur, global budget, leverage, or armed state.
+  apply_live: true
   allow_leverage: false
   allow_martingale: false
   allow_budget_increase: false
