@@ -874,7 +874,21 @@ async def _tick_loop(app: FastAPI, agent: AutoTrader) -> None:
                 for strategy in agent._strategies.values():
                     if strategy.is_running and strategy._config.get("exchange", "bitvavo").lower() == "bitvavo":
                         symbol = str(strategy._config.get("symbol", "BTC-EUR")).upper()
-                        price = float(agent._bitvavo.ticker_price(symbol))
+                        try:
+                            price = float(agent._bitvavo.ticker_price(symbol))
+                        except Exception as price_exc:
+                            # A transient public-market-data failure must not
+                            # abort the entire multi-strategy tick. Skip only
+                            # this strategy until a fresh price is available.
+                            strategy._config["_market_data_error"] = type(price_exc).__name__
+                            log.warning(
+                                "Bitvavo price refresh failed safely: strategy=%s market=%s error=%s",
+                                strategy.name,
+                                symbol,
+                                type(price_exc).__name__,
+                            )
+                            continue
+                        strategy._config.pop("_market_data_error", None)
                         strategy._config["_mid_price"] = price
                         strategy._config["_current_price"] = price
                         agent.profit_engine.mark_to_market(strategy.name, symbol, price)
