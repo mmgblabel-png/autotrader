@@ -322,7 +322,12 @@ class FundLedger:
             "event_count": int(row["event_count"] or 0),
         }
 
-    def performance_stats(self, *, now: float | None = None) -> dict[str, object]:
+    def performance_stats(
+        self,
+        *,
+        now: float | None = None,
+        starting_equity_eur: float = 0.0,
+    ) -> dict[str, object]:
         """Aggregate immutable fill accounting into dashboard/reporting metrics."""
         current = time.time() if now is None else float(now)
         with self._lock, self._connect() as conn:
@@ -346,6 +351,9 @@ class FundLedger:
         pnl_24h = 0.0
         pnl_7d = 0.0
         pnl_30d = 0.0
+        cumulative_realized = 0.0
+        equity_curve: list[dict[str, float]] = []
+        starting_equity = max(0.0, float(starting_equity_eur))
 
         for row in rows:
             try:
@@ -356,7 +364,17 @@ class FundLedger:
             except (TypeError, ValueError, json.JSONDecodeError):
                 continue
             realized += pnl
+            cumulative_realized += pnl
             turnover += notional
+            equity_curve.append(
+                {
+                    "timestamp": ts,
+                    "equity_eur": round(
+                        max(0.0, starting_equity + cumulative_realized),
+                        6,
+                    ),
+                }
+            )
             if pnl > 0:
                 positive += 1
                 gross_profit += pnl
@@ -393,6 +411,8 @@ class FundLedger:
             "realized_net_pnl_24h_eur": round(pnl_24h, 6),
             "realized_net_pnl_7d_eur": round(pnl_7d, 6),
             "realized_net_pnl_30d_eur": round(pnl_30d, 6),
+            "equity_curve_basis": "starting_equity_plus_recorded_realized_pnl",
+            "equity_curve": equity_curve[-200:],
         }
 
     def tail(self, limit: int = 25) -> list[dict[str, object]]:
