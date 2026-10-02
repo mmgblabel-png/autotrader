@@ -122,6 +122,8 @@ class HedgeFundEngine:
                 risk_status=risk_snapshot,
                 notional_eur=notional_eur,
                 risk_reducing=risk_reducing,
+                strategy=strategy,
+                symbol=symbol,
             )
             if not growth_ok:
                 decision = replace(
