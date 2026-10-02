@@ -142,7 +142,7 @@ class MarketMaker(BaseStrategy):
         notional = size * mid_price
 
         live_snapshot = bool(cfg.get("_live_balance_snapshot_ready", False))
-        can_bid = True
+        can_bid = not entry_killed
         can_ask = True
         if live_snapshot:
             available_quote = float(cfg.get("_available_quote", 0.0))
