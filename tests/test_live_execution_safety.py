@@ -85,6 +85,57 @@ class FilledAdapter:
         }
 
 
+class CancelledAdapter:
+    def __init__(self):
+        self.journal = FakeJournal()
+
+    def place_limit_order(self, market, side, amount, price, client_order_id):
+        return {
+            "clientOrderId": client_order_id,
+            "market": market,
+            "side": side,
+            "status": "canceled",
+            "filledAmount": "0",
+        }
+
+
+def test_immediate_exchange_cancel_notifies_strategy_failure_handler():
+    om = OrderManager()
+    failures = []
+    adapter = CancelledAdapter()
+    coordinator = ExecutionCoordinator(
+        om,
+        adapter,
+        is_armed=lambda: True,
+        failure_handler=lambda order, category, reason: failures.append(
+            (order.order_id, category, reason)
+        ),
+    )
+    order = om.register(
+        Order(
+            exchange="bitvavo",
+            symbol="RAY-EUR",
+            side=OrderSide.BUY,
+            order_type=OrderType.LIMIT,
+            quantity=5.0,
+            price=1.74,
+            strategy="GridRunner",
+        )
+    )
+
+    result = coordinator.submit_pending()
+
+    assert result == [{"client_order_id": order.order_id, "status": "canceled"}]
+    assert order.status is OrderStatus.CANCELLED
+    assert failures == [
+        (
+            order.order_id,
+            "exchange_terminal",
+            "exchange returned terminal status=canceled",
+        )
+    ]
+
+
 def test_real_exchange_fill_is_recorded_as_trade():
     om = OrderManager()
     pe = ProfitEngine(export_dir="/tmp/autotrader-test-exports")
