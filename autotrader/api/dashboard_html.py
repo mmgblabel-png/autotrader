@@ -362,9 +362,7 @@ function renderOrderActivity(d){
 }
 function renderBitvavo(d,e){let ok=d.authenticated_probe===true;$('fusioncred').textContent=d.credentials_present?'aanwezig':'ontbreekt';$('fusioncred').className=d.credentials_present?'green':'red';$('fusionauth').textContent=ok?'geslaagd':'mislukt';$('fusionauth').className=ok?'green':'red';$('fusionendpoint').textContent='account + EUR balance';$('fusionmode').textContent=(e?.mode||'paper')+' · live '+(e?.live_execution_capability||'uit');$('fusionchecked').textContent=new Date().toLocaleTimeString();$('fusionnote').textContent=ok?(d.passed?'Bitvavo securitycontrole geslaagd.':'Bitvavo authenticatie geslaagd; aanvullende safety-checks zijn nog niet compleet.'):'Bitvavo read-only authenticatie niet geslaagd: '+((d.errors||[]).join(', ')||'onbekend');$('safetymode').textContent=e?.mode||'paper';$('fusionlive').textContent=e?.live_execution_capability||'uit';$('emergencystop').textContent=e?.emergency_stop?'ACTIEF':'niet actief'}
 function setSectionError(label,error){$('apierror').textContent=label+': '+(error?.message||'niet beschikbaar')}
-async function refreshLiveReadiness(){
- try{
-  let d=await get('/api/live/readiness');
+function renderLiveReadiness(d){
   const resume=!!d.resume_mode;
   $('liveready').textContent=d.ready?(resume?'READY TO RESUME':'READY'):'NOT READY';
   $('liveready').className=d.ready?'green':'amber';
@@ -387,7 +385,10 @@ async function refreshLiveReadiness(){
     $('notice').textContent='LIVE GEBLOKKEERD · Niet alle server-side veiligheidsvoorwaarden zijn groen. Nieuwe live orders zijn uitgeschakeld.';
     $('notice').style.borderLeftColor='var(--red)';$('notice').style.background='#31151d';$('notice').style.color='#ffd3d8';
   }
- }catch(e){$('liveready').textContent='ONBEKEND';$('livecheck').textContent=e.message;$('livebtn').disabled=true;$('liveaction').disabled=true}
+}
+async function refreshLiveReadiness(){
+ try{renderLiveReadiness(await get('/api/live/readiness'))}
+ catch(e){$('liveready').textContent='ONBEKEND';$('livecheck').textContent=e.message;$('livebtn').disabled=true;$('liveaction').disabled=true}
 }
 async function strategyControl(name,action){
  try{
@@ -425,7 +426,52 @@ async function deactivateLive(){
   await refreshLiveReadiness(); alert('Live Trading is gestopt. Nieuwe orders worden niet meer uitgevoerd.');
  }catch(e){alert(e.message||'Stoppen mislukt');}
 }
-async function refresh(){let now=new Date().toLocaleString();$('last').textContent='Bijwerken…';$('apierror').textContent='';let entries=await Promise.allSettled([get('/api/paper/report'),get('/api/execution/status'),get('/api/pnl/summary'),get('/api/health'),get('/api/security/bitvavo'),get('/api/risk/status'),get('/api/markets/overview'),get('/api/strategies'),get('/api/bitvavo/live-state'),get('/api/pnl/live'),get('/api/security/coinbase'),get('/api/coinbase/live-state'),get('/api/arbitrage/coinbase-bitvavo'),get('/api/shadow/strategies'),get('/api/allocator/v2'),get('/api/orders/activity?limit=100'),get('/api/optimization/execution-v2'),get('/api/optimization/opportunities'),get('/api/optimization/fee-efficiency'),get('/api/goals/portfolio'),get('/api/reference/binance-btc'),get('/api/autonomy/status'),get('/api/risk-lab/leverage-martingale'),get('/api/report/three-hour'),get('/api/fees/live'),get('/api/markets/universe/summary')]);let [r,e,s,h,f,k,m,a,v,p,cb,cbb,arb,sh,al,oa,ev2,op,fe,goal,bref,auto,rl,threeh,fr,uni]=entries;let fail=(entry,label)=>{if(entry.status==='rejected')setSectionError(label,entry.reason)};if(r.status==='fulfilled')renderReport(r.value);else fail(r,'Portfolio');if(e.status==='fulfilled')renderExec(e.value);else fail(e,'Execution');if(s.status==='fulfilled')renderStrategies(s.value);else fail(s,'PnL');if(h.status==='fulfilled'){$('ticker').textContent=h.value.runtime?.ticker_running?'actief':'gestopt';$('updated').textContent=new Date().toLocaleTimeString();$('healthbar').style.width=h.value.runtime?.last_tick_error?'25%':'100%'}else fail(h,'Runtime');if(f.status==='fulfilled')renderBitvavo(f.value,e.status==='fulfilled'?e.value:{});else fail(f,'Bitvavo');if(k.status==='fulfilled')renderRisk(k.value);else fail(k,'Risk');if(m.status==='fulfilled')renderMarkets(m.value);else fail(m,'Markten');if(a.status==='fulfilled')renderAgents(a.value);else fail(a,'Agents');if(v.status==='fulfilled')renderLiveState(v.value);else fail(v,'Open orders');if(p.status==='fulfilled')renderProfit(p.value);else fail(p,'Profit supervisor');if(cb.status==='fulfilled')renderCoinbase(cb.value);else fail(cb,'Coinbase');if(cbb.status==='fulfilled')renderCoinbaseBalances(cbb.value);else fail(cbb,'Coinbase saldo');if(arb.status==='fulfilled')renderArbitrage(arb.value);else fail(arb,'Arbitrage');if(sh.status==='fulfilled')renderShadow(sh.value);else fail(sh,'Shadow bots');if(al.status==='fulfilled')renderAllocator(al.value);else fail(al,'Allocator v2');if(oa.status==='fulfilled')renderOrderActivity(oa.value);else fail(oa,'Orderhistorie');if(ev2.status==='fulfilled')renderExecutionV2(ev2.value);else fail(ev2,'Execution v2');if(op.status==='fulfilled')renderOpportunities(op.value);else fail(op,'Opportunity Router');if(fe.status==='fulfilled')renderFeeEfficiency(fe.value);else fail(fe,'Fee Efficiency');if(goal.status==='fulfilled')renderGoal(goal.value);else fail(goal,'€25k doel');if(bref.status==='fulfilled')renderBinanceReference(bref.value);else fail(bref,'Binance reference');if(auto.status==='fulfilled')renderAutonomy(auto.value);else fail(auto,'Autonomy');if(rl.status==='fulfilled')renderRiskLab(rl.value);else fail(rl,'Risk Lab');if(threeh.status==='fulfilled')renderThreeHour(threeh.value);else fail(threeh,'3-uurs rapport');if(fr.status==='fulfilled')renderFeeReality(fr.value);else fail(fr,'Fee Reality');if(uni.status==='fulfilled')renderUniverse(uni.value);else fail(uni,'Full Market Universe');refreshLiveReadiness();$('last').textContent='Bijgewerkt '+now}
+async function refresh(){
+ let now=new Date().toLocaleString();
+ $('last').textContent='Bijwerken…';$('apierror').textContent='';
+ try{
+  let snap=await get('/api/dashboard/snapshot'),sections=snap.sections||{};
+  let section=(key)=>{let x=sections[key];return x&&x.ok?{status:'fulfilled',value:x.data}:{status:'rejected',reason:Error((x&&x.error)||'niet beschikbaar')}};
+  let entries=[
+   section('paper_report'),section('execution_status'),section('pnl_summary'),section('health'),section('bitvavo_security'),
+   section('risk_status'),section('markets_overview'),section('strategies'),section('bitvavo_live_state'),section('live_pnl'),
+   section('coinbase_security'),section('coinbase_live_state'),section('arbitrage'),section('shadow'),section('allocator'),
+   section('orders'),section('execution_v2'),section('opportunities'),section('fee_efficiency'),section('portfolio_goal'),
+   section('binance_reference'),section('autonomy'),section('risk_lab'),section('three_hour'),section('fees_live'),
+   section('universe_summary'),section('live_readiness')
+  ];
+  let [r,e,s,h,f,k,m,a,v,p,cb,cbb,arb,sh,al,oa,ev2,op,fe,goal,bref,auto,rl,threeh,fr,uni,lr]=entries;
+  let fail=(entry,label)=>{if(entry.status==='rejected')setSectionError(label,entry.reason)};
+  if(r.status==='fulfilled')renderReport(r.value);else fail(r,'Portfolio');
+  if(e.status==='fulfilled')renderExec(e.value);else fail(e,'Execution');
+  if(s.status==='fulfilled')renderStrategies(s.value);else fail(s,'PnL');
+  if(h.status==='fulfilled'){$('ticker').textContent=h.value.runtime?.ticker_running?'actief':'gestopt';$('updated').textContent=new Date().toLocaleTimeString();$('healthbar').style.width=h.value.runtime?.last_tick_error?'25%':'100%'}else fail(h,'Runtime');
+  if(f.status==='fulfilled')renderBitvavo(f.value,e.status==='fulfilled'?e.value:{});else fail(f,'Bitvavo');
+  if(k.status==='fulfilled')renderRisk(k.value);else fail(k,'Risk');
+  if(m.status==='fulfilled')renderMarkets(m.value);else fail(m,'Markten');
+  if(a.status==='fulfilled')renderAgents(a.value);else fail(a,'Agents');
+  if(v.status==='fulfilled')renderLiveState(v.value);else fail(v,'Open orders');
+  if(p.status==='fulfilled')renderProfit(p.value);else fail(p,'Profit supervisor');
+  if(cb.status==='fulfilled')renderCoinbase(cb.value);else fail(cb,'Coinbase');
+  if(cbb.status==='fulfilled')renderCoinbaseBalances(cbb.value);else fail(cbb,'Coinbase saldo');
+  if(arb.status==='fulfilled')renderArbitrage(arb.value);else fail(arb,'Arbitrage');
+  if(sh.status==='fulfilled')renderShadow(sh.value);else fail(sh,'Shadow bots');
+  if(al.status==='fulfilled')renderAllocator(al.value);else fail(al,'Allocator v2');
+  if(oa.status==='fulfilled')renderOrderActivity(oa.value);else fail(oa,'Orderhistorie');
+  if(ev2.status==='fulfilled')renderExecutionV2(ev2.value);else fail(ev2,'Execution v2');
+  if(op.status==='fulfilled')renderOpportunities(op.value);else fail(op,'Opportunity Router');
+  if(fe.status==='fulfilled')renderFeeEfficiency(fe.value);else fail(fe,'Fee Efficiency');
+  if(goal.status==='fulfilled')renderGoal(goal.value);else fail(goal,'€25k doel');
+  if(bref.status==='fulfilled')renderBinanceReference(bref.value);else fail(bref,'Binance reference');
+  if(auto.status==='fulfilled')renderAutonomy(auto.value);else fail(auto,'Autonomy');
+  if(rl.status==='fulfilled')renderRiskLab(rl.value);else fail(rl,'Risk Lab');
+  if(threeh.status==='fulfilled')renderThreeHour(threeh.value);else fail(threeh,'3-uurs rapport');
+  if(fr.status==='fulfilled')renderFeeReality(fr.value);else fail(fr,'Fee Reality');
+  if(uni.status==='fulfilled')renderUniverse(uni.value);else fail(uni,'Full Market Universe');
+  if(lr.status==='fulfilled')renderLiveReadiness(lr.value);else fail(lr,'Live readiness');
+ }catch(e){setSectionError('Dashboard',e)}
+ $('last').textContent='Bijgewerkt '+now
+}
 function connect(){try{let scheme=location.protocol==='https:'?'wss':'ws';let credential=apiKey||token;if(!credential){$('socket').textContent='auth vereist';return}socket=new WebSocket(`${scheme}://${location.host}/ws/paper`,['at-v1',credential]);socket.onopen=()=>{$('socket').textContent='verbonden';$('socket').className='green'};socket.onmessage=e=>{try{if(($('mode').textContent||'').toLowerCase()!=='live')renderReport(JSON.parse(e.data))}catch(_){}};socket.onclose=()=>{$('socket').textContent='herstellen…';setTimeout(connect,4000)}}catch(_){$('socket').textContent='niet beschikbaar'}}
 if(token||apiKey){$('login').classList.add('hidden');$('app').classList.remove('hidden');refresh();connect()}
 setInterval(()=>{if(!$('app').classList.contains('hidden'))refresh()},15000);
