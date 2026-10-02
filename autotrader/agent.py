@@ -20,6 +20,7 @@ from autotrader.core.profit_supervisor import ProfitSupervisor
 from autotrader.core.risk_manager import RiskManager, StrategyRiskConfig
 from autotrader.core.strategy_allocator import StrategyAllocator
 from autotrader.fund.engine import HedgeFundEngine
+from autotrader.research.lab import ResearchLab
 from autotrader.strategies.arbitrage_hunter import ArbitrageHunter
 from autotrader.strategies.base import BaseStrategy
 from autotrader.strategies.grid_runner import GridRunner
@@ -56,6 +57,11 @@ class AutoTrader:
         self._bitvavo = BitvavoAdapter(is_armed=self._is_live_armed)
         self._profit_supervisor = ProfitSupervisor(
             self._bitvavo.journal,
+            self._config.get("profit_policy", {}),
+        )
+        self._research_lab = ResearchLab(
+            self._bitvavo,
+            self._config.get("research_lab", {}),
             self._config.get("profit_policy", {}),
         )
         self._restore_profit_from_journal()
@@ -95,6 +101,10 @@ class AutoTrader:
     @property
     def fund(self) -> "HedgeFundEngine":
         return self._fund
+
+    @property
+    def research_lab(self) -> "ResearchLab":
+        return self._research_lab
 
     # ------------------------------------------------------------------
     # Public API

@@ -26,6 +26,24 @@ fund:
     risk: 1.25
     portfolio_allocation: 1.1
 
+research_lab:
+  enabled: true
+  initial_equity_eur: 100
+  allocation_pct: 25
+  max_candles: 1440
+  min_history: 30
+  trend_fast: 10
+  trend_slow: 30
+  momentum_lookback: 12
+  mean_reversion_lookback: 20
+  mean_reversion_entry_z: 1.5
+  walk_forward_window: 180
+  monte_carlo_simulations: 10000
+  monte_carlo_horizon_periods: 365
+  monte_carlo_block_size: 5
+  monte_carlo_seed: 42
+  ruin_drawdown_pct: 30.0
+
 portfolio:
   global_live_budget_eur: 50
   max_total_open_orders: 4

@@ -1722,6 +1722,69 @@ def fund_status() -> dict[str, object]:
     return get_agent().fund.status()
 
 
+@app.get("/api/research/backtest", tags=["research"])
+def research_backtest(
+    market: str = Query(default="BTC-EUR", min_length=3, max_length=30),
+    interval: str = Query(default="1h", min_length=2, max_length=4),
+    strategy: str = Query(default="multi_factor", min_length=3, max_length=30),
+    limit: int = Query(default=720, ge=64, le=1440),
+):
+    """Run a cost-aware point-in-time historical backtest using public candles."""
+    try:
+        return get_agent().research_lab.backtest_market(
+            market,
+            interval=interval,
+            strategy=strategy,
+            limit=limit,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.get("/api/research/monte-carlo", tags=["research"])
+def research_monte_carlo(
+    market: str = Query(default="BTC-EUR", min_length=3, max_length=30),
+    interval: str = Query(default="1h", min_length=2, max_length=4),
+    strategy: str = Query(default="multi_factor", min_length=3, max_length=30),
+    limit: int = Query(default=720, ge=64, le=1440),
+    simulations: int = Query(default=10000, ge=10000, le=50000),
+    horizon_periods: int = Query(default=365, ge=1, le=5000),
+):
+    """Run at least 10,000 empirical block-bootstrap simulations."""
+    try:
+        return get_agent().research_lab.monte_carlo_market(
+            market,
+            interval=interval,
+            strategy=strategy,
+            limit=limit,
+            simulations=simulations,
+            horizon_periods=horizon_periods,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.get("/api/research/full-report", tags=["research"])
+def research_full_report(
+    market: str = Query(default="BTC-EUR", min_length=3, max_length=30),
+    interval: str = Query(default="1h", min_length=2, max_length=4),
+    strategy: str = Query(default="multi_factor", min_length=3, max_length=30),
+    limit: int = Query(default=720, ge=180, le=1440),
+    simulations: int = Query(default=10000, ge=10000, le=50000),
+):
+    """Backtest, walk-forward, stress and Monte Carlo research in one report."""
+    try:
+        return get_agent().research_lab.full_report(
+            market,
+            interval=interval,
+            strategy=strategy,
+            limit=limit,
+            simulations=simulations,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
 @app.get("/api/execution/status", tags=["execution"])
 def execution_status():
     """Expose non-secret execution mode, gates and limits for the dashboard."""
