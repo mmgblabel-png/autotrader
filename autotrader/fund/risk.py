@@ -86,9 +86,13 @@ class FundRiskEngine:
         return max(0.0, self.gross_exposure_eur - self.risk_capital_available_eur)
 
     def restore_capital_floor_armed(self) -> None:
-        """Restore the latched floor after process restart from durable ledger state."""
+        """Restore the latched floor and its minimum high-water mark after restart."""
         if self.mandate.lock_floor_after_target_reached:
             self.state.capital_floor_armed = True
+            self.state.peak_nav_eur = max(
+                self.state.peak_nav_eur,
+                float(self.mandate.target_nav_eur),
+            )
 
     def restore_peak_nav(self, peak_nav_eur: float) -> None:
         """Restore a durable historical high-water mark without changing current NAV."""
