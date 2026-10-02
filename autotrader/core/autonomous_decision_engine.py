@@ -36,6 +36,13 @@ class AutonomousDecisionEngine:
             0.0, float(self.config.get("exposure_safety_buffer_eur", 0.25))
         )
         self.allow_non_eur_live = bool(self.config.get("allow_non_eur_live", False))
+        self.high_volatility_bps = max(
+            1.0, float(self.config.get("high_volatility_bps", 180.0))
+        )
+        self.high_volatility_size_multiplier = max(
+            0.10,
+            min(1.0, float(self.config.get("high_volatility_size_multiplier", 0.50))),
+        )
         self._last_switch: dict[str, float] = {}
 
     def _thresholds_for_market(self, market: str) -> tuple[float, float]:
@@ -234,6 +241,11 @@ class AutonomousDecisionEngine:
                 x for x in [base_allocation, max_order] if x > 0
             ) if base_allocation > 0 and max_order > 0 else max(base_allocation, max_order)
             suggested_eur = min(suggested_eur, hard_cap) if hard_cap > 0 else 0.0
+            volatility_pct = abs(float(best.get("volatility_pct") or 0.0)) if best else 0.0
+            volatility_bps = volatility_pct * 100.0
+            high_volatility = volatility_bps >= self.high_volatility_bps
+            if high_volatility and suggested_eur > 0:
+                suggested_eur *= self.high_volatility_size_multiplier
 
             open_local = bool(agent._om.open_orders(display))
             journal_state = (
@@ -431,6 +443,10 @@ class AutonomousDecisionEngine:
                 "liquidity_eur": round(liquidity_eur, 2),
                 "orderbook_imbalance_pct": round(float(best.get("orderbook_imbalance_pct") or 0.0), 4) if best else 0.0,
                 "expected_slippage_bps": round(expected_slippage_bps, 4),
+                "volatility_pct": round(volatility_pct, 6),
+                "volatility_bps": round(volatility_bps, 4),
+                "high_volatility": high_volatility,
+                "high_volatility_size_multiplier": self.high_volatility_size_multiplier,
                 "execution_quality_ok": execution_quality_ok,
                 "max_spread_bps": None if max_spread_bps == float("inf") else round(max_spread_bps, 4),
                 "min_liquidity_eur": round(min_liquidity_eur, 2),
