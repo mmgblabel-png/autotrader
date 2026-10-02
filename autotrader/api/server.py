@@ -789,6 +789,37 @@ def _manage_stale_bot_orders(app: FastAPI, agent: AutoTrader) -> dict[str, objec
     return result
 
 
+def _apply_strategy_evidence_gate(agent: AutoTrader) -> dict[str, object]:
+    """Block new entries for statistically weak live strategies; exits remain allowed."""
+    cfg = agent._config.get("live_evidence_gate", {}) or {}
+    if not bool(cfg.get("enabled", True)):
+        return {"enabled": False, "blocked": []}
+    min_exits = max(1, int(cfg.get("min_completed_exits", 4)))
+    min_net = float(cfg.get("minimum_net_pnl_eur", -0.10))
+    summary = agent.profit_engine.as_summary().get("by_strategy", {}) or {}
+    blocked = []
+    for strategy in agent._strategies.values():
+        row = summary.get(strategy.name, {}) or {}
+        exits = int(row.get("wins") or 0) + int(row.get("losses") or 0)
+        net = float(row.get("net_pnl") or 0.0)
+        strategy._config["_evidence_completed_exits"] = exits
+        strategy._config["_evidence_net_pnl_eur"] = net
+        if exits >= min_exits and net < min_net:
+            strategy._config["_autonomous_entry_allowed"] = False
+            strategy._config["_autonomous_entry_reason"] = "live_evidence_gate"
+            blocked.append({
+                "strategy": strategy.name,
+                "completed_exits": exits,
+                "net_pnl_eur": round(net, 4),
+            })
+    return {
+        "enabled": True,
+        "min_completed_exits": min_exits,
+        "minimum_net_pnl_eur": min_net,
+        "blocked": blocked,
+    }
+
+
 async def _tick_loop(app: FastAPI, agent: AutoTrader) -> None:
     """Drive all active strategies for the lifetime of the API process.
 
@@ -814,6 +845,7 @@ async def _tick_loop(app: FastAPI, agent: AutoTrader) -> None:
                             plan=plan,
                             armed=bool(getattr(app.state, "live_armed", False)),
                         )
+                        app.state.live_evidence_gate = _apply_strategy_evidence_gate(agent)
                         _manage_stale_bot_orders(app, agent)
                     except Exception as auto_exc:
                         app.state.autonomous_apply = {

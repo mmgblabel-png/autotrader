@@ -154,6 +154,11 @@ execution_v2:
   max_order_age_seconds: 900
   filled_order_delay_seconds: 75
 
+live_evidence_gate:
+  enabled: true
+  min_completed_exits: 4
+  minimum_net_pnl_eur: -0.10
+
 calculated_risk:
   enabled: true
   profile: balanced_aggressive
@@ -263,13 +268,13 @@ strategies:
   market_maker:
     enabled: true
     live_capable: true
-    allocation_eur: 18
+    allocation_eur: 20
     max_order_eur: 12
     max_open_orders: 1
     exclusive_symbol: true
     symbol: BTC-EUR
     exchange: bitvavo
-    order_value_eur: 6.0
+    order_value_eur: 8.0
     order_size: 0.0001
     min_order_size: 0.00000001
     max_order_size: 1000000000
@@ -316,13 +321,13 @@ strategies:
   grid:
     enabled: true
     live_capable: true
-    allocation_eur: 10
+    allocation_eur: 15
     max_order_eur: 9
     max_open_orders: 1
     exclusive_symbol: true
     symbol: SOL-EUR
     exchange: bitvavo
-    order_value_eur: 6.0
+    order_value_eur: 8.0
     order_size: 0.0
     entry_offset_pct: 0.60
     exit_markup_pct: 0.80
@@ -338,13 +343,13 @@ strategies:
     enabled: true
     live_capable: true
     strategy_name: GridRunnerETH
-    allocation_eur: 10
+    allocation_eur: 15
     max_order_eur: 9
     max_open_orders: 1
     exclusive_symbol: true
     symbol: ETH-EUR
     exchange: bitvavo
-    order_value_eur: 6.0
+    order_value_eur: 8.0
     order_size: 0.0
     entry_offset_pct: 0.60
     exit_markup_pct: 0.80
@@ -358,8 +363,8 @@ strategies:
 
   sniper:
     enabled: true
-    live_capable: true
-    allocation_eur: 12
+    live_capable: false
+    allocation_eur: 0
     max_order_eur: 10
     max_open_orders: 1
     exclusive_symbol: true
