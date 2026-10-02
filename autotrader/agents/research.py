@@ -136,6 +136,7 @@ class MarketResearchAgent:
                 ),
                 "snapshot_age_seconds": age,
                 "source": "opportunity_router",
+                "dedupe_bucket": int(timestamp),
             },
         ).validated()
 
@@ -199,6 +200,7 @@ class TrendDetectionAgent:
                     row.get("volatility_pct"), 0.0, 1000.0
                 ),
                 "source": "opportunity_router",
+                "dedupe_bucket": int(timestamp),
             },
         ).validated()
 
@@ -423,7 +425,7 @@ class ResearchAgentSuite:
     ) -> list[AgentSignal]:
         rankings = dict(router_payload.get("rankings") or {})
         updated_at = float(router_payload.get("updated_at") or time.time())
-        timestamp = float(int(updated_at // 60) * 60)
+        timestamp = float(int(updated_at // 900) * 900)
         strategy_map = {
             "market_maker": "MarketMaker",
             "grid": "GridRunner",
