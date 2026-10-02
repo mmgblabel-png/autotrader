@@ -53,6 +53,7 @@ adaptive_learning:
   lookback: 24
   evaluation_window: 6
   change_cooldown: 4
+  rollback_cooldown_exits: 12
   good_winrate_pct: 62.0
   max_regression_pct: 20.0
 
