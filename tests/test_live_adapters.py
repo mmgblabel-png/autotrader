@@ -8,6 +8,15 @@ from autotrader.connectors.polymarket import PolymarketAdapter, PolymarketError
 from autotrader.connectors.exchange import CONNECTOR_REGISTRY, get_connector
 
 
+
+class _AcceptingGateway:
+    class _Decision:
+        accepted = True
+        reason = "accepted"
+
+    def evaluate(self, request, *, armed=False):
+        return self._Decision()
+
 def test_binance_adapter_defaults_to_shadow(monkeypatch):
     monkeypatch.delenv("BINANCE_API_KEY", raising=False)
     monkeypatch.delenv("BINANCE_API_SECRET", raising=False)
@@ -63,7 +72,7 @@ def test_binance_live_requires_venue_specific_enable(monkeypatch):
     monkeypatch.setenv("EMERGENCY_STOP", "false")
     monkeypatch.setenv("LIVE_TRADING_CONFIRMATION", "I_UNDERSTAND_LIVE_ORDERS")
     monkeypatch.setenv("BITVAVO_LIVE_TRADING", "true")
-    adapter = BinanceSpotAdapter()
+    adapter = BinanceSpotAdapter(gateway=_AcceptingGateway())
     monkeypatch.setattr(adapter, "ticker_price", lambda symbol: Decimal("100"))
     with pytest.raises(BinanceSpotError, match="explicitly enabled"):
         adapter.place_market_order("BTCUSDT", "BUY", Decimal("0.01"), "binance-explicit-gate-123456")
@@ -78,7 +87,7 @@ def test_polymarket_live_requires_venue_specific_enable(monkeypatch):
     monkeypatch.setenv("EMERGENCY_STOP", "false")
     monkeypatch.setenv("LIVE_TRADING_CONFIRMATION", "I_UNDERSTAND_LIVE_ORDERS")
     monkeypatch.setenv("BITVAVO_LIVE_TRADING", "true")
-    adapter = PolymarketAdapter()
+    adapter = PolymarketAdapter(gateway=_AcceptingGateway())
     with pytest.raises(PolymarketError, match="explicitly enabled"):
         asyncio.run(adapter.place_market_order(
             "token-123", "BUY", Decimal("5"), Decimal("0.50"), "poly-explicit-gate-123456"
