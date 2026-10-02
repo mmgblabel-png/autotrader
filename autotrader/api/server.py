@@ -1925,7 +1925,10 @@ def live_preflight():
 
 
 @app.post("/api/live/activate", tags=["execution"])
-def activate_live(payload: dict = Body(...)):
+def activate_live(
+    payload: dict = Body(...),
+    _: None = Depends(_require_control_token),
+):
     if str(payload.get("confirmation", "")) != "I_UNDERSTAND_LIVE_ORDERS":
         raise HTTPException(status_code=400, detail="Explicit live-order confirmation is required.")
     check = live_readiness()
@@ -1936,7 +1939,7 @@ def activate_live(payload: dict = Body(...)):
 
 
 @app.post("/api/live/deactivate", tags=["execution"])
-def deactivate_live():
+def deactivate_live(_: None = Depends(_require_control_token)):
     app.state.live_armed = False
     app.state.execution_v2_desired_state = {}
     try:
