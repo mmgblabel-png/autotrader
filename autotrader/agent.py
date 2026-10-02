@@ -21,6 +21,7 @@ from autotrader.core.profit_supervisor import ProfitSupervisor
 from autotrader.core.risk_manager import RiskManager, StrategyRiskConfig
 from autotrader.core.strategy_allocator import StrategyAllocator
 from autotrader.fund.engine import HedgeFundEngine
+from autotrader.fund.reporting import FundReportingService
 from autotrader.research.lab import ResearchLab
 from autotrader.strategies.arbitrage_hunter import ArbitrageHunter
 from autotrader.strategies.base import BaseStrategy
@@ -561,6 +562,13 @@ class AutoTrader:
             "risk": self._rm.status(),
             "fund": self._fund.status(),
         }
+
+    def fund_report(self) -> dict[str, object]:
+        return FundReportingService.build(
+            fund_status=self._fund.status(),
+            profit_summary=self._profit_supervisor.status(),
+            agent_status=self.research_agent_status(),
+        )
 
     def pnl(self) -> dict:
         return self._pe.as_summary()
