@@ -322,7 +322,7 @@ def test_shadow_promotion_requires_profit_factor_and_cost_stress(tmp_path: Path)
     assert row["stressed_net_pnl_eur"] > 0
     assert row["promotion_ready"] is True
 
-    engine._states["mean_reversion"].outcomes = [0.11, 0.11, 0.11, -0.30]
+    engine._states["mean_reversion"].outcomes = [0.10, 0.10, 0.10, -0.30]
     engine._states["mean_reversion"].realized_net_pnl_eur = 0.20
     row = engine.status({"mean_reversion": cfg})["strategies"][0]
     assert row["profit_factor"] < 1.10
