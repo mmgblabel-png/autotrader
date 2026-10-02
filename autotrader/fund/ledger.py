@@ -186,6 +186,36 @@ class FundLedger:
             "head_hash": expected_prev,
         }
 
+    def has_event_type(self, event_type: str) -> bool:
+        """Return whether at least one event of the requested type exists."""
+        key = str(event_type).strip()
+        if not key:
+            return False
+        with self._lock, self._connect() as conn:
+            row = conn.execute(
+                "SELECT 1 FROM fund_events WHERE event_type = ? LIMIT 1",
+                (key,),
+            ).fetchone()
+        return row is not None
+
+    def max_nav_eur(self) -> float:
+        """Return the highest durable NAV snapshot, ignoring malformed payloads."""
+        maximum = 0.0
+        with self._lock, self._connect() as conn:
+            rows = conn.execute(
+                "SELECT payload_json FROM fund_events WHERE event_type = ? ORDER BY seq ASC",
+                ("nav_snapshot",),
+            ).fetchall()
+        for row in rows:
+            try:
+                payload = json.loads(str(row["payload_json"]))
+                value = float(payload.get("nav_eur") or 0.0)
+            except (TypeError, ValueError, json.JSONDecodeError):
+                continue
+            if value > maximum:
+                maximum = value
+        return maximum
+
     def tail(self, limit: int = 25) -> list[dict[str, object]]:
         safe_limit = max(1, min(500, int(limit)))
         with self._lock, self._connect() as conn:
