@@ -50,7 +50,7 @@ class FundMandate:
             max_portfolio_drawdown_pct=float(raw.get("max_portfolio_drawdown_pct", 8.0)),
             max_daily_loss_pct=float(raw.get("max_daily_loss_pct", 2.0)),
             max_single_trade_pct=float(raw.get("max_single_trade_pct", 20.0)),
-            max_gross_exposure_pct=float(raw.get("max_gross_exposure_pct", 100.0)),
+            max_gross_exposure_pct=float(raw.get("max_gross_exposure_pct", cls.max_gross_exposure_pct)),
             max_strategy_exposure_pct=float(raw.get("max_strategy_exposure_pct", 40.0)),
             max_asset_exposure_pct=float(raw.get("max_asset_exposure_pct", 35.0)),
             min_cash_reserve_pct=float(raw.get("min_cash_reserve_pct", 15.0)),
