@@ -1716,6 +1716,12 @@ def risk_status():
     return status
 
 
+@app.get("/api/fund/status", tags=["fund"])
+def fund_status() -> dict[str, object]:
+    """Return fund mandate, portfolio risk, research signals and ledger integrity."""
+    return get_agent().fund.status()
+
+
 @app.get("/api/execution/status", tags=["execution"])
 def execution_status():
     """Expose non-secret execution mode, gates and limits for the dashboard."""
@@ -2230,6 +2236,7 @@ async def dashboard_snapshot() -> dict[str, object]:
         ("health", health, (), {}),
         ("bitvavo_security", bitvavo_security_status, (), {}),
         ("risk_status", risk_status, (), {}),
+        ("fund", fund_status, (), {}),
         ("markets_overview", markets_overview, (), {}),
         ("strategies", strategies, (), {}),
         ("bitvavo_live_state", bitvavo_live_state, (), {}),
