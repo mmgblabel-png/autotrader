@@ -1739,14 +1739,10 @@ def fund_status() -> dict[str, object]:
 def fund_agents() -> dict[str, object]:
     """Expose specialized research-agent contracts and current signal buffer."""
     agent = get_agent()
-    descriptors = agent.ingest_router_research(
-        app.state.opportunity_router.rankings()
-    )
     return {
-        **descriptors,
+        **agent.research_agent_status(),
+        "last_ingestion": getattr(app.state, "ai_research_status", {}),
         "fund_research": agent.fund.status().get("research", {}),
-        "execution_authority": False,
-        "orders_can_be_sent_by_research_agents": False,
     }
 
 
