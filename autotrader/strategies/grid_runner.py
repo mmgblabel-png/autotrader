@@ -121,8 +121,15 @@ class GridRunner(BaseStrategy):
             return
 
         if bot_inventory > 0:
-            sell_size = min(size, bot_inventory, available_base if live_snapshot else bot_inventory)
+            available_inventory = min(
+                bot_inventory,
+                available_base if live_snapshot else bot_inventory,
+            )
             minimum_sell = self.minimum_tradable_base(current_price)
+            desired_sell_size = size
+            if minimum_sell > 0 and available_inventory >= minimum_sell:
+                desired_sell_size = max(desired_sell_size, minimum_sell)
+            sell_size = min(desired_sell_size, available_inventory)
             if sell_size > 0 and (minimum_sell <= 0 or sell_size >= minimum_sell):
                 self.clear_dust_inventory()
                 min_profit_exit_price = max(0.0, float(cfg.get("_min_profit_exit_price", 0.0)))
@@ -145,11 +152,11 @@ class GridRunner(BaseStrategy):
                 ))
                 log.info("GRID SELL %s %.8f @ %.8f", symbol, sell_size, price)
                 return
-            self.mark_dust_inventory(bot_inventory, current_price)
+            self.mark_dust_inventory(available_inventory, current_price)
             log.info(
-                "GRID dust ignored: %s inventory %.8f below tradable minimum %.8f.",
+                "GRID dust ignored: %s available inventory %.8f below tradable minimum %.8f.",
                 symbol,
-                bot_inventory,
+                available_inventory,
                 minimum_sell,
             )
         else:
