@@ -99,16 +99,16 @@ class FundRiskEngine:
             )
 
     def restore_peak_nav(self, peak_nav_eur: float) -> None:
-        """Restore a durable historical high-water mark without changing current NAV."""
+        """Restore a durable high-water mark without arming the protected floor.
+
+        The one-way floor latch is restored only from its explicit ledger event,
+        never merely from historical NAV rows whose provenance may predate the
+        verified-live-NAV control.
+        """
         value = float(peak_nav_eur)
         if not math.isfinite(value) or value <= 0:
             return
         self.state.peak_nav_eur = max(self.state.peak_nav_eur, value)
-        if (
-            self.mandate.lock_floor_after_target_reached
-            and self.state.peak_nav_eur >= self.mandate.target_nav_eur
-        ):
-            self.state.capital_floor_armed = True
 
     def record_nav(
         self,
@@ -124,15 +124,16 @@ class FundRiskEngine:
         self._roll_day_if_needed()
         was_armed = self.state.capital_floor_armed
         self.state.current_nav_eur = value
-        self.state.peak_nav_eur = max(self.state.peak_nav_eur, value)
         self.state.nav_verified = bool(verified)
         self.state.nav_source = str(source).strip() or "unknown"
         self.state.nav_updated_at = time.time()
-        if (
-            self.mandate.lock_floor_after_target_reached
-            and self.state.peak_nav_eur >= self.mandate.target_nav_eur
-        ):
-            self.state.capital_floor_armed = True
+        if verified:
+            self.state.peak_nav_eur = max(self.state.peak_nav_eur, value)
+            if (
+                self.mandate.lock_floor_after_target_reached
+                and self.state.peak_nav_eur >= self.mandate.target_nav_eur
+            ):
+                self.state.capital_floor_armed = True
         return self.state.capital_floor_armed and not was_armed
 
     def mark_nav_unverified(self, source: str = "unverified") -> None:
