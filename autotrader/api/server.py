@@ -689,23 +689,28 @@ def _manage_stale_bot_orders(app: FastAPI, agent: AutoTrader) -> dict[str, objec
             }
         else:
             decision = None
-        try:
-            book_raw = agent._bitvavo.ticker_book(market)
-            book = {
-                "bid": float(book_raw.get("bid") or 0.0),
-                "ask": float(book_raw.get("ask") or 0.0),
-            }
-        except Exception:
-            continue
-
         min_exit = 0.0
-        if side == "sell":
+        if protective_override:
+            # Emergency risk reduction must not depend on another market-data
+            # or profitability read before an old managed order can be canceled.
+            book = {"bid": 0.0, "ask": 0.0}
+        else:
             try:
-                mark = (book["bid"] + book["ask"]) / 2.0 if book["bid"] > 0 and book["ask"] > 0 else float(agent._bitvavo.ticker_price(market))
-                snap = _strategy_profit_snapshot(agent, market, strategy_name, mark)
-                min_exit = float(snap.get("min_profit_exit_price") or 0.0)
+                book_raw = agent._bitvavo.ticker_book(market)
+                book = {
+                    "bid": float(book_raw.get("bid") or 0.0),
+                    "ask": float(book_raw.get("ask") or 0.0),
+                }
             except Exception:
                 continue
+
+            if side == "sell":
+                try:
+                    mark = (book["bid"] + book["ask"]) / 2.0 if book["bid"] > 0 and book["ask"] > 0 else float(agent._bitvavo.ticker_price(market))
+                    snap = _strategy_profit_snapshot(agent, market, strategy_name, mark)
+                    min_exit = float(snap.get("min_profit_exit_price") or 0.0)
+                except Exception:
+                    continue
 
         if decision is None:
             decision = _execution_v2_cancel_decision(
