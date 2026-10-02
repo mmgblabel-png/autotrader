@@ -29,6 +29,28 @@ DASHBOARD_HTML = r'''<!doctype html>
 <div id="notice" class="notice">Live Trading blijft fail-closed. De knop wordt alleen actief wanneer alle server-side gates en Bitvavo-credentials aantoonbaar klaarstaan.</div><div class="hero-strip"><div class="card"><div class="hero-label">Systeemstatus</div><div class="hero-value"><span id="systemstatus" class="green">ONLINE</span></div><div class="sub">Bitvavo + Coinbase connectivity, risk gates en learning runtime</div></div><div class="card"><div class="hero-label">Coinbase API</div><div id="coinbasehero" class="hero-value">—</div><div class="sub">Authenticated Advanced Trade</div></div><div class="card"><div class="hero-label">Arbitrage scanner</div><div id="arbhero" class="hero-value">—</div><div class="sub">Shadow · netto edge na kosten</div></div></div>
 <section class="section"><div class="card" style="margin-bottom:14px"><h2>Live Trading</h2><div class="metric"><span>Readiness</span><b id="liveready">controleren…</b></div><div id="livecheck" class="sub" style="margin-top:10px">Geen live orders worden geplaatst door deze statuscontrole.</div><div style="margin-top:12px"><button class="secondary" onclick="groupStrategyControl('start-live')">Start alle live bots</button><button class="secondary" onclick="groupStrategyControl('stop-live')" style="margin-left:8px">Stop alle live bots</button><button id="liveaction" onclick="activateLive()" disabled style="margin-left:8px">Live Trading activeren</button><button id="livestop" class="secondary" onclick="deactivateLive()" style="display:none;margin-left:8px">Stop Live Trading</button></div></div></section>
 <section class="section"><div class="grid"><div class="card"><div id="eurlabel" class="label">Portfolio waarde EUR</div><div id="eur" class="value">—</div><div id="eurdelta" class="sub">—</div></div><div class="card"><div id="btclabel" class="label">Portfolio waarde BTC</div><div id="btc" class="value blue">—</div><div id="btcrate" class="sub">—</div></div><div class="card"><div class="label">PnL</div><div id="pnl" class="value">—</div><div id="pnlpct" class="sub">—</div></div><div class="card"><div class="label">Drawdown</div><div id="dd" class="value amber">—</div><div class="sub">Vanaf lokale equity-piek</div></div></div></section>
+<div class="section-title"><h3>Hedge Fund Command Center</h3><div class="line"></div><span id="fundbadge" class="badge">FUND CORE</span></div>
+<section class="section">
+  <div class="card control-card">
+    <div class="control-head">
+      <div><div class="eyebrow">Capital preservation mandate</div><div class="control-title">Fund Core · €25.000 Protected Capital</div><div id="fundnote" class="control-sub">Fund NAV, high-water mark, risk capital en ledger-integriteit.</div></div>
+      <span id="fundmode" class="badge ok">GROEI</span>
+    </div>
+    <div class="order-kpis">
+      <div class="order-kpi"><div class="k">Fund NAV</div><div id="fundnav" class="v">—</div></div>
+      <div class="order-kpi"><div class="k">Doel</div><div id="fundtarget" class="v blue">€25.000,00</div></div>
+      <div class="order-kpi"><div class="k">Drawdown</div><div id="funddrawdown" class="v amber">—</div></div>
+      <div class="order-kpi"><div class="k">Risk capital beschikbaar</div><div id="fundriskcapital" class="v">—</div></div>
+    </div>
+    <div class="bar"><i id="fundprogressbar" style="width:0%"></i></div>
+    <div class="metric" style="margin-top:12px"><span>Target progress</span><b id="fundprogress">—</b></div>
+    <div class="metric"><span>Protected floor</span><b id="fundfloor">—</b></div>
+    <div class="metric"><span>Protected zone incl. buffer</span><b id="fundzone">—</b></div>
+    <div class="metric"><span>Gross exposure</span><b id="fundgross">—</b></div>
+    <div class="metric"><span>Required deleveraging</span><b id="funddelever">—</b></div>
+    <div class="metric"><span>Ledger integrity</span><b id="fundledger">—</b></div>
+  </div>
+</section>
 <section class="section"><div class="card control-card"><div class="control-head"><div><div class="eyebrow">Execution monitor</div><div class="control-title">Order Control Center</div><div class="control-sub">Direct zicht op open Bitvavo-orders én iedere recente bot-order uit het duurzame journal.</div></div><span class="badge live">READ ONLY · AUTO REFRESH</span></div><div class="order-kpis"><div class="order-kpi"><div class="k">Nu open</div><div id="orderOpenCount" class="v blue">0</div></div><div class="order-kpi"><div class="k">Recent gevuld</div><div id="orderFilledCount" class="v green">0</div></div><div class="order-kpi"><div class="k">Geannuleerd</div><div id="orderCanceledCount" class="v">0</div></div><div class="order-kpi"><div class="k">Fouten laatste 3u</div><div id="orderErrorCount" class="v">0</div></div></div><div class="order-layout"><div><div class="exchange-head"><div><div class="exchange-name">Open orders</div><div class="mini">Rechtstreeks van Bitvavo</div></div><span id="openOrderBadge" class="badge">0 open</span></div><div class="table-wrap"><table class="table compact"><thead><tr><th>Markt</th><th>Side</th><th>Qty</th><th>Prijs</th><th>Waarde</th><th>Status</th></tr></thead><tbody id="liveorders"><tr><td colspan="6" class="sub">Laden…</td></tr></tbody></table></div><div id="liveordersnote" class="sub" style="margin-top:9px">Read-only uit Bitvavo.</div></div><div><div class="exchange-head"><div><div class="exchange-name">Alle recente orders</div><div class="mini">Nieuwste eerst · order-ID's en secrets bewust verborgen</div></div><span id="activityBadge" class="badge ok">journal</span></div><div class="table-wrap"><table class="table compact"><thead><tr><th>Tijd</th><th>Bot</th><th>Markt</th><th>Side</th><th>Type</th><th>Qty</th><th>Prijs</th><th>Fills</th><th>Status</th></tr></thead><tbody id="orderactivity"><tr><td colspan="9" class="sub">Orderhistorie laden…</td></tr></tbody></table></div><div id="orderactivitynote" class="sub" style="margin-top:9px">Duurzame journal-history.</div></div></div></div></section>
 <section class="section">
   <div class="card">
@@ -327,6 +349,34 @@ function renderRiskLab(d){
  $('risklabdd').textContent=Number(d.max_drawdown_pct||0).toFixed(2)+'%';
  $('risklabnote').textContent='Trades '+(d.completed_trades||0)+' · winrate '+Number(d.winrate_pct||0).toFixed(1)+'% · martingale-stap max '+(d.max_martingale_steps||0)+' · live_capable: '+(d.live_capable?'JA':'nee');
 }
+function renderFund(d){
+ let r=d.risk||{},l=d.ledger||{},p=Math.max(0,Math.min(100,Number(r.target_progress_pct||0)));
+ $('fundnav').textContent=money(r.nav_eur||0);
+ $('fundtarget').textContent=money(r.target_nav_eur||25000);
+ $('funddrawdown').textContent=Number(r.drawdown_pct||0).toFixed(2)+'%';
+ $('funddrawdown').className='v '+(Number(r.drawdown_pct||0)>4?'red':Number(r.drawdown_pct||0)>2?'amber':'green');
+ $('fundriskcapital').textContent=money(r.risk_capital_available_eur||0);
+ $('fundriskcapital').className='v '+(Number(r.risk_capital_available_eur||0)>0?'green':'amber');
+ $('fundprogress').textContent=p.toFixed(3)+'%';
+ $('fundprogressbar').style.width=p+'%';
+ $('fundfloor').textContent=(r.capital_floor_armed?'ARMED · ':'NIET GEACTIVEERD · ')+money(r.protected_capital_floor_eur||25000);
+ $('fundzone').textContent=money(r.protected_zone_eur||0);
+ $('fundgross').textContent=money(r.gross_exposure_eur||0)+' · '+Number(r.gross_exposure_pct||0).toFixed(2)+'%';
+ $('funddelever').textContent=money(r.required_deleveraging_eur||0);
+ $('funddelever').className=Number(r.required_deleveraging_eur||0)>0?'red':'green';
+ $('fundledger').textContent=l.valid===true?'VALID · '+Number(l.event_count||0)+' events':'CONTROLEREN';
+ $('fundledger').className=l.valid===true?'green':'red';
+ let preservation=!!r.capital_preservation_mode,armed=!!r.capital_floor_armed,reached=!!r.target_reached;
+ $('fundmode').textContent=preservation?'CAPITAL PRESERVATION':armed?'FLOOR ARMED':reached?'TARGET REACHED':'GROEI';
+ $('fundmode').className='badge '+(preservation?'':armed?'ok':'live');
+ $('fundbadge').textContent=armed?'€25K FLOOR ARMED':'FUND CORE';
+ $('fundbadge').className='badge '+(armed?'ok':'');
+ $('fundnote').textContent=preservation
+   ?'Nieuwe risicoverhogende orders geblokkeerd; alleen risicoverlaging toegestaan totdat exposure weer binnen surplus capital valt.'
+   :armed
+     ?'€25.000 floor is permanent gelatcht; nieuwe exposure mag alleen uit vermogen boven de beschermde zone komen.'
+     :'Groei naar €25.000 onder normale fund-risklimieten; het target verhoogt nooit automatisch het risico.';
+}
 function renderRisk(d){let pos=d.open_positions||d.positions||[];if(!Array.isArray(pos))pos=[];$('positions').innerHTML=pos.length?pos.map(x=>`<tr><td>${esc(x.symbol||x.market)}</td><td>${esc(x.side)}</td><td>${money(x.notional_eur??x.notional)}</td><td>${money(x.pnl_eur??x.pnl)}</td></tr>`).join(''):'<tr><td colspan="4" class="sub">Geen open posities</td></tr>'}
 function renderProfit(d){
  let t=d.totals||{},rows=d.strategies||[],econ=Number(t.economic_pnl_eur||0),real=Number(t.realized_net_pnl_eur||0),unreal=Number(t.unrealized_net_pnl_eur||0);
@@ -438,13 +488,13 @@ async function refresh(){
   let section=(key)=>{let x=sections[key];return x&&x.ok?{status:'fulfilled',value:x.data}:{status:'rejected',reason:Error((x&&x.error)||'niet beschikbaar')}};
   let entries=[
    section('paper_report'),section('execution_status'),section('pnl_summary'),section('health'),section('bitvavo_security'),
-   section('risk_status'),section('markets_overview'),section('strategies'),section('bitvavo_live_state'),section('live_pnl'),
+   section('risk_status'),section('fund'),section('markets_overview'),section('strategies'),section('bitvavo_live_state'),section('live_pnl'),
    section('coinbase_security'),section('coinbase_live_state'),section('arbitrage'),section('shadow'),section('allocator'),
    section('orders'),section('execution_v2'),section('opportunities'),section('fee_efficiency'),section('portfolio_goal'),
    section('binance_reference'),section('autonomy'),section('risk_lab'),section('three_hour'),section('fees_live'),
    section('universe_summary'),section('live_readiness')
   ];
-  let [r,e,s,h,f,k,m,a,v,p,cb,cbb,arb,sh,al,oa,ev2,op,fe,goal,bref,auto,rl,threeh,fr,uni,lr]=entries;
+  let [r,e,s,h,f,k,fund,m,a,v,p,cb,cbb,arb,sh,al,oa,ev2,op,fe,goal,bref,auto,rl,threeh,fr,uni,lr]=entries;
   let fail=(entry,label)=>{if(entry.status==='rejected')setSectionError(label,entry.reason)};
   if(r.status==='fulfilled')renderReport(r.value);else fail(r,'Portfolio');
   if(e.status==='fulfilled')renderExec(e.value);else fail(e,'Execution');
@@ -452,6 +502,7 @@ async function refresh(){
   if(h.status==='fulfilled'){$('ticker').textContent=h.value.runtime?.ticker_running?'actief':'gestopt';$('updated').textContent=new Date().toLocaleTimeString();$('healthbar').style.width=h.value.runtime?.last_tick_error?'25%':'100%'}else fail(h,'Runtime');
   if(f.status==='fulfilled')renderBitvavo(f.value,e.status==='fulfilled'?e.value:{});else fail(f,'Bitvavo');
   if(k.status==='fulfilled')renderRisk(k.value);else fail(k,'Risk');
+  if(fund.status==='fulfilled')renderFund(fund.value);else fail(fund,'Fund Core');
   if(m.status==='fulfilled')renderMarkets(m.value);else fail(m,'Markten');
   if(a.status==='fulfilled')renderAgents(a.value);else fail(a,'Agents');
   if(v.status==='fulfilled')renderLiveState(v.value);else fail(v,'Open orders');
