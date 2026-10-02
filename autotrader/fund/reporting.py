@@ -25,6 +25,13 @@ class FundReportingService:
         research = dict(fund_status.get("research") or {})
         profit = dict(profit_summary or {})
         totals = dict(profit.get("totals") or {})
+        if not totals:
+            totals = {
+                "realized_net_pnl_eur": profit.get("total_pnl"),
+                "economic_pnl_eur": profit.get("total_pnl"),
+                "total_fees_eur": profit.get("total_fees"),
+                "trade_count": profit.get("trade_count"),
+            }
         agents = dict((agent_status or {}).get("agents") or {})
 
         return {
