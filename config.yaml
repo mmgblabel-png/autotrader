@@ -134,6 +134,8 @@ execution_v2:
   apply_live: true
   stale_after_seconds: 90
   manage_interval_seconds: 15
+  cancel_retry_seconds: 60
+  auth_cancel_retry_seconds: 900
   min_reprice_move_bps: 4.0
   order_refresh_tolerance_bps: 4.0
   max_order_age_seconds: 300
