@@ -55,6 +55,9 @@ class AutoTrader:
         self._setup_risk()
         self._is_live_armed = lambda: bool(getattr(__import__('autotrader.api.server', fromlist=['app']).app.state, 'live_armed', False))
         self._bitvavo = BitvavoAdapter(is_armed=self._is_live_armed)
+        self._live_fund_nav_eur: float | None = None
+        self._live_fund_nav_updated_at = 0.0
+        self._live_fund_nav_unpriced_assets: list[str] = []
         self._profit_supervisor = ProfitSupervisor(
             self._bitvavo.journal,
             self._config.get("profit_policy", {}),
@@ -192,42 +195,150 @@ class AutoTrader:
                         realized_net_pnl_delta_eur=float(realized_net_pnl_delta),
                         fill_id=outcome_key,
                     )
-                    nav = max(
-                        0.01,
-                        self._fund.mandate.initial_nav_eur
-                        + float(self._pe.as_summary().get("total_pnl", 0.0)),
-                    )
-                    self._fund.record_nav(
-                        nav,
-                        source="profit_engine_after_fill",
-                        event_id=f"nav:{outcome_key}",
-                    )
+                    if os.getenv("EXECUTION_MODE", "paper").strip().lower() == "live":
+                        # A fill changes exchange balances. Do not reuse the
+                        # pre-fill account NAV as verified capital for another
+                        # entry; wait for the next private balance refresh.
+                        self._live_fund_nav_updated_at = 0.0
+                        self._fund.mark_nav_unverified("awaiting_post_fill_balance_refresh")
+                    else:
+                        nav = max(
+                            0.01,
+                            self._fund.mandate.initial_nav_eur
+                            + float(self._pe.as_summary().get("total_pnl", 0.0)),
+                        )
+                        self._fund.record_nav(
+                            nav,
+                            source="profit_engine_after_fill",
+                            event_id=f"nav:{outcome_key}",
+                            verified=True,
+                        )
                 if result.get("changed"):
                     log.info("[%s] adaptive learning update: %s", strategy.name, result)
                 return
+    @staticmethod
+    def value_bitvavo_balances_eur(
+        balance_rows: list[dict],
+        ticker_books: dict[str, dict],
+    ) -> dict[str, object]:
+        """Conservatively value a Bitvavo account using executable EUR bids.
+
+        Both available and in-order balances count toward NAV. Non-EUR assets
+        are valued at the best EUR bid (liquidation side), never at an optimistic
+        mid/ask. Any positive asset without a valid direct EUR bid makes the
+        snapshot unverified so live entry risk fails closed.
+        """
+        nav = Decimal("0")
+        values: dict[str, float] = {}
+        unpriced: list[str] = []
+        for row in balance_rows:
+            if not isinstance(row, dict):
+                continue
+            asset = str(row.get("symbol") or "").upper().strip()
+            if not asset:
+                continue
+            try:
+                available = Decimal(str(row.get("available") or "0"))
+                in_order = Decimal(str(row.get("inOrder") or "0"))
+            except Exception:
+                unpriced.append(asset)
+                continue
+            quantity = available + in_order
+            if not quantity.is_finite() or quantity <= 0:
+                continue
+            if asset == "EUR":
+                value = quantity
+            else:
+                book = ticker_books.get(f"{asset}-EUR")
+                try:
+                    bid = Decimal(str((book or {}).get("bid") or "0"))
+                except Exception:
+                    bid = Decimal("0")
+                if not bid.is_finite() or bid <= 0:
+                    unpriced.append(asset)
+                    continue
+                value = quantity * bid
+            nav += value
+            values[asset] = float(value)
+
+        verified = nav.is_finite() and nav > 0 and not unpriced
+        return {
+            "nav_eur": float(nav) if nav.is_finite() else 0.0,
+            "verified": bool(verified),
+            "unpriced_assets": sorted(set(unpriced)),
+            "asset_values_eur": values,
+        }
+
+    def refresh_live_fund_nav_from_balances(
+        self,
+        balance_rows: list[dict],
+    ) -> dict[str, object]:
+        """Refresh Fund NAV from authenticated Bitvavo balances plus public bids."""
+        try:
+            books = self._bitvavo.ticker_books()
+            valuation = self.value_bitvavo_balances_eur(balance_rows, books)
+        except Exception as exc:
+            self._live_fund_nav_updated_at = 0.0
+            self._fund.mark_nav_unverified(
+                f"bitvavo_account_nav_error:{type(exc).__name__}"
+            )
+            raise
+
+        self._live_fund_nav_unpriced_assets = list(
+            valuation.get("unpriced_assets") or []
+        )
+        if not bool(valuation.get("verified")):
+            self._live_fund_nav_updated_at = 0.0
+            self._fund.mark_nav_unverified("bitvavo_account_nav_unverified")
+            return valuation
+
+        nav = float(valuation["nav_eur"])
+        self._live_fund_nav_eur = nav
+        self._live_fund_nav_updated_at = time.monotonic()
+        self._fund.refresh_nav(
+            nav,
+            source="bitvavo_account_liquidation_nav",
+            verified=True,
+        )
+        return valuation
+
     def refresh_fund_nav(self) -> float:
-        """Refresh fund NAV from mark-to-market economics before new entries are evaluated."""
+        """Refresh the risk NAV; live mode requires a fresh exchange-backed snapshot."""
         mode = os.getenv("EXECUTION_MODE", "paper").strip().lower()
-        economic_pnl = 0.0
-        used_live_snapshots = False
-
         if mode == "live":
-            for strategy in self._strategies.values():
-                snapshot = strategy._config.get("_profit_snapshot")
-                if isinstance(snapshot, dict):
-                    try:
-                        economic_pnl += float(snapshot.get("economic_pnl_eur") or 0.0)
-                        used_live_snapshots = True
-                    except (TypeError, ValueError):
-                        continue
+            max_age = float(self._fund.mandate.live_nav_max_age_seconds)
+            age = (
+                time.monotonic() - self._live_fund_nav_updated_at
+                if self._live_fund_nav_updated_at > 0
+                else float("inf")
+            )
+            if (
+                self._live_fund_nav_eur is not None
+                and self._live_fund_nav_eur > 0
+                and age <= max_age
+                and not self._live_fund_nav_unpriced_assets
+            ):
+                self._fund.refresh_nav(
+                    self._live_fund_nav_eur,
+                    source="bitvavo_account_liquidation_nav",
+                    verified=True,
+                )
+                return self._live_fund_nav_eur
 
-        if not used_live_snapshots:
-            for stats in self._pe.summary().values():
-                economic_pnl += float(stats.get("net_pnl") or 0.0)
-                economic_pnl += float(stats.get("unrealized_pnl") or 0.0)
+            self._fund.mark_nav_unverified("bitvavo_account_nav_missing_or_stale")
+            return float(self._fund.risk.state.current_nav_eur)
+
+        economic_pnl = 0.0
+        for stats in self._pe.summary().values():
+            economic_pnl += float(stats.get("net_pnl") or 0.0)
+            economic_pnl += float(stats.get("unrealized_pnl") or 0.0)
 
         nav = max(0.01, self._fund.mandate.initial_nav_eur + economic_pnl)
-        self._fund.refresh_nav(nav, source="runtime_mark_to_market")
+        self._fund.refresh_nav(
+            nav,
+            source="runtime_mark_to_market",
+            verified=True,
+        )
         return nav
 
     def tick_all(self) -> None:
@@ -341,7 +452,13 @@ class AutoTrader:
             self._fund.mandate.initial_nav_eur
             + float(self._pe.as_summary().get("total_pnl", 0.0)),
         )
-        self._fund.refresh_nav(restored_nav, source="journal_restore")
+        self._fund.refresh_nav(
+            restored_nav,
+            source="journal_restore",
+            verified=(
+                os.getenv("EXECUTION_MODE", "paper").strip().lower() != "live"
+            ),
+        )
 
     def _setup_risk(self) -> None:
         for key, strat_cfg in self._config.get("strategies", {}).items():
