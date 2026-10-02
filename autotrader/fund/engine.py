@@ -65,9 +65,8 @@ class HedgeFundEngine:
 
     def ingest_signal(self, signal: AgentSignal) -> None:
         validated = signal.validated()
-        self._signals.append(validated)
         event_id = self._signal_event_id(validated)
-        self.ledger.append(
+        result = self.ledger.append(
             "agent_signal",
             {
                 "agent": validated.agent,
@@ -82,6 +81,8 @@ class HedgeFundEngine:
             event_id=event_id,
             timestamp=validated.timestamp,
         )
+        if not bool(result.get("duplicate")):
+            self._signals.append(validated)
 
     def blended_signals(self, *, now: float | None = None) -> list[dict[str, object]]:
         rows = self.blender.blend(self._signals, now=now)
