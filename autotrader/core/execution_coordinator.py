@@ -206,6 +206,18 @@ class ExecutionCoordinator:
                 fee = float(response.get("feePaid") or response.get("fee") or 0)
                 self.om.update(order.order_id, mapped, filled, avg_price, fee)
                 self._record_fills(order, response)
+                if (
+                    mapped in {OrderStatus.CANCELLED, OrderStatus.FAILED}
+                    and filled <= 0
+                    and self.failure_handler is not None
+                ):
+                    # Some venues return an immediate terminal response instead
+                    # of raising (for example a post-only order that cannot rest
+                    # on the book). Notify the strategy so its retry cooldown is
+                    # applied instead of resubmitting the same order every tick.
+                    terminal_reason = f"exchange returned terminal status={status.lower()}"
+                    self.failure_handler(order, "exchange_terminal", terminal_reason)
+                    log.warning("Order %s ended immediately: %s", order.order_id, terminal_reason)
                 results.append({"client_order_id": order.order_id, "status": status.lower()})
             except BitvavoError as exc:
                 self.om.update(order.order_id, OrderStatus.FAILED)
