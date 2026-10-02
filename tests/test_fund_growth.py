@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import os
-import time
 from decimal import Decimal
 
 from autotrader.core.strategy_allocator import StrategyAllocator
@@ -233,7 +231,6 @@ def test_track_record_excludes_paper_and_counts_only_verified_live(tmp_path):
     assert metrics["live_fill_count"] == 1
     assert metrics["completed_exits"] == 1
     assert metrics["net_realized_pnl_eur"] == 2.0
-    assert metrics["paper_pnl_eur"] if "paper_pnl_eur" in metrics else True
 
 
 def test_verified_track_record_does_not_unlock_external_capital_without_governance():
@@ -294,3 +291,37 @@ def test_fund_pretrade_uses_growth_stage_cap(tmp_path, monkeypatch):
     )
     assert blocked.accepted is False
     assert "growth-stage" in blocked.reason
+
+
+def test_growth_stage_enforces_strategy_and_asset_exposure_caps():
+    controller = GrowthController(_growth_config())
+    risk = {
+        "drawdown_pct": 0.0,
+        "daily_loss_pct": 0.0,
+        "gross_exposure_eur": 9.0,
+        "strategy_exposure_eur": {"GridRunner": 9.0},
+        "asset_exposure_eur": {"ETH-EUR": 9.0},
+    }
+    ok, reason = controller.check_order(
+        nav_eur=50.0,
+        risk_status=risk,
+        notional_eur=2.0,
+        risk_reducing=False,
+        strategy="GridRunner",
+        symbol="SOL-EUR",
+    )
+    assert ok is False
+    assert "strategy exposure" in reason
+
+    risk["strategy_exposure_eur"] = {"GridRunner": 0.0}
+    risk["asset_exposure_eur"] = {"ETH-EUR": 9.0}
+    ok, reason = controller.check_order(
+        nav_eur=50.0,
+        risk_status=risk,
+        notional_eur=2.0,
+        risk_reducing=False,
+        strategy="GridRunner",
+        symbol="ETH-EUR",
+    )
+    assert ok is False
+    assert "asset exposure" in reason
