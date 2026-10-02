@@ -48,8 +48,14 @@ class PolymarketAdapter:
             raise PolymarketError(decision.reason)
         if self.dry_run or os.getenv("EXECUTION_MODE", "paper") != "live":
             return {"status": "SHADOW", "would_place": proposal}
-        if os.getenv("LIVE_EXECUTION_APPROVED") != "true" or os.getenv("LIVE_EXECUTION_ADAPTER_INSTALLED") != "true" or os.getenv("EMERGENCY_STOP", "true") == "true" or os.getenv("LIVE_TRADING_CONFIRMATION") != "I_UNDERSTAND_LIVE_ORDERS":
-            raise PolymarketError("Live gates are not satisfied; no order was sent")
+        if (
+            os.getenv("POLYMARKET_LIVE_ORDERS_ENABLED", "false").lower() != "true"
+            or os.getenv("LIVE_EXECUTION_APPROVED") != "true"
+            or os.getenv("LIVE_EXECUTION_ADAPTER_INSTALLED") != "true"
+            or os.getenv("EMERGENCY_STOP", "true") == "true"
+            or os.getenv("LIVE_TRADING_CONFIRMATION") != "I_UNDERSTAND_LIVE_ORDERS"
+        ):
+            raise PolymarketError("Polymarket live orders are not explicitly enabled or global live gates are not satisfied")
         client = await self._secure_client()
         try:
             response = await client.place_market_order(token_id=token_id, side=side, amount=str(amount_eur))
