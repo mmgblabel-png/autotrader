@@ -77,6 +77,31 @@ failure, custody loss, slippage, fees or external withdrawals. Its purpose is
 to prevent AutoTrader from intentionally putting protected capital back at
 risk after the target has been achieved.
 
+### Verified live NAV
+
+In live mode, Fund Core does **not** use `initial_nav_eur + local PnL` as the
+capital source. It requires an authenticated Bitvavo account-balance snapshot
+and values the account conservatively in EUR:
+
+- EUR cash is valued 1:1;
+- both `available` and `inOrder` balances are included;
+- positive crypto balances are marked at the executable `ASSET-EUR` best bid,
+  not at the mid or ask;
+- if any positive balance cannot be priced through a direct EUR book, the NAV
+  snapshot is unverified;
+- `live_nav_max_age_seconds: 120` limits how old the underlying private balance
+  snapshot may be;
+- unverified or stale NAV blocks all risk-increasing live orders while
+  risk-reducing exits remain allowed;
+- only a verified NAV may advance the high-water mark or permanently arm the
+  EUR 25,000 protected-capital floor;
+- after a live fill the NAV is invalidated until the next authenticated balance
+  refresh, preventing a second entry from reusing pre-fill capital.
+
+Coinbase balances are not counted as live risk capital while Coinbase remains
+a read-only/shadow venue in this system. This avoids treating capital that the
+execution stack cannot safely manage as available trading capital.
+
 ## Fund ledger
 
 Every accepted live fill can be recorded in the SQLite ledger together with NAV snapshots. Events are chained with SHA-256 hashes. Each row contains the previous event hash, which makes later modification or reordering detectable by `FundLedger.verify()`.
