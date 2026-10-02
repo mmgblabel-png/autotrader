@@ -370,9 +370,9 @@ function renderFund(d){
  $('fundnavverified').className=r.nav_verified?'green':'red';
  $('fundledger').textContent=l.valid===true?'VALID · '+Number(l.event_count||0)+' events':'CONTROLEREN';
  $('fundledger').className=l.valid===true?'green':'red';
- let navOk=!!r.nav_verified,preservation=!!r.capital_preservation_mode,armed=!!r.capital_floor_armed,reached=!!r.target_reached;
- $('fundmode').textContent=!navOk?'NAV BLOCKED':preservation?'CAPITAL PRESERVATION':armed?'FLOOR ARMED':reached?'TARGET REACHED':'GROEI';
- $('fundmode').className='badge '+(!navOk?'red':preservation?'':armed?'ok':'live');
+ let preservation=!!r.capital_preservation_mode,armed=!!r.capital_floor_armed,reached=!!r.target_reached;
+ $('fundmode').textContent=preservation?'CAPITAL PRESERVATION':armed?'FLOOR ARMED':reached?'TARGET REACHED':'GROEI';
+ $('fundmode').className='badge '+(preservation?'':armed?'ok':'live');
  $('fundbadge').textContent=armed?'€25K FLOOR ARMED':'FUND CORE';
  $('fundbadge').className='badge '+(armed?'ok':'');
  $('fundnote').textContent=preservation
