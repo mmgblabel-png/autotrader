@@ -25,6 +25,7 @@ class ShadowStats:
     position_qty: float = 0.0
     entry_price: float = 0.0
     entry_cost_eur: float = 0.0
+    position_peak_price: float = 0.0
     peak_equity_eur: float = 0.0
     realized_net_pnl_eur: float = 0.0
     completed_trades: int = 0
@@ -42,6 +43,7 @@ class ShadowStats:
             "position_qty": self.position_qty,
             "entry_price": self.entry_price,
             "entry_cost_eur": self.entry_cost_eur,
+            "position_peak_price": self.position_peak_price,
             "peak_equity_eur": self.peak_equity_eur,
             "realized_net_pnl_eur": self.realized_net_pnl_eur,
             "completed_trades": self.completed_trades,
@@ -175,6 +177,7 @@ class ShadowStrategyEngine:
         state.position_qty = qty
         state.entry_price = effective
         state.entry_cost_eur = budget
+        state.position_peak_price = price
         state.last_signal = signal
         state.last_trade_at = time.time()
 
@@ -198,6 +201,7 @@ class ShadowStrategyEngine:
         state.position_qty = 0.0
         state.entry_price = 0.0
         state.entry_cost_eur = 0.0
+        state.position_peak_price = 0.0
         state.last_signal = signal
         state.last_trade_at = time.time()
 
@@ -279,14 +283,13 @@ class ShadowStrategyEngine:
                 and breakout_move <= max_entry_spike
             ):
                 self._buy(state, price, cfg, f"breakout_{avg_move:.3f}_x{expansion_ratio:.2f}")
-                cfg["_shadow_peak_price"] = price
             elif breakout_move > max_entry_spike:
                 state.last_signal = f"skip_spike_{breakout_move:.2f}%"
             else:
                 state.last_signal = f"wait_breakout_vol_{avg_move:.3f}_x{expansion_ratio:.2f}"
             return
-        peak = max(float(cfg.get("_shadow_peak_price", state.entry_price)), price)
-        cfg["_shadow_peak_price"] = peak
+        peak = max(state.position_peak_price or state.entry_price, price)
+        state.position_peak_price = peak
         move = (price / state.entry_price - 1) * 100
         trail_move = (price / peak - 1) * 100
         if move >= take_profit:
@@ -329,7 +332,6 @@ class ShadowStrategyEngine:
             trend_ok = fast_ema > slow_ema
             if trend_ok and min_momentum <= momentum <= max_spike:
                 self._buy(state, price, cfg, f"enter_mom_{momentum:.2f}")
-                cfg["_shadow_peak_price"] = price
             elif momentum > max_spike:
                 state.last_signal = f"skip_spike_{momentum:.2f}%"
             elif not trend_ok:
@@ -338,8 +340,8 @@ class ShadowStrategyEngine:
                 state.last_signal = f"wait_momentum_{momentum:.2f}%"
             return
 
-        peak = max(float(cfg.get("_shadow_peak_price", state.entry_price)), price)
-        cfg["_shadow_peak_price"] = peak
+        peak = max(state.position_peak_price or state.entry_price, price)
+        state.position_peak_price = peak
         move = (price / state.entry_price - 1.0) * 100
         trail_move = (price / peak - 1.0) * 100
         if move >= take_profit:
