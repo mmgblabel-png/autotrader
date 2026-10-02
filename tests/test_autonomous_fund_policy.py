@@ -94,7 +94,13 @@ def test_spot_protection_stop_trailing_and_partial_profit():
     assert trailing.action == "FULL_EXIT"
     assert trailing.reason == "trailing_protection"
 
-    cfg = dict(cfg)
+    cfg = {
+        "protection_stop_loss_pct": 2.0,
+        "protection_trailing_activation_pct": 0.90,
+        "protection_trailing_drawdown_pct": 1.25,
+        "protection_partial_profit_trigger_pct": 0.75,
+        "protection_partial_profit_fraction": 0.50,
+    }
     partial = evaluate_spot_protection(
         cfg, entry_price=100.0, current_price=100.8, quantity=1.0
     )
