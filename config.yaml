@@ -373,6 +373,13 @@ strategies:
     autonomous_min_score: 82
     autonomous_min_signal_strength: 80
     autonomous_min_confidence: 0.75
+    autonomous_min_momentum_pct: 0.12
+    autonomous_max_momentum_pct: 0.80
+    autonomous_max_spread_bps: 15.0
+    autonomous_min_liquidity_eur: 100.0
+    autonomous_max_expected_slippage_bps: 5.0
+    entry_max_slippage_pct: 0.12
+    entry_attempt_cooldown_seconds: 30
     ema_fast: 9
     ema_slow: 21
     max_slippage_pct: 0.12
