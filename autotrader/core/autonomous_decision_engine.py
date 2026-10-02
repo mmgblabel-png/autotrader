@@ -176,16 +176,53 @@ class AutonomousDecisionEngine:
             risk = risk_rows.get(display, {})
             confidence = float(risk.get("confidence") or 0.0)
             passing = []
+            max_spread_bps = max(
+                0.1,
+                float(cfg.get("autonomous_max_spread_bps", float("inf"))),
+            )
+            min_liquidity_eur = max(
+                0.0,
+                float(cfg.get("autonomous_min_liquidity_eur", 0.0)),
+            )
+            max_expected_slippage_bps = max(
+                0.0,
+                float(cfg.get("autonomous_max_expected_slippage_bps", float("inf"))),
+            )
+            min_router_momentum_pct = max(
+                0.0,
+                float(cfg.get("autonomous_min_momentum_pct", 0.0)),
+            )
+            max_router_momentum_pct = max(
+                min_router_momentum_pct,
+                float(cfg.get("autonomous_max_momentum_pct", float("inf"))),
+            )
             for candidate in candidates:
                 candidate_market = str(candidate.get("market", "")).upper()
                 candidate_score_min, candidate_conf_min = self._thresholds_for_market(candidate_market)
                 candidate_score_min = max(candidate_score_min, strategy_min_score)
                 candidate_conf_min = max(candidate_conf_min, strategy_min_confidence)
                 candidate_signal = float(candidate.get("signal_strength", candidate.get("score", 0.0)) or 0.0)
+                candidate_spread = max(0.0, float(candidate.get("spread_bps") or 0.0))
+                candidate_liquidity = max(0.0, float(candidate.get("liquidity_eur") or 0.0))
+                candidate_slippage = max(0.0, float(candidate.get("expected_slippage_bps") or 0.0))
+                candidate_momentum = float(candidate.get("momentum_pct") or 0.0)
+                execution_quality_ok = (
+                    candidate_spread <= max_spread_bps
+                    and candidate_liquidity >= min_liquidity_eur
+                    and candidate_slippage <= max_expected_slippage_bps
+                    and (
+                        key != "sniper"
+                        or (
+                            candidate_momentum >= min_router_momentum_pct
+                            and candidate_momentum <= max_router_momentum_pct
+                        )
+                    )
+                )
                 if (
                     float(candidate.get("score") or 0.0) >= candidate_score_min
                     and candidate_signal >= strategy_min_signal
                     and confidence >= candidate_conf_min
+                    and execution_quality_ok
                 ):
                     passing.append(candidate)
             best = passing[0] if passing else (candidates[0] if candidates else None)
@@ -224,6 +261,22 @@ class AutonomousDecisionEngine:
             signal_strength = float(best.get("signal_strength", best.get("score", 0.0)) or 0.0) if best else 0.0
             signal_direction = str(best.get("signal_direction") or "WAIT") if best else "WAIT"
             desired = str(best.get("market") or current).upper() if best else current
+            spread_bps = max(0.0, float(best.get("spread_bps") or 0.0)) if best else 0.0
+            liquidity_eur = max(0.0, float(best.get("liquidity_eur") or 0.0)) if best else 0.0
+            expected_slippage_bps = max(0.0, float(best.get("expected_slippage_bps") or 0.0)) if best else 0.0
+            router_momentum_pct = float(best.get("momentum_pct") or 0.0) if best else 0.0
+            execution_quality_ok = bool(best) and (
+                spread_bps <= max_spread_bps
+                and liquidity_eur >= min_liquidity_eur
+                and expected_slippage_bps <= max_expected_slippage_bps
+                and (
+                    key != "sniper"
+                    or (
+                        router_momentum_pct >= min_router_momentum_pct
+                        and router_momentum_pct <= max_router_momentum_pct
+                    )
+                )
+            )
             current_candidate = next(
                 (
                     row for row in router_rows
@@ -264,6 +317,7 @@ class AutonomousDecisionEngine:
                 and signal_strength >= strategy_min_signal
                 and confidence >= market_conf_min
                 and profit_gate
+                and execution_quality_ok
             )
             current_score_min, current_conf_min = self._thresholds_for_market(current)
             current_score_min = max(current_score_min, strategy_min_score)
@@ -371,9 +425,17 @@ class AutonomousDecisionEngine:
                 "strategy_min_score": round(strategy_min_score, 2),
                 "strategy_min_confidence": round(strategy_min_confidence, 4),
                 "risk_killed": risk_killed,
-                "momentum_pct": round(float(best.get("momentum_pct") or 0.0), 6) if best else 0.0,
+                "momentum_pct": round(router_momentum_pct, 6),
+                "spread_bps": round(spread_bps, 4),
+                "liquidity_eur": round(liquidity_eur, 2),
                 "orderbook_imbalance_pct": round(float(best.get("orderbook_imbalance_pct") or 0.0), 4) if best else 0.0,
-                "expected_slippage_bps": round(float(best.get("expected_slippage_bps") or 0.0), 4) if best else 0.0,
+                "expected_slippage_bps": round(expected_slippage_bps, 4),
+                "execution_quality_ok": execution_quality_ok,
+                "max_spread_bps": None if max_spread_bps == float("inf") else round(max_spread_bps, 4),
+                "min_liquidity_eur": round(min_liquidity_eur, 2),
+                "max_expected_slippage_bps": None if max_expected_slippage_bps == float("inf") else round(max_expected_slippage_bps, 4),
+                "min_router_momentum_pct": round(min_router_momentum_pct, 4),
+                "max_router_momentum_pct": None if max_router_momentum_pct == float("inf") else round(max_router_momentum_pct, 4),
                 "confidence": round(confidence, 4),
                 "recommended_order_eur": round(suggested_eur, 2),
                 "entry_allowed": entry_allowed,
@@ -457,6 +519,8 @@ class AutonomousDecisionEngine:
             cfg["_autonomous_momentum_pct"] = float(row.get("momentum_pct") or 0.0)
             cfg["_autonomous_orderbook_imbalance_pct"] = float(row.get("orderbook_imbalance_pct") or 0.0)
             cfg["_autonomous_expected_slippage_bps"] = float(row.get("expected_slippage_bps") or 0.0)
+            cfg["_autonomous_spread_bps"] = float(row.get("spread_bps") or 0.0)
+            cfg["_autonomous_liquidity_eur"] = float(row.get("liquidity_eur") or 0.0)
             current = str(cfg.get("symbol", "")).upper()
             desired = str(row.get("desired_market") or current).upper()
             order_eur = max(0.0, float(row.get("recommended_order_eur") or 0.0))
