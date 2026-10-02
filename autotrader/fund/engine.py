@@ -250,7 +250,9 @@ class HedgeFundEngine:
         integrity = self.ledger.verify()
         risk_status = self.risk.status()
         track = self.ledger.track_record_stats()
-        performance = self.ledger.performance_stats()
+        performance = self.ledger.performance_stats(
+            starting_equity_eur=self.mandate.initial_nav_eur,
+        )
         growth = self.growth.status(
             nav_eur=float(risk_status["nav_eur"]),
             ledger_valid=bool(integrity.get("valid")),
