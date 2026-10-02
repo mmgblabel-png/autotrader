@@ -727,3 +727,19 @@ def test_risk_manager_rolls_daily_counters_when_utc_day_changes():
     status = rm.status()
     assert status["strategies"]["SniperBot"]["daily_loss"] == 0
     assert status["strategies"]["SniperBot"]["kill_switch"] is False
+
+
+def test_risk_manager_daily_loss_uses_net_realized_pnl():
+    rm = RiskManager({"s1": StrategyRiskConfig(max_daily_loss=0.25)})
+    rm.record_pnl_delta("s1", -0.10)
+    rm.record_pnl_delta("s1", 0.08)
+    status = rm.status()["strategies"]["s1"]
+    assert status["daily_pnl"] == pytest.approx(-0.02)
+    assert status["daily_loss"] == pytest.approx(0.02)
+    assert rm.is_killed("s1") is False
+
+    rm.record_pnl_delta("s1", -0.24)
+    status = rm.status()["strategies"]["s1"]
+    assert status["daily_pnl"] == pytest.approx(-0.26)
+    assert status["daily_loss"] == pytest.approx(0.26)
+    assert rm.is_killed("s1") is True
