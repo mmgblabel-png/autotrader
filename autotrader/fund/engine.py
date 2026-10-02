@@ -21,8 +21,12 @@ class HedgeFundEngine:
     def __init__(self, config: Mapping[str, Any] | None = None) -> None:
         self.config = dict(config or {})
         self.mandate = FundMandate.from_config(self.config)
-        default_ledger = os.getenv("FUND_LEDGER_PATH", "data/fund_ledger.sqlite3")
-        ledger_path = str(self.config.get("ledger_path") or default_ledger)
+        default_ledger = "data/fund_ledger.sqlite3"
+        ledger_path = str(
+            os.getenv("FUND_LEDGER_PATH")
+            or self.config.get("ledger_path")
+            or default_ledger
+        )
         self.ledger = FundLedger(ledger_path)
         self.risk = FundRiskEngine(self.mandate)
         self.blender = SignalBlender(
