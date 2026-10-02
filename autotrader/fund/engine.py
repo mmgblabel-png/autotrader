@@ -29,7 +29,7 @@ class HedgeFundEngine:
         )
         self.ledger = FundLedger(ledger_path)
         self.risk = FundRiskEngine(self.mandate)
-        historical_peak = self.ledger.max_nav_eur()
+        historical_peak = self.ledger.max_verified_nav_eur()
         if historical_peak > 0:
             self.risk.restore_peak_nav(historical_peak)
         if self.ledger.has_event_type("capital_floor_armed"):
@@ -134,12 +134,25 @@ class HedgeFundEngine:
         The one-way transition into protected-capital mode is always persisted,
         so a restart cannot silently re-enable risk to the protected EUR 25k.
         """
+        previous_peak = float(self.risk.state.peak_nav_eur)
         armed_now = self.risk.record_nav(
             nav_eur,
             source=source,
             verified=verified,
         )
         status = self.risk.status()
+        current_peak = float(status["peak_nav_eur"])
+        if verified and current_peak > previous_peak + 1e-9:
+            self.ledger.append(
+                "nav_high_water",
+                {
+                    "fund_id": self.mandate.fund_id,
+                    "nav_eur": current_peak,
+                    "source": source,
+                    "verified": True,
+                },
+                event_id=f"nav-high-water:{current_peak:.8f}",
+            )
         if armed_now:
             self.ledger.append(
                 "capital_floor_armed",

@@ -95,6 +95,11 @@ and values the account conservatively in EUR:
   risk-reducing exits remain allowed;
 - only a verified NAV may advance the high-water mark or permanently arm the
   EUR 25,000 protected-capital floor;
+- every new verified high-water mark is checkpointed in the hash-chained ledger
+  and restored after restart, so the portfolio drawdown gate cannot silently
+  reset to the configured starting NAV;
+- legacy/unverified NAV snapshots are never accepted as a restored high-water
+  mark;
 - after a live fill the NAV is invalidated until the next authenticated balance
   refresh, preventing a second entry from reusing pre-fill capital.
 
