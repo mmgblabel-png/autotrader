@@ -412,16 +412,20 @@ async function groupStrategyControl(action){
 }
 async function activateLive(){
  try{
+  const ctl=prompt('Vul je AUTOTRADER_CONTROL_TOKEN in. Deze wordt niet opgeslagen.');
+  if(!ctl) return;
   const phrase=prompt('Bevestig live orders door exact I_UNDERSTAND_LIVE_ORDERS in te vullen.');
   if(phrase!=='I_UNDERSTAND_LIVE_ORDERS') return;
-  const r=await fetch('/api/live/activate',{method:'POST',headers:{...headers(),'Content-Type':'application/json'},body:JSON.stringify({confirmation:phrase})});
+  const r=await fetch('/api/live/activate',{method:'POST',headers:{...headers(),'Content-Type':'application/json','X-Autotrader-Token':ctl},body:JSON.stringify({confirmation:phrase})});
   const d=await r.json(); if(!r.ok) throw Error(d.detail?.message||d.detail||'Activering geweigerd');
   await refreshLiveReadiness(); alert('Live Trading is geactiveerd. De bot kan nu nieuwe orders uitvoeren.');
  }catch(e){alert(e.message||'Live activering mislukt');}
 }
 async function deactivateLive(){
  try{
-  const r=await fetch('/api/live/deactivate',{method:'POST',headers:headers()});
+  const ctl=prompt('Vul je AUTOTRADER_CONTROL_TOKEN in. Deze wordt niet opgeslagen.');
+  if(!ctl) return;
+  const r=await fetch('/api/live/deactivate',{method:'POST',headers:{...headers(),'X-Autotrader-Token':ctl}});
   const d=await r.json(); if(!r.ok) throw Error(d.detail||'Stoppen mislukt');
   await refreshLiveReadiness(); alert('Live Trading is gestopt. Nieuwe orders worden niet meer uitgevoerd.');
  }catch(e){alert(e.message||'Stoppen mislukt');}
