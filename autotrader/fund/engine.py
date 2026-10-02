@@ -3,12 +3,14 @@
 from __future__ import annotations
 
 from collections import deque
+from dataclasses import replace
 import hashlib
 import json
 import os
 import time
 from typing import Any, Iterable, Mapping
 
+from autotrader.fund.growth import GrowthController
 from autotrader.fund.ledger import FundLedger
 from autotrader.fund.models import AgentSignal, FundMandate, RiskDecision
 from autotrader.fund.portfolio import SignalBlender
@@ -21,6 +23,7 @@ class HedgeFundEngine:
     def __init__(self, config: Mapping[str, Any] | None = None) -> None:
         self.config = dict(config or {})
         self.mandate = FundMandate.from_config(self.config)
+        self.growth = GrowthController(self.config.get("growth_plan") or {})
         default_ledger = "data/fund_ledger.sqlite3"
         ledger_path = str(
             os.getenv("FUND_LEDGER_PATH")
@@ -107,6 +110,19 @@ class HedgeFundEngine:
             risk_reducing=risk_reducing,
             require_verified_nav=require_verified_nav,
         )
+        if decision.accepted:
+            growth_ok, growth_reason = self.growth.check_order(
+                nav_eur=decision.nav_eur,
+                risk_status=self.risk.status(),
+                notional_eur=notional_eur,
+                risk_reducing=risk_reducing,
+            )
+            if not growth_ok:
+                decision = replace(
+                    decision,
+                    accepted=False,
+                    reason=growth_reason,
+                )
         if not decision.accepted:
             self.ledger.append(
                 "fund_risk_reject",
@@ -142,6 +158,20 @@ class HedgeFundEngine:
         )
         status = self.risk.status()
         current_peak = float(status["peak_nav_eur"])
+        if verified:
+            mode = os.getenv("EXECUTION_MODE", "paper").strip().lower()
+            checkpoint_bucket = int(time.time() // 3600)
+            self.ledger.append(
+                "nav_checkpoint",
+                {
+                    "fund_id": self.mandate.fund_id,
+                    "nav_eur": float(nav_eur),
+                    "source": source,
+                    "verified": True,
+                    "execution_mode": mode,
+                },
+                event_id=f"nav-checkpoint:{mode}:{checkpoint_bucket}",
+            )
         if verified and current_peak > previous_peak + 1e-9:
             self.ledger.append(
                 "nav_high_water",
@@ -223,6 +253,7 @@ class HedgeFundEngine:
             "side": side.upper(),
             "notional_eur": float(notional_eur),
             "realized_net_pnl_delta_eur": float(realized_net_pnl_delta_eur),
+            "execution_mode": os.getenv("EXECUTION_MODE", "paper").strip().lower(),
         }
         event_id = f"fill:{fill_id}" if fill_id else self._payload_event_id("fill", payload)
         result = self.ledger.append("fill", payload, event_id=event_id)
@@ -236,11 +267,20 @@ class HedgeFundEngine:
 
     def status(self) -> dict[str, object]:
         integrity = self.ledger.verify()
+        risk_status = self.risk.status()
+        track_metrics = self.ledger.track_record_metrics()
+        growth_status = self.growth.status(
+            nav_eur=float(risk_status.get("nav_eur") or 0.0),
+            risk_status=risk_status,
+            track_metrics=track_metrics,
+            ledger_valid=bool(integrity.get("valid")),
+        )
         return {
             "fund_id": self.mandate.fund_id,
             "enabled": self.mandate.enabled,
             "base_currency": self.mandate.base_currency,
-            "risk": self.risk.status(),
+            "risk": risk_status,
+            "growth": growth_status,
             "research": {
                 "signal_buffer_count": len(self._signals),
                 "blended_signals": self.blended_signals()[:20],
