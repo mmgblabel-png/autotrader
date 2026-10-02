@@ -566,7 +566,7 @@ class AutoTrader:
     def fund_report(self) -> dict[str, object]:
         return FundReportingService.build(
             fund_status=self._fund.status(),
-            profit_summary=self._profit_supervisor.status(),
+            profit_summary=self._pe.as_summary(),
             agent_status=self.research_agent_status(),
         )
 
