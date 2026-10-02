@@ -10,6 +10,7 @@ fund:
   protected_capital_floor_eur: 25000
   lock_floor_after_target_reached: true
   capital_floor_buffer_pct: 2.0
+  live_nav_max_age_seconds: 120
   ledger_path: data/fund_ledger.sqlite3
   max_portfolio_drawdown_pct: 8.0
   max_daily_loss_pct: 2.0
