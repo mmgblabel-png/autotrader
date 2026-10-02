@@ -552,9 +552,12 @@ def _execution_v2_cancel_decision(
             age_seconds >= buy_stale
             and not current_quality_ok
             and lag_bps >= buy_tolerance
+            and desired == market
         ):
             # A transient quality dip alone must not destroy maker queue
-            # position. Require actual price degradation before releasing it.
+            # position. Reprice the same market only when price degradation is
+            # real; switching markets still requires the hysteresis gate below
+            # (or the hard max-age fallback).
             reason = "buy_quality_failed_price_lag"
         elif (
             desired != market
