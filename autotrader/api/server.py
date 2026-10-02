@@ -650,6 +650,9 @@ def _manage_stale_bot_orders(app: FastAPI, agent: AutoTrader) -> dict[str, objec
             }
     retry_seconds = max(30.0, float(advisor.config.get("cancel_retry_seconds", 60.0)))
     now = time.time()
+    strategy_by_name = {
+        strategy.name: strategy for strategy in agent._strategies.values()
+    }
 
     for record in list(agent._bitvavo.journal.inflight()):
         client_order_id = str(record.get("client_order_id") or "").strip()
@@ -669,6 +672,23 @@ def _manage_stale_bot_orders(app: FastAPI, agent: AutoTrader) -> dict[str, objec
             0.0,
             now_mono - float(desired_info.get("since_mono") or now_mono),
         )
+        strategy = strategy_by_name.get(strategy_name)
+        protective_override = bool(
+            strategy is not None
+            and strategy._config.get("_protective_exit_requested", False)
+        )
+        if protective_override:
+            decision = {
+                "cancel": True,
+                "reason": "protective_exit_override",
+                "price_lag_bps": 0.0,
+                "desired_market": market,
+                "score_improvement": 0.0,
+                "desired_stable_seconds": desired_stable_seconds,
+                "current_market_quality_ok": False,
+            }
+        else:
+            decision = None
         try:
             book_raw = agent._bitvavo.ticker_book(market)
             book = {
@@ -687,15 +707,16 @@ def _manage_stale_bot_orders(app: FastAPI, agent: AutoTrader) -> dict[str, objec
             except Exception:
                 continue
 
-        decision = _execution_v2_cancel_decision(
-            advisor=advisor,
-            record=record,
-            plan_row=plan_row,
-            book=book,
-            age_seconds=age,
-            desired_stable_seconds=desired_stable_seconds,
-            min_exit_price=min_exit,
-        )
+        if decision is None:
+            decision = _execution_v2_cancel_decision(
+                advisor=advisor,
+                record=record,
+                plan_row=plan_row,
+                book=book,
+                age_seconds=age,
+                desired_stable_seconds=desired_stable_seconds,
+                min_exit_price=min_exit,
+            )
         if not bool(decision.get("cancel")):
             continue
         cancel_reason = str(decision.get("reason") or "")
