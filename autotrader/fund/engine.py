@@ -29,6 +29,11 @@ class HedgeFundEngine:
         )
         self.ledger = FundLedger(ledger_path)
         self.risk = FundRiskEngine(self.mandate)
+        historical_peak = self.ledger.max_nav_eur()
+        if historical_peak > 0:
+            self.risk.restore_peak_nav(historical_peak)
+        if self.ledger.has_event_type("capital_floor_armed"):
+            self.risk.restore_capital_floor_armed()
         self.blender = SignalBlender(
             self.mandate,
             agent_weights=self.config.get("agent_weights") or {},
@@ -44,6 +49,9 @@ class HedgeFundEngine:
                 "enabled": self.mandate.enabled,
                 "base_currency": self.mandate.base_currency,
                 "initial_nav_eur": self.mandate.initial_nav_eur,
+                "target_nav_eur": self.mandate.target_nav_eur,
+                "protected_capital_floor_eur": self.mandate.protected_capital_floor_eur,
+                "lock_floor_after_target_reached": self.mandate.lock_floor_after_target_reached,
             },
         )
 
@@ -111,6 +119,34 @@ class HedgeFundEngine:
     def record_realized_pnl(self, pnl_delta_eur: float) -> None:
         self.risk.record_realized_pnl(pnl_delta_eur)
 
+    def refresh_nav(
+        self,
+        nav_eur: float,
+        *,
+        source: str = "mark_to_market",
+    ) -> dict[str, object]:
+        """Refresh in-memory NAV without writing a snapshot on every runtime tick.
+
+        The one-way transition into protected-capital mode is always persisted,
+        so a restart cannot silently re-enable risk to the protected EUR 25k.
+        """
+        armed_now = self.risk.record_nav(nav_eur)
+        status = self.risk.status()
+        if armed_now:
+            self.ledger.append(
+                "capital_floor_armed",
+                {
+                    "fund_id": self.mandate.fund_id,
+                    "source": source,
+                    "nav_eur": float(nav_eur),
+                    "target_nav_eur": self.mandate.target_nav_eur,
+                    "protected_capital_floor_eur": self.mandate.protected_capital_floor_eur,
+                    "protected_zone_eur": status["protected_zone_eur"],
+                },
+                event_id="capital-floor:armed",
+            )
+        return status
+
     def record_nav(
         self,
         nav_eur: float,
@@ -118,7 +154,7 @@ class HedgeFundEngine:
         source: str = "profit_engine",
         event_id: str | None = None,
     ) -> None:
-        self.risk.record_nav(nav_eur)
+        self.refresh_nav(nav_eur, source=source)
         self.ledger.append(
             "nav_snapshot",
             {
