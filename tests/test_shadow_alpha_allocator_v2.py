@@ -203,7 +203,7 @@ def test_dashboard_contains_shadow_lab_and_allocator():
     assert "Order Control Center" in html
     assert "/api/orders/activity?limit=100" in html
     assert 'id="orderactivity"' in html
-    assert "setInterval(()=>{if(!$('app').classList.contains('hidden'))refresh()},5000)" in html
+    assert "setInterval(()=>{if(!$('app').classList.contains('hidden'))refresh()},15000)" in html
     assert "Profit Optimization v2" in html
     assert "/api/optimization/execution-v2" in html
     assert "/api/optimization/opportunities" in html

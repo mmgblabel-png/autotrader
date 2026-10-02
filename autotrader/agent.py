@@ -252,14 +252,12 @@ class AutoTrader:
             )
             fill_utc = time.gmtime(timestamp)
             if (
-                realized < 0
-                and fill_utc.tm_year == now_utc.tm_year
+                fill_utc.tm_year == now_utc.tm_year
                 and fill_utc.tm_yday == now_utc.tm_yday
             ):
-                loss = -realized
-                self._rm.record_loss(strategy, loss)
+                self._rm.record_pnl_delta(strategy, realized)
                 if str(row.get("market") or "").upper().endswith("-EUR"):
-                    self._bitvavo.gateway.record_loss(Decimal(str(loss)))
+                    self._bitvavo.gateway.record_pnl_delta(Decimal(str(realized)))
 
     def _setup_risk(self) -> None:
         for key, strat_cfg in self._config.get("strategies", {}).items():

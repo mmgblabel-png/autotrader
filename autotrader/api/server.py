@@ -424,6 +424,20 @@ def _calculated_risk_payload(agent: AutoTrader) -> dict[str, object]:
     )
 
 
+def _readiness_log_worthy(
+    previous: tuple[object, ...] | None,
+    current: tuple[object, ...],
+    *,
+    last_log_at: float,
+    now_mono: float,
+    heartbeat_seconds: float = 300.0,
+) -> bool:
+    """Log readiness only on meaningful state changes or a slow heartbeat."""
+    if previous != current:
+        return True
+    return now_mono - float(last_log_at or 0.0) >= max(30.0, float(heartbeat_seconds))
+
+
 def _execution_v2_retry_seconds(advisor: ExecutionV2Advisor, exc: BitvavoError) -> float:
     """Back off hard on authentication/signature faults to avoid API churn."""
     base = max(30.0, float(advisor.config.get("cancel_retry_seconds", 60.0)))
@@ -886,6 +900,26 @@ async def _shadow_strategy_loop(app: FastAPI, agent: AutoTrader) -> None:
                         len(updated_names),
                         len(strategies),
                     )
+                now_mono = time.monotonic()
+                last_summary = float(getattr(app.state, "shadow_summary_last_log_at", 0.0) or 0.0)
+                if first_success or now_mono - last_summary >= 300.0:
+                    summary_cfg = dict(strategies)
+                    summary_cfg.update(dynamic_configs)
+                    shadow_status = app.state.shadow_strategy_engine.status(summary_cfg)
+                    rows = list(shadow_status.get("strategies", []) or [])
+                    promotable = [row for row in rows if row.get("promotion_ready")]
+                    top = max(rows, key=lambda row: float(row.get("score") or 0.0), default={})
+                    log.info(
+                        "Shadow summary: strategies=%d completed_trades=%d promotion_ready=%d top=%s score=%.1f net=%.4f stressed_net=%.4f",
+                        len(rows),
+                        sum(int(row.get("completed_trades") or 0) for row in rows),
+                        len(promotable),
+                        str(top.get("name") or "-"),
+                        float(top.get("score") or 0.0),
+                        float(top.get("realized_net_pnl_eur") or 0.0),
+                        float(top.get("stressed_net_pnl_eur") or 0.0),
+                    )
+                    app.state.shadow_summary_last_log_at = now_mono
         except Exception as exc:
             app.state.shadow_strategy_error = type(exc).__name__
             log.warning("Shadow strategy loop failed: %s", type(exc).__name__)
@@ -1064,6 +1098,9 @@ async def _lifespan(app: FastAPI):
     app.state.shadow_dynamic_configs = {}
     app.state.shadow_backfill_attempted = set()
     app.state.shadow_last_candidate_count = None
+    app.state.shadow_summary_last_log_at = 0.0
+    app.state.live_readiness_last_log_state = None
+    app.state.live_readiness_last_log_at = 0.0
     app.state.allocator_v2 = StrategyAllocatorV2(agent._config.get("allocator_v2", {}) or {})
     universe_cfg = agent._config.get("market_universe", {}) or {}
     app.state.market_universe = MultiExchangeMarketUniverse(
@@ -1590,17 +1627,38 @@ def live_readiness():
         "nonterminal_count": -1,
         "net_base_inventory": "0",
     })
-    log.info(
-        "Live readiness: ready=%s mode=%s armed=%s gates=%s journal=%s journals=%s preflight=%s profit_required_edge_pct=%.4f",
+    armed = bool(getattr(app.state, "live_armed", False))
+    failed_gates = tuple(sorted(key for key, value in gates.items() if not value))
+    readiness_state = (
         ready,
-        app.state.execution_gateway.mode.value,
-        bool(getattr(app.state, "live_armed", False)),
-        gates,
-        journal_state,
-        journal_states,
-        live_preflight,
-        required_entry_edge_pct,
+        armed,
+        failed_gates,
+        int(live_preflight.get("managed_open_order_count", 0) or 0),
+        int(live_preflight.get("unmanaged_open_order_count", 0) or 0),
+        bool(journal_state_reconciled),
     )
+    now_mono = time.monotonic()
+    previous_readiness = getattr(app.state, "live_readiness_last_log_state", None)
+    last_readiness_log = float(getattr(app.state, "live_readiness_last_log_at", 0.0) or 0.0)
+    if _readiness_log_worthy(
+        previous_readiness,
+        readiness_state,
+        last_log_at=last_readiness_log,
+        now_mono=now_mono,
+    ):
+        log.info(
+            "Live readiness: ready=%s mode=%s armed=%s failed_gates=%s managed_open_orders=%d unmanaged_open_orders=%d journal_reconciled=%s profit_required_edge_pct=%.4f",
+            ready,
+            app.state.execution_gateway.mode.value,
+            armed,
+            list(failed_gates),
+            readiness_state[3],
+            readiness_state[4],
+            journal_state_reconciled,
+            required_entry_edge_pct,
+        )
+        app.state.live_readiness_last_log_state = readiness_state
+        app.state.live_readiness_last_log_at = now_mono
     return {
         "ready": ready,
         "ready_to_arm": ready,

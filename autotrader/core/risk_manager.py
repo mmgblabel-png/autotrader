@@ -34,7 +34,7 @@ class RiskManager:
     def __init__(self, configs: Dict[str, StrategyRiskConfig] | None = None,
                  profit_engine: Optional["ProfitEngine"] = None) -> None:
         self._configs: Dict[str, StrategyRiskConfig] = configs or {}
-        self._daily_loss: Dict[str, float] = {}
+        self._daily_pnl: Dict[str, float] = {}
         self._error_counts: Dict[str, int] = {}
         self._killed: Dict[str, bool] = {}
         self._pe: Optional["ProfitEngine"] = profit_engine
@@ -78,7 +78,8 @@ class RiskManager:
             self._trigger_kill(strategy, "excessive slippage")
             return False
 
-        daily_loss = self._daily_loss.get(strategy, 0.0)
+        daily_pnl = self._daily_pnl.get(strategy, 0.0)
+        daily_loss = max(0.0, -daily_pnl)
         if daily_loss >= cfg.max_daily_loss:
             log.warning("[%s] Daily loss %.2f reached limit %.2f.", strategy, daily_loss, cfg.max_daily_loss)
             self._trigger_kill(strategy, "daily loss limit")
@@ -86,13 +87,19 @@ class RiskManager:
 
         return True
 
-    def record_loss(self, strategy: str, amount: float) -> None:
-        """Accumulate realised loss (positive = loss)."""
+    def record_pnl_delta(self, strategy: str, pnl_delta: float) -> None:
+        """Accumulate fee-aware realised PnL and latch the stop on true net drawdown."""
         self._ensure_current_day()
-        self._daily_loss[strategy] = self._daily_loss.get(strategy, 0.0) + amount
+        self._daily_pnl[strategy] = self._daily_pnl.get(strategy, 0.0) + float(pnl_delta)
         cfg = self._get_cfg(strategy)
-        if self._daily_loss[strategy] >= cfg.max_daily_loss:
-            self._trigger_kill(strategy, "cumulative daily loss")
+        daily_loss = max(0.0, -self._daily_pnl[strategy])
+        if daily_loss >= cfg.max_daily_loss:
+            self._trigger_kill(strategy, "net daily loss limit")
+
+    def record_loss(self, strategy: str, amount: float) -> None:
+        """Compatibility helper for explicit positive loss amounts."""
+        if amount > 0:
+            self.record_pnl_delta(strategy, -float(amount))
 
     def record_error(self, strategy: str) -> None:
         """Increment error counter; trigger kill-switch when threshold is reached."""
@@ -104,7 +111,7 @@ class RiskManager:
 
     def reset_daily(self) -> None:
         """Reset counters for a new UTC trading day."""
-        self._daily_loss.clear()
+        self._daily_pnl.clear()
         self._error_counts.clear()
         self._killed.clear()
         self._day_key = self._utc_day_key()
@@ -129,20 +136,20 @@ class RiskManager:
         strategies: Dict[str, dict] = {}
         for key, cfg in self._configs.items():
             strategies[key] = {
-                "daily_pnl": -self._daily_loss.get(key, 0.0),
+                "daily_pnl": self._daily_pnl.get(key, 0.0),
                 "max_daily_loss": cfg.max_daily_loss,
-                "daily_loss": self._daily_loss.get(key, 0.0),
+                "daily_loss": max(0.0, -self._daily_pnl.get(key, 0.0)),
                 "error_count": self._error_counts.get(key, 0),
                 "max_consecutive_errors": cfg.max_consecutive_errors,
                 "kill_switch": self._killed.get(key, False),
             }
 
-        total_daily_loss = sum(self._daily_loss.values())
+        total_daily_pnl = sum(self._daily_pnl.values())
         global_max = min((c.max_daily_loss for c in self._configs.values()), default=50.0)
         any_killed = any(self._killed.values())
 
         return {
-            "daily_pnl": round(-total_daily_loss, 4),
+            "daily_pnl": round(total_daily_pnl, 4),
             "max_daily_loss": global_max,
             "kill_switch": any_killed,
             "open_positions": {},   # populated by exchange connectors in production
@@ -163,7 +170,7 @@ class RiskManager:
         current = self._utc_day_key()
         if current == self._day_key:
             return
-        self._daily_loss.clear()
+        self._daily_pnl.clear()
         self._error_counts.clear()
         self._killed.clear()
         self._day_key = current

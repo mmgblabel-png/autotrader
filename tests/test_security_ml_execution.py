@@ -122,3 +122,18 @@ def test_shadow_lookahead_and_recursive_validation_are_non_trading():
     assert recursive["status"] == "ok"
     assert len(recursive["windows"]) >= 3
     assert 0 <= recursive["action_agreement_pct"] <= 100
+
+
+def test_gateway_daily_loss_uses_net_fee_aware_pnl(monkeypatch):
+    monkeypatch.setenv("EXECUTION_MODE", "paper")
+    gateway = ExecutionGateway(ExecutionLimits(
+        Decimal("10"), Decimal("50"), Decimal("0.25"), 50
+    ))
+    gateway.record_pnl_delta(Decimal("-0.10"))
+    gateway.record_pnl_delta(Decimal("0.08"))
+    assert gateway.status()["daily_realized_pnl_eur"] == "-0.02"
+    assert gateway.status()["daily_loss_eur"] == "0.02"
+
+    gateway.record_pnl_delta(Decimal("-0.24"))
+    assert gateway.status()["daily_realized_pnl_eur"] == "-0.26"
+    assert gateway.status()["daily_loss_eur"] == "0.26"

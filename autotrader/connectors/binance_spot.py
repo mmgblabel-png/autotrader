@@ -82,14 +82,24 @@ class BinanceSpotAdapter:
             raise BinanceSpotError(decision.reason)
         if self.dry_run or os.getenv("EXECUTION_MODE", "paper") != "live":
             return {"status": "SHADOW", "would_place": proposal}
-        if os.getenv("LIVE_EXECUTION_APPROVED") != "true" or os.getenv("LIVE_EXECUTION_ADAPTER_INSTALLED") != "true" or os.getenv("EMERGENCY_STOP", "true") == "true" or os.getenv("LIVE_TRADING_CONFIRMATION") != "I_UNDERSTAND_LIVE_ORDERS":
-            raise BinanceSpotError("Live gates are not satisfied; no order was sent")
+        if (
+            os.getenv("BINANCE_LIVE_ORDERS_ENABLED", "false").lower() != "true"
+            or os.getenv("LIVE_EXECUTION_APPROVED") != "true"
+            or os.getenv("LIVE_EXECUTION_ADAPTER_INSTALLED") != "true"
+            or os.getenv("EMERGENCY_STOP", "true") == "true"
+            or os.getenv("LIVE_TRADING_CONFIRMATION") != "I_UNDERSTAND_LIVE_ORDERS"
+        ):
+            raise BinanceSpotError("Binance live orders are not explicitly enabled or global live gates are not satisfied")
         params: dict[str, Any] = {"symbol": symbol.upper(), "side": side, "type": order_type, "quantity": str(quantity), "newClientOrderId": client_order_id}
         if order_type == "LIMIT":
             params.update({"timeInForce": "GTC", "price": str(price)})
         return self._signed_request("POST", "/api/v3/order", params)
 
     def cancel_order(self, symbol: str, order_id: str) -> dict[str, Any]:
-        if os.getenv("EXECUTION_MODE", "paper") != "live" or self.dry_run:
+        if (
+            os.getenv("EXECUTION_MODE", "paper") != "live"
+            or self.dry_run
+            or os.getenv("BINANCE_LIVE_ORDERS_ENABLED", "false").lower() != "true"
+        ):
             return {"status": "SHADOW", "would_cancel": {"symbol": symbol, "orderId": order_id}}
         return self._signed_request("DELETE", "/api/v3/order", {"symbol": symbol.upper(), "orderId": order_id})

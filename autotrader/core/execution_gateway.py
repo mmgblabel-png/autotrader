@@ -61,6 +61,7 @@ class ExecutionGateway:
     def __init__(self, limits:ExecutionLimits|None=None)->None:
         self.limits=limits or limits_from_environment()
         self.daily_exposure_eur=Decimal("0")
+        self.daily_realized_pnl_eur=Decimal("0")
         self.daily_loss_eur=Decimal("0")
         self._seen_order_ids:set[str]=set()
 
@@ -70,13 +71,23 @@ class ExecutionGateway:
         except ValueError: return ExecutionMode.PAPER
 
     def reset_daily(self)->None:
-        self.daily_exposure_eur=Decimal("0"); self.daily_loss_eur=Decimal("0"); self._seen_order_ids.clear()
+        self.daily_exposure_eur=Decimal("0"); self.daily_realized_pnl_eur=Decimal("0"); self.daily_loss_eur=Decimal("0"); self._seen_order_ids.clear()
 
-    def restore_daily_state(self, *, exposure_eur: Decimal | None = None, loss_eur: Decimal | None = None)->None:
-        """Restore durable daily counters after a process restart."""
+    def restore_daily_state(
+        self,
+        *,
+        exposure_eur: Decimal | None = None,
+        loss_eur: Decimal | None = None,
+        realized_pnl_eur: Decimal | None = None,
+    )->None:
+        """Restore durable current exposure and fee-aware realised PnL."""
         if exposure_eur is not None and exposure_eur.is_finite() and exposure_eur >= 0:
             self.daily_exposure_eur = exposure_eur
-        if loss_eur is not None and loss_eur.is_finite() and loss_eur >= 0:
+        if realized_pnl_eur is not None and realized_pnl_eur.is_finite():
+            self.daily_realized_pnl_eur = realized_pnl_eur
+            self.daily_loss_eur = max(Decimal("0"), -realized_pnl_eur)
+        elif loss_eur is not None and loss_eur.is_finite() and loss_eur >= 0:
+            self.daily_realized_pnl_eur = -loss_eur
             self.daily_loss_eur = loss_eur
 
     def evaluate(self, request:ExecutionRequest, *, armed: bool = False)->ExecutionDecision:
@@ -130,8 +141,14 @@ class ExecutionGateway:
             - buffer,
         )
 
+    def record_pnl_delta(self,pnl_delta_eur:Decimal)->None:
+        if pnl_delta_eur.is_finite():
+            self.daily_realized_pnl_eur += pnl_delta_eur
+            self.daily_loss_eur = max(Decimal("0"), -self.daily_realized_pnl_eur)
+
     def record_loss(self,amount_eur:Decimal)->None:
-        if amount_eur>0: self.daily_loss_eur+=amount_eur
+        if amount_eur>0:
+            self.record_pnl_delta(-amount_eur)
 
     def _reject(self,request:ExecutionRequest,reason:str)->ExecutionDecision:
         return ExecutionDecision(False,self.mode,reason,request.client_order_id,request.venue,str(request.notional_eur))
@@ -143,6 +160,7 @@ class ExecutionGateway:
             "live_execution_capability":"bitvavo" if live_activation_is_allowed() else "gated",
             "daily_exposure_eur":str(self.daily_exposure_eur),
             "remaining_daily_exposure_eur":str(self.remaining_daily_exposure_eur()),
+            "daily_realized_pnl_eur":str(self.daily_realized_pnl_eur),
             "daily_loss_eur":str(self.daily_loss_eur),
             "limits":{"max_trade_eur":str(self.limits.max_trade_eur),"max_daily_exposure_eur":str(self.limits.max_daily_exposure_eur),"max_daily_loss_eur":str(self.limits.max_daily_loss_eur),"max_slippage_bps":self.limits.max_slippage_bps},
         }
