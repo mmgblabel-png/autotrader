@@ -151,12 +151,6 @@ class HedgeFundEngine:
         realized_net_pnl_delta_eur: float,
         fill_id: str = "",
     ) -> None:
-        self.risk.record_fill(
-            strategy=strategy,
-            symbol=symbol,
-            side=side,
-            notional_eur=notional_eur,
-        )
         payload = {
             "strategy": strategy,
             "symbol": symbol.upper().replace("/", "-"),
@@ -165,7 +159,14 @@ class HedgeFundEngine:
             "realized_net_pnl_delta_eur": float(realized_net_pnl_delta_eur),
         }
         event_id = f"fill:{fill_id}" if fill_id else self._payload_event_id("fill", payload)
-        self.ledger.append("fill", payload, event_id=event_id)
+        result = self.ledger.append("fill", payload, event_id=event_id)
+        if not bool(result.get("duplicate")):
+            self.risk.record_fill(
+                strategy=strategy,
+                symbol=symbol,
+                side=side,
+                notional_eur=notional_eur,
+            )
 
     def status(self) -> dict[str, object]:
         integrity = self.ledger.verify()
