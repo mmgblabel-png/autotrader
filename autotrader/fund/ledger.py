@@ -198,6 +198,37 @@ class FundLedger:
             ).fetchone()
         return row is not None
 
+    def max_verified_nav_eur(self) -> float:
+        """Return the highest durable NAV backed by verified provenance.
+
+        New high-water events are always verified. Legacy nav_snapshot rows are
+        included only when they explicitly carry verified=true, so an old local
+        PnL estimate can never become the live drawdown anchor after restart.
+        """
+        maximum = 0.0
+        with self._lock, self._connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT event_type, payload_json
+                FROM fund_events
+                WHERE event_type IN (?, ?)
+                ORDER BY seq ASC
+                """,
+                ("nav_high_water", "nav_snapshot"),
+            ).fetchall()
+        for row in rows:
+            try:
+                payload = json.loads(str(row["payload_json"]))
+                event_type = str(row["event_type"])
+                if event_type == "nav_snapshot" and payload.get("verified") is not True:
+                    continue
+                value = float(payload.get("nav_eur") or 0.0)
+            except (TypeError, ValueError, json.JSONDecodeError):
+                continue
+            if value > maximum:
+                maximum = value
+        return maximum
+
     def max_nav_eur(self) -> float:
         """Return the highest durable NAV snapshot, ignoring malformed payloads."""
         maximum = 0.0
