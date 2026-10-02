@@ -1875,6 +1875,30 @@ def research_full_report(
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
+@app.get("/api/fund/automation", tags=["fund"])
+def autonomous_fund_status() -> dict[str, object]:
+    """Return autonomous fund policy, latest research and reporting state."""
+    status = dict(getattr(app.state, "autonomous_fund_status", {}) or {})
+    status["hard_rules"] = {
+        "max_portfolio_drawdown_pct": 10.0,
+        "max_daily_loss_pct": 3.0,
+        "max_position_pct": 20.0,
+        "min_cash_reserve_pct": 20.0,
+        "live_entry_score_operator": ">",
+        "live_entry_score_threshold": 85.0,
+        "instrument_scope": "spot_only",
+        "leverage": False,
+        "margin": False,
+        "futures": False,
+        "borrowing": False,
+        "withdrawals": False,
+        "transfers": False,
+        "private_key_export": False,
+        "unknown_wallet_interactions": False,
+    }
+    return status
+
+
 @app.get("/api/execution/status", tags=["execution"])
 def execution_status():
     """Expose non-secret execution mode, gates and limits for the dashboard."""
