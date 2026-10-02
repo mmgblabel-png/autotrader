@@ -71,3 +71,25 @@ def test_adaptive_learning_has_post_rollback_holdoff():
     adaptive = cfg["adaptive_learning"]
     assert adaptive["rollback_cooldown_exits"] >= adaptive["change_cooldown"]
     assert adaptive["rollback_cooldown_exits"] >= 12
+
+
+def test_growth_plan_is_nav_driven_and_external_capital_stays_locked():
+    cfg = _config()
+    growth = cfg["fund"]["growth_plan"]
+    assert growth["enabled"] is True
+    assert growth["auto_scale_live_budget"] is True
+    stages = growth["stages"]
+    assert [row["key"] for row in stages] == [
+        "seed", "emerging", "scaled", "institutional_personal"
+    ]
+    assert stages[0]["next_nav_eur"] == 500
+    assert stages[1]["next_nav_eur"] == 5000
+    assert stages[2]["next_nav_eur"] == 50000
+    assert stages[0]["deployable_pct"] <= 40
+    assert stages[0]["max_order_eur"] <= 6
+    assert growth["track_record"]["min_elapsed_days"] >= 365
+    assert growth["track_record"]["min_observation_days"] >= 250
+    assert growth["governance"]["investor_capital_enabled"] is False
+    assert cfg["portfolio_goal"]["target_equity_eur"] == 50000
+    assert cfg["portfolio_goal"]["goal_is_risk_input"] is False
+    assert cfg["portfolio_goal"]["increase_risk_to_catch_up"] is False
