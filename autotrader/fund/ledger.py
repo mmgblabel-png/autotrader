@@ -186,6 +186,15 @@ class FundLedger:
             "head_hash": expected_prev,
         }
 
+    def has_event_id(self, event_id: str) -> bool:
+        """Return whether an immutable event id is already present."""
+        key = str(event_id).strip()
+        if not key:
+            return False
+        with self._lock, self._connect() as conn:
+            row = conn.execute("SELECT 1 FROM fund_events WHERE event_id = ? LIMIT 1", (key,)).fetchone()
+        return row is not None
+
     def has_event_type(self, event_type: str) -> bool:
         """Return whether at least one event of the requested type exists."""
         key = str(event_type).strip()
