@@ -52,6 +52,36 @@ DASHBOARD_HTML = r'''<!doctype html>
     <div class="metric"><span>Ledger integrity</span><b id="fundledger">—</b></div>
   </div>
 </section>
+<div class="section-title"><h3>Fund Growth Ladder</h3><div class="line"></div><span id="growthbadge" class="badge">€50 → €50K</span></div>
+<section class="section exchange-grid">
+  <div class="card control-card">
+    <div class="control-head"><div><div class="eyebrow">NAV-driven operating stage</div><div class="control-title" id="growthstage">—</div><div class="control-sub">Budget en orderlimieten schalen alleen mee met geverifieerde NAV; targets verhogen het risico nooit.</div></div><span id="growthmode" class="badge ok">STAGE</span></div>
+    <div class="order-kpis">
+      <div class="order-kpi"><div class="k">Volgende NAV</div><div id="growthnext" class="v blue">—</div></div>
+      <div class="order-kpi"><div class="k">Effectief live-budget</div><div id="growthbudget" class="v green">—</div></div>
+      <div class="order-kpi"><div class="k">Max order</div><div id="growthorder" class="v">—</div></div>
+      <div class="order-kpi"><div class="k">Max open orders</div><div id="growthorders" class="v">—</div></div>
+    </div>
+    <div class="bar"><i id="growthprogressbar" style="width:0%"></i></div>
+    <div class="metric" style="margin-top:12px"><span>Stage progress</span><b id="growthprogress">—</b></div>
+    <div class="table-wrap"><table class="table compact"><thead><tr><th>Fase</th><th>Drempel</th><th>Status</th></tr></thead><tbody id="growthmilestones"><tr><td colspan="3" class="sub">Growth ladder laden…</td></tr></tbody></table></div>
+  </div>
+  <div class="card control-card">
+    <div class="control-head"><div><div class="eyebrow">Verified performance evidence</div><div class="control-title">Track Record & Governance</div><div class="control-sub">Alleen echte live fills + geverifieerde live NAV tellen mee.</div></div><span id="trackbadge" class="badge">BUILDING</span></div>
+    <div class="order-kpis">
+      <div class="order-kpi"><div class="k">Elapsed</div><div id="trackdays" class="v">—</div></div>
+      <div class="order-kpi"><div class="k">Observation days</div><div id="trackobs" class="v">—</div></div>
+      <div class="order-kpi"><div class="k">Completed exits</div><div id="trackexits" class="v">—</div></div>
+      <div class="order-kpi"><div class="k">Net realized</div><div id="trackpnl" class="v">—</div></div>
+    </div>
+    <div class="metric"><span>Profit factor</span><b id="trackpf">—</b></div>
+    <div class="metric"><span>Sharpe</span><b id="tracksharpe">—</b></div>
+    <div class="metric"><span>Max drawdown</span><b id="trackdd">—</b></div>
+    <div class="metric"><span>Verified track record</span><b id="trackverified">—</b></div>
+    <div class="metric"><span>Potential investors</span><b id="investorready">—</b></div>
+    <div class="table-wrap"><table class="table compact"><thead><tr><th>Functie</th><th>Status</th><th>Mandaat</th></tr></thead><tbody id="departmentrows"><tr><td colspan="3" class="sub">Operating model laden…</td></tr></tbody></table></div>
+  </div>
+</section>
 <section class="section"><div class="card control-card"><div class="control-head"><div><div class="eyebrow">Execution monitor</div><div class="control-title">Order Control Center</div><div class="control-sub">Direct zicht op open Bitvavo-orders én iedere recente bot-order uit het duurzame journal.</div></div><span class="badge live">READ ONLY · AUTO REFRESH</span></div><div class="order-kpis"><div class="order-kpi"><div class="k">Nu open</div><div id="orderOpenCount" class="v blue">0</div></div><div class="order-kpi"><div class="k">Recent gevuld</div><div id="orderFilledCount" class="v green">0</div></div><div class="order-kpi"><div class="k">Geannuleerd</div><div id="orderCanceledCount" class="v">0</div></div><div class="order-kpi"><div class="k">Fouten laatste 3u</div><div id="orderErrorCount" class="v">0</div></div></div><div class="order-layout"><div><div class="exchange-head"><div><div class="exchange-name">Open orders</div><div class="mini">Rechtstreeks van Bitvavo</div></div><span id="openOrderBadge" class="badge">0 open</span></div><div class="table-wrap"><table class="table compact"><thead><tr><th>Markt</th><th>Side</th><th>Qty</th><th>Prijs</th><th>Waarde</th><th>Status</th></tr></thead><tbody id="liveorders"><tr><td colspan="6" class="sub">Laden…</td></tr></tbody></table></div><div id="liveordersnote" class="sub" style="margin-top:9px">Read-only uit Bitvavo.</div></div><div><div class="exchange-head"><div><div class="exchange-name">Alle recente orders</div><div class="mini">Nieuwste eerst · order-ID's en secrets bewust verborgen</div></div><span id="activityBadge" class="badge ok">journal</span></div><div class="table-wrap"><table class="table compact"><thead><tr><th>Tijd</th><th>Bot</th><th>Markt</th><th>Side</th><th>Type</th><th>Qty</th><th>Prijs</th><th>Fills</th><th>Status</th></tr></thead><tbody id="orderactivity"><tr><td colspan="9" class="sub">Orderhistorie laden…</td></tr></tbody></table></div><div id="orderactivitynote" class="sub" style="margin-top:9px">Duurzame journal-history.</div></div></div></div></section>
 <section class="section">
   <div class="card">
@@ -79,10 +109,10 @@ DASHBOARD_HTML = r'''<!doctype html>
 <div class="section-title"><h3>Profit Optimization v2</h3><div class="line"></div><span class="badge live">AUTONOMOUS AFTER ARM</span></div>
 <section class="section exchange-grid">
   <div class="card">
-    <div class="exchange-head"><div><div class="exchange-name">Gezamenlijk botdoel</div><div class="mini">Alle bots dragen bij aan één portfolio-doel · nooit een reden om risico te verhogen</div></div><span id="goalbadge" class="badge">€25K TARGET</span></div>
+    <div class="exchange-head"><div><div class="exchange-name">Gezamenlijk botdoel</div><div class="mini">Alle bots dragen bij aan één portfolio-doel · nooit een reden om risico te verhogen</div></div><span id="goalbadge" class="badge">€50K TARGET</span></div>
     <div class="grid" style="margin-bottom:12px">
       <div><div class="label">Huidige equity-schatting</div><div id="goalcurrent" class="value">—</div></div>
-      <div><div class="label">Doel</div><div id="goaltarget" class="value blue">€ 25.000</div></div>
+      <div><div class="label">Doel</div><div id="goaltarget" class="value blue">€ 50.000</div></div>
       <div><div class="label">Per dag nodig</div><div id="goaldaily" class="value green">—</div></div>
       <div><div class="label">Dagelijkse groei nodig</div><div id="goalcompound" class="value">—</div></div>
     </div>
@@ -254,7 +284,7 @@ function renderGoal(d){
  $('goalprogress').textContent=p.toFixed(3)+'%';
  $('goalnext').textContent=d.next_milestone_eur==null?'DOEL BEREIKT':money(d.next_milestone_eur);
  $('goalbar').style.width=p+'%';
- $('goalbadge').textContent=d.target_reached?'TARGET REACHED':'€25K TARGET';
+ $('goalbadge').textContent=d.target_reached?'TARGET REACHED':'€50K TARGET';
  $('goalbadge').className='badge '+(d.target_reached?'ok':'');
  $('goalnote').textContent='Dagstand = benodigde gemiddelde netto groei vanaf de huidige equity over '+Number(d.target_days||0).toFixed(0)+' dagen. Dit is een doelmeter, geen reden om slechtere trades te forceren.';
 }
@@ -351,7 +381,7 @@ function renderRiskLab(d){
  $('risklabnote').textContent='Trades '+(d.completed_trades||0)+' · winrate '+Number(d.winrate_pct||0).toFixed(1)+'% · martingale-stap max '+(d.max_martingale_steps||0)+' · live_capable: '+(d.live_capable?'JA':'nee');
 }
 function renderFund(d){
- let r=d.risk||{},l=d.ledger||{},p=Math.max(0,Math.min(100,Number(r.target_progress_pct||0)));
+ let r=d.risk||{},l=d.ledger||{},g=d.growth||{},gp=g.policy||{},tr=g.track_record||{},gov=g.governance||{},p=Math.max(0,Math.min(100,Number(r.target_progress_pct||0)));
  $('fundnav').textContent=money(r.nav_eur||0);
  $('fundtarget').textContent=money(r.target_nav_eur||25000);
  $('funddrawdown').textContent=Number(r.drawdown_pct||0).toFixed(2)+'%';
@@ -368,7 +398,7 @@ function renderFund(d){
  let navAge=r.nav_age_seconds==null?'—':Number(r.nav_age_seconds).toFixed(1)+'s';
  $('fundnavverified').textContent=(r.nav_verified?'VERIFIED':'BLOCKED')+' · '+esc(r.nav_source||'unknown')+' · '+navAge;
  $('fundnavverified').className=r.nav_verified?'green':'red';
- $('fundledger').textContent=l.valid===true?'VALID · '+Number(l.event_count||0)+' events':'CONTROLEREN';
+ $('fundledger').textContent=l.valid===true?'VALID · '+Number(l.count||l.event_count||0)+' events':'CONTROLEREN';
  $('fundledger').className=l.valid===true?'green':'red';
  let preservation=!!r.capital_preservation_mode,armed=!!r.capital_floor_armed,reached=!!r.target_reached;
  $('fundmode').textContent=preservation?'CAPITAL PRESERVATION':armed?'FLOOR ARMED':reached?'TARGET REACHED':'GROEI';
@@ -382,6 +412,33 @@ function renderFund(d){
      :(r.nav_verified
        ?'Groei naar €25.000 onder normale fund-risklimieten; het target verhoogt nooit automatisch het risico.'
        :'Live NAV is niet geverifieerd of te oud: nieuwe risicoverhogende orders blijven fail-closed.');
+ let stageProgress=Math.max(0,Math.min(100,Number(g.stage_progress_pct||0)));
+ $('growthstage').textContent=esc(g.active_stage_label||g.active_stage||'—');
+ $('growthmode').textContent=String(g.active_stage||'stage').toUpperCase();
+ $('growthnext').textContent=g.next_nav_target_eur==null?'TRACK RECORD':money(g.next_nav_target_eur);
+ $('growthbudget').textContent=money(gp.effective_live_budget_eur||0)+' · '+Number(gp.deployable_pct||0).toFixed(0)+'% NAV';
+ $('growthorder').textContent=money(gp.effective_max_order_eur||0);
+ $('growthorders').textContent=Number(gp.max_open_orders||0).toFixed(0);
+ $('growthprogress').textContent=stageProgress.toFixed(2)+'%';
+ $('growthprogressbar').style.width=stageProgress+'%';
+ let milestones=g.milestones||[];
+ $('growthmilestones').innerHTML=milestones.length?milestones.map(x=>`<tr><td><b>${esc(x.label)}</b></td><td>${x.threshold_eur==null?'evidence':money(x.threshold_eur)}</td><td class="${x.reached?'green':x.active?'blue':'amber'}">${x.reached?'REACHED':x.active?'ACTIVE':'LOCKED'}</td></tr>`).join(''):'<tr><td colspan="3" class="sub">Geen growth stages</td></tr>';
+ $('trackdays').textContent=Number(tr.elapsed_days||0).toFixed(0)+' d';
+ $('trackobs').textContent=Number(tr.observation_days||0).toFixed(0);
+ $('trackexits').textContent=Number(tr.completed_exits||0).toFixed(0);
+ $('trackpnl').textContent=money(tr.net_realized_pnl_eur||0);
+ $('trackpnl').className='v '+(Number(tr.net_realized_pnl_eur||0)>=0?'green':'red');
+ $('trackpf').textContent=tr.profit_factor==null?'—':Number(tr.profit_factor).toFixed(2);
+ $('tracksharpe').textContent=tr.sharpe_ratio==null?'—':Number(tr.sharpe_ratio).toFixed(2);
+ $('trackdd').textContent=Number(tr.max_drawdown_pct||0).toFixed(2)+'%';
+ $('trackverified').textContent=tr.verified?'VERIFIED':'BUILDING';
+ $('trackverified').className=tr.verified?'green':'amber';
+ $('trackbadge').textContent=tr.verified?'VERIFIED':'BUILDING';
+ $('trackbadge').className='badge '+(tr.verified?'ok':'');
+ $('investorready').textContent=gov.investor_outreach_ready?'OUTREACH READY':'LOCKED';
+ $('investorready').className=gov.investor_outreach_ready?'green':'amber';
+ let deps=g.departments||{};
+ $('departmentrows').innerHTML=Object.entries(deps).map(([k,v])=>`<tr><td><b>${esc(k.replaceAll('_',' '))}</b></td><td>${esc(v.state)}</td><td>${esc(v.responsibility)}</td></tr>`).join('')||'<tr><td colspan="3" class="sub">Geen operating model</td></tr>';
 }
 function renderRisk(d){let pos=d.open_positions||d.positions||[];if(!Array.isArray(pos))pos=[];$('positions').innerHTML=pos.length?pos.map(x=>`<tr><td>${esc(x.symbol||x.market)}</td><td>${esc(x.side)}</td><td>${money(x.notional_eur??x.notional)}</td><td>${money(x.pnl_eur??x.pnl)}</td></tr>`).join(''):'<tr><td colspan="4" class="sub">Geen open posities</td></tr>'}
 function renderProfit(d){
