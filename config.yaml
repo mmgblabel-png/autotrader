@@ -281,7 +281,7 @@ autonomous_fund:
   report_monthly: true
   stop_loss_pct: 2.0
   trailing_drawdown_pct: 1.25
-  partial_profit_trigger_pct: 1.5
+  partial_profit_trigger_pct: 0.75
   partial_profit_fraction: 0.50
   high_volatility_bps: 180.0
   high_volatility_size_multiplier: 0.50
