@@ -417,3 +417,68 @@ def test_coordinator_forwards_bounded_ioc_limit_execution():
     assert adapter.seen["time_in_force"] == "IOC"
     assert adapter.seen["post_only"] is False
     assert float(adapter.seen["price"]) == 1.1123
+
+
+class IOCAdapter(FilledAdapter):
+    def __init__(self):
+        super().__init__()
+        self.seen = {}
+
+    def place_limit_order(
+        self,
+        market,
+        side,
+        amount,
+        price,
+        client_order_id,
+        *,
+        time_in_force="GTC",
+        post_only=True,
+    ):
+        self.seen = {
+            "market": market,
+            "side": side,
+            "amount": amount,
+            "price": price,
+            "client_order_id": client_order_id,
+            "time_in_force": time_in_force,
+            "post_only": post_only,
+        }
+        return {
+            "clientOrderId": client_order_id,
+            "market": market,
+            "side": side,
+            "status": "canceled",
+            "filledAmount": "0",
+            "fills": [],
+        }
+
+
+def test_coordinator_forwards_bounded_ioc_limit_execution():
+    om = OrderManager()
+    adapter = IOCAdapter()
+    coordinator = ExecutionCoordinator(
+        om,
+        adapter,
+        is_armed=lambda: True,
+        profit_engine=ProfitEngine(export_dir="/tmp/autotrader-test-exports-ioc"),
+    )
+    order = om.register(Order(
+        exchange="bitvavo",
+        symbol="AXS-EUR",
+        side=OrderSide.BUY,
+        order_type=OrderType.LIMIT,
+        quantity=5.39,
+        price=1.1123,
+        time_in_force="IOC",
+        post_only=False,
+        strategy="SniperBot",
+    ))
+
+    result = coordinator.submit_pending()
+
+    assert result[0]["status"] == "canceled"
+    assert order.status is OrderStatus.CANCELLED
+    assert adapter.seen["time_in_force"] == "IOC"
+    assert adapter.seen["post_only"] is False
+    assert float(adapter.seen["price"]) == 1.1123
