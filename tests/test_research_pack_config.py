@@ -61,3 +61,10 @@ def test_live_sniper_has_bounded_execution_quality_gates():
     assert sniper["autonomous_min_liquidity_eur"] >= 100.0
     assert sniper["autonomous_max_expected_slippage_bps"] <= 5.0
     assert sniper["entry_max_slippage_pct"] <= 0.12
+
+
+def test_adaptive_learning_has_post_rollback_holdoff():
+    cfg = _config()
+    adaptive = cfg["adaptive_learning"]
+    assert adaptive["rollback_cooldown_exits"] >= adaptive["change_cooldown"]
+    assert adaptive["rollback_cooldown_exits"] >= 12
