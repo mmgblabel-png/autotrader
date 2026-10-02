@@ -47,3 +47,17 @@ def test_router_scans_full_bitvavo_universe_but_live_non_eur_stays_blocked():
     assert cfg["shadow_lab"]["promotion_cost_stress_multiplier"] >= 1.25
     assert cfg["shadow_lab"]["strategies"]["volatility_breakout"]["strategy_version"] == "v3"
     assert cfg["shadow_lab"]["strategies"]["sniper_v2"]["strategy_version"] == "v2"
+
+
+def test_live_sniper_has_bounded_execution_quality_gates():
+    cfg = _config()
+    sniper = cfg["strategies"]["sniper"]
+    assert sniper["autonomous_min_score"] >= 82
+    assert sniper["autonomous_min_signal_strength"] >= 80
+    assert sniper["autonomous_min_confidence"] >= 0.75
+    assert sniper["autonomous_min_momentum_pct"] >= 0.12
+    assert sniper["autonomous_max_momentum_pct"] <= 0.80
+    assert sniper["autonomous_max_spread_bps"] <= 15.0
+    assert sniper["autonomous_min_liquidity_eur"] >= 100.0
+    assert sniper["autonomous_max_expected_slippage_bps"] <= 5.0
+    assert sniper["entry_max_slippage_pct"] <= 0.12
