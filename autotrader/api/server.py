@@ -1982,6 +1982,71 @@ def full_market_universe_summary() -> dict[str, object]:
     return payload
 
 
+def _dashboard_snapshot_section(name: str, fn, *args, **kwargs) -> dict[str, object]:
+    """Execute one existing read-only dashboard section without breaking the whole snapshot."""
+    try:
+        return {"ok": True, "data": fn(*args, **kwargs)}
+    except HTTPException as exc:
+        return {
+            "ok": False,
+            "error": str(exc.detail),
+            "status_code": int(exc.status_code),
+        }
+    except Exception as exc:
+        log.warning("Dashboard snapshot section failed safely: section=%s error=%s", name, type(exc).__name__)
+        return {"ok": False, "error": type(exc).__name__}
+
+
+@app.get("/api/dashboard/snapshot", tags=["dashboard"])
+async def dashboard_snapshot() -> dict[str, object]:
+    """Aggregate dashboard reads into one authenticated request.
+
+    Sections keep their existing implementation and fail independently. The
+    browser therefore keeps partial-data behavior while avoiding 26+ separate
+    reverse-proxy requests every refresh.
+    """
+    sections = [
+        ("paper_report", paper_report, (), {}),
+        ("execution_status", execution_status, (), {}),
+        ("pnl_summary", pnl_summary, (), {}),
+        ("health", health, (), {}),
+        ("bitvavo_security", bitvavo_security_status, (), {}),
+        ("risk_status", risk_status, (), {}),
+        ("markets_overview", markets_overview, (), {}),
+        ("strategies", strategies, (), {}),
+        ("bitvavo_live_state", bitvavo_live_state, (), {}),
+        ("live_pnl", live_pnl, (), {}),
+        ("coinbase_security", coinbase_security_status, (), {}),
+        ("coinbase_live_state", coinbase_live_state, (), {}),
+        ("arbitrage", coinbase_bitvavo_shadow_scan, (), {}),
+        ("shadow", shadow_strategy_status, (), {}),
+        ("allocator", allocator_v2_status, (), {}),
+        ("orders", order_activity, (), {"limit": 100}),
+        ("execution_v2", optimization_execution_v2, (), {}),
+        ("opportunities", optimization_opportunities, (), {}),
+        ("fee_efficiency", optimization_fee_efficiency, (), {}),
+        ("portfolio_goal", portfolio_goal_status, (), {}),
+        ("binance_reference", binance_btc_reference, (), {}),
+        ("autonomy", autonomy_status, (), {}),
+        ("risk_lab", leverage_martingale_risk_lab_status, (), {}),
+        ("three_hour", three_hour_report, (), {}),
+        ("fees_live", live_fee_margin_telemetry, (), {}),
+        ("universe_summary", full_market_universe_summary, (), {}),
+        ("live_readiness", live_readiness, (), {}),
+    ]
+    results = await asyncio.gather(*[
+        asyncio.to_thread(_dashboard_snapshot_section, name, fn, *args, **kwargs)
+        for name, fn, args, kwargs in sections
+    ])
+    return {
+        "generated_at": time.time(),
+        "sections": {
+            sections[index][0]: result
+            for index, result in enumerate(results)
+        },
+    }
+
+
 @app.get("/api/markets/universe/overlap", tags=["markets"])
 def full_market_universe_overlap(
     limit: int = Query(default=500, ge=1, le=5000),
@@ -2515,15 +2580,34 @@ def bitvavo_security_status() -> dict[str, object]:
     child-process stdout.
     """
     report = _cached_bitvavo_security()
-    log.info(
-        "Bitvavo security probe: passed=%s authenticated=%s withdrawals_disabled=%s ip_whitelist_confirmed=%s errors=%s error_code=%s",
-        report.get("passed"),
-        report.get("authenticated_probe"),
-        report.get("withdrawals_disabled"),
-        report.get("ip_whitelist_confirmed"),
-        report.get("errors"),
+    security_state = (
+        bool(report.get("passed")),
+        bool(report.get("authenticated_probe")),
+        bool(report.get("withdrawals_disabled")),
+        bool(report.get("ip_whitelist_confirmed")),
+        tuple(report.get("errors") or []),
         report.get("bitvavo_error_code"),
     )
+    now_mono = time.monotonic()
+    previous = getattr(app.state, "bitvavo_security_last_log_state", None)
+    last_log_at = float(getattr(app.state, "bitvavo_security_last_log_at", 0.0) or 0.0)
+    if _readiness_log_worthy(
+        previous,
+        security_state,
+        last_log_at=last_log_at,
+        now_mono=now_mono,
+    ):
+        log.info(
+            "Bitvavo security probe: passed=%s authenticated=%s withdrawals_disabled=%s ip_whitelist_confirmed=%s errors=%s error_code=%s",
+            report.get("passed"),
+            report.get("authenticated_probe"),
+            report.get("withdrawals_disabled"),
+            report.get("ip_whitelist_confirmed"),
+            report.get("errors"),
+            report.get("bitvavo_error_code"),
+        )
+        app.state.bitvavo_security_last_log_state = security_state
+        app.state.bitvavo_security_last_log_at = now_mono
     return report
 
 
