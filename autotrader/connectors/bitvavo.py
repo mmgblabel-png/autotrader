@@ -64,7 +64,10 @@ class BitvavoAdapter:
         if not self.api_key or not self.api_secret:
             raise BitvavoError("BITVAVO_API_KEY and BITVAVO_API_SECRET are required")
         method = method.upper()
-        body_text = "" if method == "GET" else json.dumps(body or {}, separators=(",", ":"))
+        # Query-only private endpoints (notably DELETE /order) have no HTTP
+        # body. Signing an invented "{}" body makes Bitvavo reject the HMAC
+        # with errorCode 309 even though the query and API key are valid.
+        body_text = "" if body is None else json.dumps(body, separators=(",", ":"))
         query_text = urllib.parse.urlencode(query) if query else ""
         signed_endpoint = endpoint + (f"?{query_text}" if query_text else "")
         timestamp = str(int(time.time() * 1000))
@@ -105,7 +108,14 @@ class BitvavoAdapter:
                 error_message = str(raw_message) if raw_message is not None else None
             except (ValueError, TypeError, json.JSONDecodeError, UnicodeDecodeError):
                 pass
-            category = "invalid_credentials" if exc.code in {401, 403} else "bitvavo_http_error"
+            if error_code == 309:
+                category = "invalid_signature"
+            elif error_code == 310:
+                category = "trade_permission_missing"
+            elif exc.code in {401, 403}:
+                category = "authentication_rejected"
+            else:
+                category = "bitvavo_http_error"
             raise BitvavoError(
                 "Bitvavo private request was rejected",
                 category=category,
