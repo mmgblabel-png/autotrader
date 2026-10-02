@@ -57,7 +57,7 @@ class ArbitrageHunter(BaseStrategy):
             return
 
         notional = size * buy_price
-        if not self._rm.check_order(self.name, notional):
+        if not self._rm.check_order(self.name, notional, symbol=symbol):
             return
 
         # Buy on cheap exchange
