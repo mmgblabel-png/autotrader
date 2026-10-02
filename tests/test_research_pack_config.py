@@ -45,3 +45,5 @@ def test_router_scans_full_bitvavo_universe_but_live_non_eur_stays_blocked():
     assert cfg["shadow_lab"]["promotion_min_completed_trades"] == 24
     assert cfg["shadow_lab"]["promotion_min_profit_factor"] >= 1.10
     assert cfg["shadow_lab"]["promotion_cost_stress_multiplier"] >= 1.25
+    assert cfg["shadow_lab"]["strategies"]["volatility_breakout"]["strategy_version"] == "v3"
+    assert cfg["shadow_lab"]["strategies"]["sniper_v2"]["strategy_version"] == "v2"
