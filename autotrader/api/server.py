@@ -1452,6 +1452,9 @@ async def _lifespan(app: FastAPI):
     app.state.opportunity_router_task = asyncio.create_task(
         _opportunity_router_loop(app), name="autotrader-opportunity-router-loop"
     )
+    app.state.autonomous_fund_task = asyncio.create_task(
+        _autonomous_fund_loop(app, agent), name="autotrader-autonomous-fund-loop"
+    )
     app.state.market_universe_task = asyncio.create_task(
         _market_universe_loop(app), name="autotrader-market-universe-loop"
     )
@@ -1475,6 +1478,7 @@ async def _lifespan(app: FastAPI):
         app.state.arbitrage_shadow_task.cancel()
         app.state.shadow_strategy_task.cancel()
         app.state.opportunity_router_task.cancel()
+        app.state.autonomous_fund_task.cancel()
         app.state.market_universe_task.cancel()
         app.state.binance_reference_task.cancel()
         with contextlib.suppress(asyncio.CancelledError):
@@ -1485,6 +1489,8 @@ async def _lifespan(app: FastAPI):
             await app.state.shadow_strategy_task
         with contextlib.suppress(asyncio.CancelledError):
             await app.state.opportunity_router_task
+        with contextlib.suppress(asyncio.CancelledError):
+            await app.state.autonomous_fund_task
         with contextlib.suppress(asyncio.CancelledError):
             await app.state.market_universe_task
         with contextlib.suppress(asyncio.CancelledError):
