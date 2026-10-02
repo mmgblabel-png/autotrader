@@ -151,6 +151,8 @@ class MarketMaker(BaseStrategy):
         live_snapshot = bool(cfg.get("_live_balance_snapshot_ready", False))
         can_bid = not entry_killed
         can_ask = True
+        if not live_snapshot and (local_open or exchange_open):
+            return
         if live_snapshot:
             available_quote = float(cfg.get("_available_quote", 0.0))
             available_base = float(cfg.get("_available_base", 0.0))
