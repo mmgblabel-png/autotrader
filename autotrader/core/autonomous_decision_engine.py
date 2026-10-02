@@ -220,7 +220,8 @@ class AutonomousDecisionEngine:
             market_score_min, market_conf_min = self._thresholds_for_market(desired)
             market_score_min = max(market_score_min, strategy_min_score)
             market_conf_min = max(market_conf_min, strategy_min_confidence)
-            risk_killed = bool(agent._rm.is_killed(display))
+            risk_manager = getattr(agent, "_rm", None)
+            risk_killed = bool(risk_manager.is_killed(display)) if risk_manager is not None and hasattr(risk_manager, "is_killed") else False
             quality_ok = (
                 bool(best)
                 and bool(passing)
