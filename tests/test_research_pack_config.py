@@ -17,7 +17,13 @@ def test_research_pack_config_is_valid_and_does_not_raise_live_budget():
         if value.get("enabled") and value.get("live_capable")
     }
     assert sum(float(row.get("allocation_eur", 0)) for row in live.values()) == 50
-    assert live["market_maker"]["allocation_eur"] == 18
+    assert live["market_maker"]["allocation_eur"] == 20
+    assert live["grid"]["allocation_eur"] == 15
+    assert live["grid_eth"]["allocation_eur"] == 15
+    assert cfg["strategies"]["sniper"]["live_capable"] is False
+    assert cfg["strategies"]["sniper"]["allocation_eur"] == 0
+    assert cfg["live_evidence_gate"]["min_completed_exits"] == 4
+    assert cfg["live_evidence_gate"]["minimum_net_pnl_eur"] == -0.10
     assert live["grid"]["allocation_eur"] == 10
     assert live["grid_eth"]["allocation_eur"] == 10
     assert live["sniper"]["allocation_eur"] == 12
