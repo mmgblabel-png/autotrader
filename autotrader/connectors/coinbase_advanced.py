@@ -62,8 +62,14 @@ class CoinbaseAdvancedMarketData:
     PRODUCTS_PATH = "/api/v3/brokerage/market/products"
     ACCOUNTS_PATH = "/api/v3/brokerage/accounts"
 
-    def __init__(self, *, timeout: float = 5.0) -> None:
+    def __init__(
+        self,
+        *,
+        timeout: float = 5.0,
+        authenticate_public_requests: bool = True,
+    ) -> None:
         self.timeout = timeout
+        self.authenticate_public_requests = bool(authenticate_public_requests)
 
     def _get(self, path: str, params: dict[str, str] | None = None) -> Any:
         url = self.BASE_URL + path
@@ -77,7 +83,7 @@ class CoinbaseAdvancedMarketData:
         # recommends it for higher rate limits. Fall back to unauthenticated
         # public access if credentials are absent or malformed.
         try:
-            if bool(self._credential_format().get("format_compatible")):
+            if self.authenticate_public_requests and bool(self._credential_format().get("format_compatible")):
                 headers["Authorization"] = f"Bearer {self._build_rest_jwt('GET', path)}"
         except Exception:
             pass
@@ -143,7 +149,7 @@ class CoinbaseAdvancedMarketData:
             "nbf": now,
             "iat": now,
             "exp": now + 120,
-            "uris": [uri],
+            "uri": uri,
         }
         headers = {
             "kid": key_name,
