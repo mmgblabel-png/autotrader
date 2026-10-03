@@ -1,0 +1,58 @@
+{
+  "version": 1,
+  "token": "AIHF",
+  "tiers": {
+    "NONE": {
+      "minimum_locked_aihf": 0,
+      "research_delay_minutes": 1440,
+      "api_requests_per_minute": 0,
+      "features": [
+        "public_project_status",
+        "public_methodology"
+      ]
+    },
+    "READER": {
+      "minimum_locked_aihf": 100,
+      "research_delay_minutes": 60,
+      "api_requests_per_minute": 10,
+      "features": [
+        "research_feed",
+        "historical_research",
+        "market_watchlists",
+        "portfolio_education"
+      ]
+    },
+    "PRO": {
+      "minimum_locked_aihf": 1000,
+      "research_delay_minutes": 5,
+      "api_requests_per_minute": 60,
+      "features": [
+        "research_feed",
+        "historical_research",
+        "market_watchlists",
+        "premium_dashboard",
+        "strategy_analytics",
+        "alerts",
+        "data_exports"
+      ]
+    },
+    "QUANT": {
+      "minimum_locked_aihf": 10000,
+      "research_delay_minutes": 0,
+      "api_requests_per_minute": 300,
+      "features": [
+        "research_feed",
+        "historical_research",
+        "market_watchlists",
+        "premium_dashboard",
+        "strategy_analytics",
+        "alerts",
+        "data_exports",
+        "strategy_lab",
+        "quant_api",
+        "marketplace_creator_tools",
+        "research_signal_voting"
+      ]
+    }
+  }
+}
