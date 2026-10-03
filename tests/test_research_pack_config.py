@@ -72,6 +72,7 @@ def test_router_scans_full_bitvavo_universe_with_bounded_live_quote_assets():
     assert cfg["research_lab"]["walk_forward_embargo_bars"] >= 1
     assert cfg["shadow_lab"]["canary_min_net_pnl_eur"] > 0
     assert cfg["shadow_lab"]["canary_min_profit_factor"] >= 1.05
+    assert cfg["shadow_lab"]["canary_min_q10_return_pct"] >= -3.50
     assert cfg["shadow_lab"]["strategies"]["volatility_breakout"]["strategy_version"] == "v3"
     assert cfg["shadow_lab"]["strategies"]["sniper_v2"]["strategy_version"] == "v2"
 
