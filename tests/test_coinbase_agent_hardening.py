@@ -75,7 +75,7 @@ def _live(monkeypatch):
 def test_portfolio_scope_reaches_balance_preview_and_order(tmp_path, monkeypatch):
     _live(monkeypatch)
     fake = HardeningFakeCoinbase()
-    executor = CoinbaseAutonomousExecutor(CoinbaseAutonomousConfig(state_path=str(tmp_path / "state.json"), require_shadow_promotion=False, portfolio_id="agent-portfolio", max_order_eur=2.0), client=fake)
+    executor = CoinbaseAutonomousExecutor(CoinbaseAutonomousConfig(state_path=str(tmp_path / "state.json"), require_shadow_promotion=False, portfolio_id="agent-portfolio", allow_existing_btc_seed=True, max_order_eur=2.0), client=fake)
     status = executor.tick(armed=True, shadow_status={"promotion_ready": True, "last_signal": {"decisions": []}})
     assert status["portfolio_id"] == "agent-portfolio"
     assert status["portfolio_isolated"] is True
@@ -87,7 +87,7 @@ def test_uncertain_submit_is_reconciled_without_second_order(tmp_path, monkeypat
     _live(monkeypatch)
     fake = HardeningFakeCoinbase()
     fake.raise_after_accept_once = True
-    executor = CoinbaseAutonomousExecutor(CoinbaseAutonomousConfig(state_path=str(tmp_path / "state.json"), require_shadow_promotion=False, max_order_eur=2.0), client=fake)
+    executor = CoinbaseAutonomousExecutor(CoinbaseAutonomousConfig(state_path=str(tmp_path / "state.json"), require_shadow_promotion=False, require_isolated_portfolio=False, allow_existing_btc_seed=True, max_order_eur=2.0), client=fake)
     with pytest.raises(CoinbaseTradingError, match="uncertain"):
         executor.tick(armed=True, shadow_status={"promotion_ready": True, "last_signal": {"decisions": []}})
     assert len(fake.created) == 1

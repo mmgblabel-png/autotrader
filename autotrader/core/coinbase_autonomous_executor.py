@@ -34,6 +34,8 @@ class CoinbaseAutonomousConfig:
     enabled: bool = True
     product_id: str = "BTC-EUR"
     portfolio_id: str = ""
+    require_isolated_portfolio: bool = True
+    allow_existing_btc_seed: bool = False
     interval_seconds: float = 5.0
     managed_capital_pct: float = 20.0
     cash_reserve_pct: float = 20.0
@@ -56,6 +58,11 @@ class CoinbaseAutonomousConfig:
             enabled=bool(cfg.get("enabled", True)),
             product_id=str(cfg.get("product_id", "BTC-EUR")).upper(),
             portfolio_id=str(os.getenv("COINBASE_AGENT_PORTFOLIO_ID", cfg.get("portfolio_id", "")) or "").strip(),
+            require_isolated_portfolio=bool(cfg.get("require_isolated_portfolio", True)),
+            allow_existing_btc_seed=_env_true(
+                "COINBASE_ALLOW_EXISTING_BTC_SEED",
+                bool(cfg.get("allow_existing_btc_seed", False)),
+            ),
             interval_seconds=max(2.0, float(cfg.get("interval_seconds", 5.0))),
             managed_capital_pct=min(20.0, max(1.0, float(cfg.get("managed_capital_pct", 20.0)))),
             cash_reserve_pct=min(90.0, max(20.0, float(cfg.get("cash_reserve_pct", 20.0)))),
@@ -261,6 +268,11 @@ class CoinbaseAutonomousExecutor:
             "runtime_armed": bool(armed),
             "credentials_compatible": bool(auth.get("format_compatible")),
             "authenticated": bool(auth.get("authenticated")),
+            "isolated_portfolio_configured": (
+                bool(self.config.portfolio_id)
+                if self.config.require_isolated_portfolio
+                else True
+            ),
             "shadow_promotion_ready": (
                 bool(shadow_status.get("promotion_ready"))
                 if self.config.require_shadow_promotion else True
@@ -538,6 +550,8 @@ class CoinbaseAutonomousExecutor:
             "managed_cash_eur": round(self.state.managed_cash_eur, 8),
             "portfolio_id": self.config.portfolio_id or None,
             "portfolio_isolated": bool(self.config.portfolio_id),
+            "isolated_portfolio_required": self.config.require_isolated_portfolio,
+            "existing_btc_auto_seed_enabled": self.config.allow_existing_btc_seed,
             "submission_outcome_unknown": self.state.submission_intent is not None,
             "best_bid": bid,
             "best_ask": ask,
@@ -625,6 +639,7 @@ class CoinbaseAutonomousExecutor:
                 and self.state.pending is None
                 and self.state.submission_intent is None
                 and self.state.position is None
+                and self.config.allow_existing_btc_seed
                 and env_ready
                 and float(balances.get("EUR") or 0.0) + 1e-9 < total_cash_target
                 and float(balances.get("BTC") or 0.0) > 0
@@ -728,5 +743,7 @@ class CoinbaseAutonomousExecutor:
                 "borrowing": False,
                 "transfers": False,
                 "withdrawals": False,
+                "isolated_portfolio_required": self.config.require_isolated_portfolio,
+                "existing_btc_auto_seed": self.config.allow_existing_btc_seed,
             },
         }

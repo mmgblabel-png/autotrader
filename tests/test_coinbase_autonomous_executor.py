@@ -117,6 +117,7 @@ def test_unarmed_executor_never_submits_order(tmp_path, monkeypatch):
     cfg = CoinbaseAutonomousConfig(
         state_path=str(tmp_path / "coinbase.json"),
         require_shadow_promotion=False,
+        require_isolated_portfolio=False,
     )
     executor = CoinbaseAutonomousExecutor(cfg, client=fake)
     status = executor.tick(armed=False, shadow_status={"promotion_ready": True})
@@ -131,6 +132,8 @@ def test_armed_executor_seeds_bounded_cash_from_existing_btc(tmp_path, monkeypat
     cfg = CoinbaseAutonomousConfig(
         state_path=str(tmp_path / "coinbase.json"),
         require_shadow_promotion=True,
+        require_isolated_portfolio=False,
+        allow_existing_btc_seed=True,
         max_order_eur=5.0,
     )
     executor = CoinbaseAutonomousExecutor(cfg, client=fake)
@@ -155,6 +158,7 @@ def test_shadow_gate_blocks_new_buy_but_not_reserve_seeding(tmp_path, monkeypatc
     cfg = CoinbaseAutonomousConfig(
         state_path=str(tmp_path / "coinbase.json"),
         require_shadow_promotion=True,
+        require_isolated_portfolio=False,
     )
     executor = CoinbaseAutonomousExecutor(cfg, client=fake)
     executor.state.managed_cash_eur = 5.0
@@ -185,6 +189,7 @@ def test_promoted_signal_can_submit_bounded_buy(tmp_path, monkeypatch):
     cfg = CoinbaseAutonomousConfig(
         state_path=str(tmp_path / "coinbase.json"),
         require_shadow_promotion=True,
+        require_isolated_portfolio=False,
         max_order_eur=3.0,
     )
     executor = CoinbaseAutonomousExecutor(cfg, client=fake)
@@ -207,3 +212,34 @@ def test_promoted_signal_can_submit_bounded_buy(tmp_path, monkeypatch):
     assert fake.created[0]["side"] == "BUY"
     assert float(fake.created[0]["quote_size"]) <= 3.0
     assert status["pending_order"]["purpose"] == "entry"
+
+
+def test_armed_default_never_sells_existing_btc_to_seed_cash(tmp_path, monkeypatch):
+    _set_live_env(monkeypatch)
+    fake = FakeCoinbase()
+    cfg = CoinbaseAutonomousConfig(
+        state_path=str(tmp_path / "coinbase.json"),
+        require_shadow_promotion=False,
+        require_isolated_portfolio=False,
+    )
+    executor = CoinbaseAutonomousExecutor(cfg, client=fake)
+    status = executor.tick(
+        armed=True,
+        shadow_status={"promotion_ready": True, "last_signal": {"decisions": []}},
+    )
+    assert status["live_orders_sent"] == 0
+    assert fake.created == []
+    assert status["hard_rules"]["existing_btc_auto_seed"] is False
+
+
+def test_default_policy_requires_isolated_coinbase_portfolio(tmp_path, monkeypatch):
+    _set_live_env(monkeypatch)
+    fake = FakeCoinbase()
+    cfg = CoinbaseAutonomousConfig(
+        state_path=str(tmp_path / "coinbase.json"),
+        require_shadow_promotion=False,
+    )
+    executor = CoinbaseAutonomousExecutor(cfg, client=fake)
+    ready = executor.readiness(armed=True, shadow_status={"promotion_ready": True})
+    assert ready["gates"]["isolated_portfolio_configured"] is False
+    assert ready["ready_for_new_entry"] is False

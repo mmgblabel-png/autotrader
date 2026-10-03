@@ -2653,33 +2653,12 @@ def activate_live(
         app.state.live_arm_store.should_resume()
     )
     app.state.live_armed = True
-
-    coinbase_armed = False
-    coinbase_failed_gates: list[str] = []
-    try:
-        cb_check = coinbase_live_readiness()
-        coinbase_failed_gates = list(cb_check.get("failed_gates") or [])
-        if bool(cb_check.get("ready_to_arm")):
-            app.state.coinbase_live_arm_store.write(
-                True, source="operator_activate_via_global_live"
-            )
-            app.state.coinbase_live_arm_intent = True
-            app.state.coinbase_live_arm_auto_resume_eligible = bool(
-                app.state.coinbase_live_arm_store.should_resume()
-            )
-            app.state.coinbase_live_armed = True
-            coinbase_armed = True
-    except Exception as cb_exc:
-        log.warning(
-            "Global live activation left Coinbase disarmed safely: %s",
-            getattr(cb_exc, "category", type(cb_exc).__name__),
-        )
     return {
         "armed": True,
         "persistent": True,
-        "coinbase_armed": coinbase_armed,
-        "coinbase_failed_gates": coinbase_failed_gates,
-        "message": "Live trading armed. Coinbase is armed only when its independent trade-preview and risk gates also pass.",
+        "coinbase_armed": bool(getattr(app.state, "coinbase_live_armed", False)),
+        "coinbase_failed_gates": [],
+        "message": "Bitvavo live trading armed. Coinbase remains independently controlled and is never armed by this endpoint.",
     }
 
 
@@ -3625,6 +3604,7 @@ def coinbase_live_readiness() -> dict[str, object]:
             product_id="BTC-EUR",
             side="SELL",
             base_size="0.00002",
+            portfolio_id=executor.config.portfolio_id or None,
         )
         trade_preview = {
             "passed": True,
@@ -3641,7 +3621,7 @@ def coinbase_live_readiness() -> dict[str, object]:
         **probe,
         "coinbase_armed": bool(getattr(app.state, "coinbase_live_armed", False)),
         "trade_permission_preview": trade_preview,
-        "ready_to_arm": failed.issubset({"shadow_promotion_ready"}),
+        "ready_to_arm": not failed,
         "new_entries_evidence_gated": "shadow_promotion_ready" in failed,
         "failed_gates": sorted(failed),
         "arm_persistence": app.state.coinbase_live_arm_store.status(),
@@ -3653,8 +3633,8 @@ def activate_coinbase_live(
     payload: dict = Body(...),
     _: None = Depends(_require_control_token),
 ):
-    if str(payload.get("confirmation", "")) != "I_UNDERSTAND_LIVE_ORDERS":
-        raise HTTPException(status_code=400, detail="Explicit live-order confirmation is required.")
+    if str(payload.get("confirmation", "")) != "I_UNDERSTAND_COINBASE_LIVE_ORDERS":
+        raise HTTPException(status_code=400, detail="Explicit Coinbase live-order confirmation is required.")
     check = coinbase_live_readiness()
     if not bool(check.get("ready_to_arm")):
         raise HTTPException(

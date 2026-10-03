@@ -575,6 +575,8 @@ coinbase_autonomous_execution:
   # Set COINBASE_AGENT_PORTFOLIO_ID to an isolated Advanced portfolio UUID.
   # Empty keeps current default-portfolio behavior until that portfolio/key is provisioned.
   portfolio_id: ""
+  require_isolated_portfolio: true
+  allow_existing_btc_seed: false
   interval_seconds: 5
   # Only this sleeve is controlled by the Coinbase agent. Remaining BTC is not
   # adopted as bot inventory.
