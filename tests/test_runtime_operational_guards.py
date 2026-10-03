@@ -310,7 +310,7 @@ class _EvidenceAgent:
             or {
                 "enabled": True,
                 "min_completed_exits": 4,
-                "minimum_net_pnl_eur": -0.10,
+                "minimum_net_pnl_eur": 0.0,
             }
         }
         self._strategies = {
@@ -336,6 +336,18 @@ def test_live_evidence_gate_blocks_only_proven_weak_entries():
     assert agent._strategies["new"]._config["_evidence_entry_blocked"] is False
     # Evidence overlay must not mutate the autonomous router decision.
     assert agent._strategies["bad"]._config["_autonomous_entry_allowed"] is True
+
+
+def test_live_evidence_gate_blocks_small_net_loss_after_minimum_sample():
+    agent = _EvidenceAgent({
+        "GoodBot": {"wins": 2, "losses": 2, "net_pnl": -0.01},
+        "BadBot": {"wins": 0, "losses": 0, "net_pnl": 0.0},
+        "NewBot": {"wins": 0, "losses": 0, "net_pnl": 0.0},
+    })
+    result = _apply_strategy_evidence_gate(agent)
+
+    assert [row["strategy"] for row in result["blocked"]] == ["GoodBot"]
+    assert result["minimum_net_pnl_eur"] == 0.0
 
 
 def test_live_evidence_gate_recovers_without_sticky_block():
