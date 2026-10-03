@@ -1,12 +1,12 @@
 """Shared portfolio allocation guard for concurrent strategies.
 
-This module does not send exchange requests.  It only decides whether a
+This module does not send exchange requests. It only decides whether a
 strategy intent may proceed to the execution adapter.
 """
 from __future__ import annotations
 
 from dataclasses import dataclass
-from decimal import Decimal
+from decimal import Decimal, InvalidOperation
 from typing import Iterable
 
 from autotrader.core.order_manager import Order, OrderSide
@@ -29,7 +29,13 @@ class StrategyAllocation:
 
 
 class StrategyAllocator:
-    """Fail-closed budget and conflict guard shared by all strategies."""
+    """Fail-closed budget and conflict guard shared by all strategies.
+
+    When portfolio.dynamic_with_verified_nav is enabled, the allocator
+    scales its deployable budget from the latest verified portfolio NAV.
+    It never spends the configured cash reserve and it never makes a
+    non-live-capable strategy live.
+    """
 
     _NAME_MAP = {
         "market_maker": "MarketMaker",
@@ -41,7 +47,37 @@ class StrategyAllocator:
 
     def __init__(self, config: dict) -> None:
         portfolio = config.get("portfolio", {}) or {}
-        self.global_budget_eur = Decimal(str(portfolio.get("global_live_budget_eur", "50")))
+        configured_budget = Decimal(str(portfolio.get("global_live_budget_eur", "50")))
+        self._configured_global_budget_eur = max(Decimal("0"), configured_budget)
+        self._dynamic_with_verified_nav = bool(
+            portfolio.get("dynamic_with_verified_nav", False)
+        )
+        self._initial_live_capital_eur = max(
+            Decimal("0.01"),
+            Decimal(
+                str(
+                    portfolio.get(
+                        "initial_live_capital_eur",
+                        self._configured_global_budget_eur or Decimal("50"),
+                    )
+                )
+            ),
+        )
+        self._max_deployable_pct = max(
+            Decimal("0"),
+            min(Decimal("100"), Decimal(str(portfolio.get("max_deployable_pct", "100")))),
+        )
+        self._min_cash_reserve_pct = max(
+            Decimal("0"),
+            min(Decimal("99.99"), Decimal(str(portfolio.get("min_cash_reserve_pct", "0")))),
+        )
+        self._max_deployable_pct = min(
+            self._max_deployable_pct,
+            Decimal("100") - self._min_cash_reserve_pct,
+        )
+        self._verified_nav_eur: Decimal | None = (
+            self._initial_live_capital_eur if self._dynamic_with_verified_nav else None
+        )
         self.max_total_open_orders = max(1, int(portfolio.get("max_total_open_orders", 4)))
         self._allocations: dict[str, StrategyAllocation] = {}
 
@@ -69,6 +105,75 @@ class StrategyAllocator:
                 live_capable=bool(cfg.get("live_capable", False)),
             )
 
+    @property
+    def global_budget_eur(self) -> Decimal:
+        if not self._dynamic_with_verified_nav:
+            return self._configured_global_budget_eur
+        nav = self._verified_nav_eur or self._initial_live_capital_eur
+        return max(
+            Decimal("0"),
+            nav * self._max_deployable_pct / Decimal("100"),
+        )
+
+    def set_verified_nav(self, nav_eur: float | Decimal) -> bool:
+        """Update dynamic budgets from a positive verified NAV snapshot."""
+        if not self._dynamic_with_verified_nav:
+            return False
+        try:
+            nav = Decimal(str(nav_eur))
+        except (InvalidOperation, TypeError, ValueError):
+            return False
+        if not nav.is_finite() or nav <= 0:
+            return False
+        self._verified_nav_eur = nav
+        return True
+
+    def capital_status(self) -> dict[str, object]:
+        nav = self._verified_nav_eur or self._initial_live_capital_eur
+        budget = self.global_budget_eur
+        return {
+            "dynamic_with_verified_nav": self._dynamic_with_verified_nav,
+            "managed_nav_eur": float(nav),
+            "deployable_budget_eur": float(budget),
+            "cash_reserve_eur": float(max(Decimal("0"), nav - budget)),
+            "max_deployable_pct": float(self._max_deployable_pct),
+            "min_cash_reserve_pct": float(self._min_cash_reserve_pct),
+        }
+
+    def _effective_allocation(self, strategy: str) -> StrategyAllocation | None:
+        base = self._allocations.get(strategy)
+        if base is None or not self._dynamic_with_verified_nav or not base.live_capable:
+            return base
+
+        live_bases = [
+            row.allocation_eur
+            for row in self._allocations.values()
+            if row.live_capable and row.allocation_eur > 0
+        ]
+        total_base = sum(live_bases, Decimal("0"))
+        if total_base <= 0 or base.allocation_eur <= 0:
+            return StrategyAllocation(
+                allocation_eur=Decimal("0"),
+                max_order_eur=Decimal("0"),
+                max_open_orders=base.max_open_orders,
+                symbols=base.symbols,
+                exclusive_symbol=base.exclusive_symbol,
+                live_capable=base.live_capable,
+            )
+
+        allocation = self.global_budget_eur * base.allocation_eur / total_base
+        nav = self._verified_nav_eur or self._initial_live_capital_eur
+        scale = max(Decimal("0"), nav / self._initial_live_capital_eur)
+        dynamic_max_order = min(allocation, max(Decimal("0"), base.max_order_eur * scale))
+        return StrategyAllocation(
+            allocation_eur=allocation,
+            max_order_eur=dynamic_max_order,
+            max_open_orders=base.max_open_orders,
+            symbols=base.symbols,
+            exclusive_symbol=base.exclusive_symbol,
+            live_capable=base.live_capable,
+        )
+
     @staticmethod
     def _notional(order: Order, fallback_price: Decimal | None = None) -> Decimal | None:
         """Value an order only with its own price, except for the new candidate."""
@@ -82,20 +187,15 @@ class StrategyAllocator:
         return notional if notional.is_finite() and notional > 0 else None
 
     def allocation_for(self, strategy: str) -> StrategyAllocation | None:
-        return self._allocations.get(strategy)
+        return self._effective_allocation(strategy)
 
     def max_entry_notional(
         self,
         order: Order,
         active_orders: Iterable[Order],
     ) -> Decimal:
-        """Return remaining BUY capacity under strategy and portfolio caps.
-
-        This is used to resize an otherwise valid entry instead of rejecting it
-        when a small rounding/price difference would exceed an allocation cap.
-        Unknown active notionals fail closed by returning zero capacity.
-        """
-        allocation = self._allocations.get(order.strategy)
+        """Return remaining BUY capacity under strategy and portfolio caps."""
+        allocation = self.allocation_for(order.strategy)
         if allocation is None or not allocation.live_capable or allocation.allocation_eur <= 0:
             return Decimal("0")
 
@@ -124,7 +224,7 @@ class StrategyAllocator:
         *,
         observed_price: Decimal,
     ) -> AllocationDecision:
-        allocation = self._allocations.get(order.strategy)
+        allocation = self.allocation_for(order.strategy)
         if allocation is None:
             return AllocationDecision(False, "strategy allocation is not configured")
         if not allocation.live_capable:
@@ -151,9 +251,6 @@ class StrategyAllocator:
         if new_notional is None:
             return AllocationDecision(False, "order notional must be positive")
 
-        # Existing inventory exits reduce risk and must not be trapped behind
-        # entry budget caps. Exchange rules, ownership and the execution gateway
-        # still validate the actual order before it can be sent.
         if not risk_reducing:
             if new_notional > allocation.max_order_eur:
                 return AllocationDecision(False, "strategy per-order allocation exceeded")

@@ -295,10 +295,18 @@ class AutoTrader:
         nav = float(valuation["nav_eur"])
         self._live_fund_nav_eur = nav
         self._live_fund_nav_updated_at = time.monotonic()
-        self._fund.refresh_nav(
+        self._allocator.set_verified_nav(nav)
+        fund_status = self._fund.refresh_nav(
             nav,
             source="bitvavo_account_liquidation_nav",
             verified=True,
+        )
+        limits = fund_status.get("limits", {})
+        self._bitvavo.gateway.set_verified_nav_limits(
+            nav_eur=nav,
+            max_trade_pct=limits.get("max_single_trade_pct", 0.0),
+            max_exposure_pct=limits.get("max_gross_exposure_pct", 0.0),
+            max_daily_loss_pct=limits.get("max_daily_loss_pct", 0.0),
         )
         return valuation
 
@@ -332,10 +340,18 @@ class AutoTrader:
             economic_pnl += float(stats.get("unrealized_pnl") or 0.0)
 
         nav = max(0.01, self._fund.mandate.initial_nav_eur + economic_pnl)
-        self._fund.refresh_nav(
+        self._allocator.set_verified_nav(nav)
+        fund_status = self._fund.refresh_nav(
             nav,
             source="runtime_mark_to_market",
             verified=True,
+        )
+        limits = fund_status.get("limits", {})
+        self._bitvavo.gateway.set_verified_nav_limits(
+            nav_eur=nav,
+            max_trade_pct=limits.get("max_single_trade_pct", 0.0),
+            max_exposure_pct=limits.get("max_gross_exposure_pct", 0.0),
+            max_daily_loss_pct=limits.get("max_daily_loss_pct", 0.0),
         )
         return nav
 

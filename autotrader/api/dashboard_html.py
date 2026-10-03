@@ -381,7 +381,7 @@ function renderRiskLab(d){
 function renderFund(d){
  let r=d.risk||{},l=d.ledger||{},g=d.growth||{},stage=g.stage||{},tr=g.track_record||{},research=d.research||{},perf=d.performance||{},gov=d.governance||{},compliance=gov.compliance||{},investor=gov.investor_reporting||{},p=Math.max(0,Math.min(100,Number(r.target_progress_pct||0)));
  $('fundnav').textContent=money(r.nav_eur||0);
- $('fundtarget').textContent=money(r.target_nav_eur||50000);
+ $('fundtarget').textContent=money(r.target_nav_eur||100000);
  $('funddrawdown').textContent=Number(r.drawdown_pct||0).toFixed(2)+'%';
  $('funddrawdown').className='v '+(Number(r.drawdown_pct||0)>4?'red':Number(r.drawdown_pct||0)>2?'amber':'green');
  $('fundriskcapital').textContent=money(r.risk_capital_available_eur||0);

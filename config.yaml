@@ -6,7 +6,7 @@ fund:
   fund_id: autotrader-personal-fund
   base_currency: EUR
   initial_nav_eur: 50
-  target_nav_eur: 50000
+  target_nav_eur: 100000
   protected_capital_floor_eur: 25000
   lock_floor_after_target_reached: true
   capital_floor_buffer_pct: 2.0
@@ -52,24 +52,27 @@ research_lab:
   ruin_drawdown_pct: 30.0
 
 portfolio:
-  global_live_budget_eur: 50
+  # Historical seed capital was €50; live capital management starts from €80.
+  initial_live_capital_eur: 80
+  global_live_budget_eur: 80
+  dynamic_with_verified_nav: true
+  max_deployable_pct: 80.0
+  min_cash_reserve_pct: 20.0
   max_total_open_orders: 4
 
 portfolio_goal:
   enabled: true
-  starting_equity_eur: 50
-  target_equity_eur: 50000
+  starting_equity_eur: 80
+  target_equity_eur: 100000
   target_days: 365
   milestones_eur:
-    - 100
     - 250
     - 500
     - 1000
-    - 2500
     - 5000
     - 10000
-    - 25000
     - 50000
+    - 100000
   goal_is_risk_input: false
   increase_risk_to_catch_up: false
 

@@ -137,3 +137,45 @@ def test_gateway_daily_loss_uses_net_fee_aware_pnl(monkeypatch):
     gateway.record_pnl_delta(Decimal("-0.24"))
     assert gateway.status()["daily_realized_pnl_eur"] == "-0.26"
     assert gateway.status()["daily_loss_eur"] == "0.26"
+
+
+def test_gateway_scales_eur_caps_from_verified_nav_percentage_mandate(monkeypatch):
+    monkeypatch.setenv("EXECUTION_MODE", "paper")
+    gateway = ExecutionGateway(
+        ExecutionLimits(Decimal("10"), Decimal("50"), Decimal("25"), 50)
+    )
+
+    assert gateway.set_verified_nav_limits(
+        nav_eur=80,
+        max_trade_pct=16,
+        max_exposure_pct=65,
+        max_daily_loss_pct=3,
+    ) is True
+    assert gateway.limits.max_trade_eur == Decimal("12.8")
+    assert gateway.limits.max_daily_exposure_eur == Decimal("52")
+    assert gateway.limits.max_daily_loss_eur == Decimal("2.4")
+    assert gateway.limits.max_slippage_bps == 50
+
+    assert gateway.set_verified_nav_limits(
+        nav_eur=250,
+        max_trade_pct=14,
+        max_exposure_pct=68,
+        max_daily_loss_pct=3,
+    ) is True
+    assert gateway.limits.max_trade_eur == Decimal("35")
+    assert gateway.limits.max_daily_exposure_eur == Decimal("170")
+    assert gateway.limits.max_daily_loss_eur == Decimal("7.5")
+
+
+def test_gateway_rejects_invalid_dynamic_capital_snapshot(monkeypatch):
+    monkeypatch.setenv("EXECUTION_MODE", "paper")
+    original = ExecutionLimits(Decimal("10"), Decimal("50"), Decimal("25"), 50)
+    gateway = ExecutionGateway(original)
+
+    assert gateway.set_verified_nav_limits(
+        nav_eur=0,
+        max_trade_pct=16,
+        max_exposure_pct=65,
+        max_daily_loss_pct=3,
+    ) is False
+    assert gateway.limits == original

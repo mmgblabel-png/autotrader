@@ -7,9 +7,13 @@ def _config():
     return yaml.safe_load(Path("config.yaml").read_text())
 
 
-def test_research_pack_config_is_valid_and_does_not_raise_live_budget():
+def test_research_pack_config_uses_80_eur_live_capital_policy():
     cfg = _config()
-    assert cfg["portfolio"]["global_live_budget_eur"] == 50
+    assert cfg["portfolio"]["initial_live_capital_eur"] == 80
+    assert cfg["portfolio"]["global_live_budget_eur"] == 80
+    assert cfg["portfolio"]["dynamic_with_verified_nav"] is True
+    assert cfg["portfolio"]["max_deployable_pct"] == 80.0
+    assert cfg["portfolio"]["min_cash_reserve_pct"] == 20.0
 
     live = {
         key: value

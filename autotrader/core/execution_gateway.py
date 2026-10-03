@@ -73,6 +73,46 @@ class ExecutionGateway:
     def reset_daily(self)->None:
         self.daily_exposure_eur=Decimal("0"); self.daily_realized_pnl_eur=Decimal("0"); self.daily_loss_eur=Decimal("0"); self._seen_order_ids.clear()
 
+    def set_verified_nav_limits(
+        self,
+        *,
+        nav_eur: Decimal | float,
+        max_trade_pct: Decimal | float,
+        max_exposure_pct: Decimal | float,
+        max_daily_loss_pct: Decimal | float,
+    ) -> bool:
+        """Derive EUR execution caps from a verified NAV and approved percentage limits.
+
+        Environment values are bootstrap/fallback limits before a verified NAV
+        exists. Once a fresh verified NAV is available, the same percentage
+        mandate used by FundRiskEngine becomes the central EUR gate as well.
+        Slippage remains independently capped by the configured hard bps limit.
+        """
+        try:
+            nav = Decimal(str(nav_eur))
+            trade_pct = Decimal(str(max_trade_pct))
+            exposure_pct = Decimal(str(max_exposure_pct))
+            loss_pct = Decimal(str(max_daily_loss_pct))
+        except (InvalidOperation, TypeError, ValueError):
+            return False
+        if (
+            not nav.is_finite()
+            or nav <= 0
+            or any(
+                (not value.is_finite()) or value < 0 or value > 100
+                for value in (trade_pct, exposure_pct, loss_pct)
+            )
+        ):
+            return False
+
+        self.limits = ExecutionLimits(
+            max_trade_eur=nav * trade_pct / Decimal("100"),
+            max_daily_exposure_eur=nav * exposure_pct / Decimal("100"),
+            max_daily_loss_eur=nav * loss_pct / Decimal("100"),
+            max_slippage_bps=self.limits.max_slippage_bps,
+        )
+        return True
+
     def restore_daily_state(
         self,
         *,
