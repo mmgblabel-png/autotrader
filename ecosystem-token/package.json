@@ -4,12 +4,15 @@
   "private": true,
   "type": "module",
   "description": "Testnet-first utility-token contracts for the AI HedgeFund ecosystem.",
-  "engines": {"node": ">=22.10.0"},
+  "engines": {
+    "node": ">=22.10.0"
+  },
   "scripts": {
     "build": "hardhat build",
     "test": "hardhat test mocha",
     "check": "npm run build && npm run test",
-    "deploy:amoy": "hardhat run scripts/deploy.ts --network amoy"
+    "deploy:amoy": "hardhat run scripts/deploy.ts --network amoy",
+    "deploy:vesting:amoy": "hardhat run scripts/deploy-vesting.ts --network amoy"
   },
   "devDependencies": {
     "@nomicfoundation/hardhat-toolbox-mocha-ethers": "4.0.0",
