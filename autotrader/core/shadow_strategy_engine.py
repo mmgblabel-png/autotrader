@@ -91,6 +91,9 @@ class ShadowStrategyEngine:
         self.canary_min_profit_factor = max(
             1.0, float(self.config.get("canary_min_profit_factor", 1.05))
         )
+        self.canary_min_q10_return_pct = float(
+            self.config.get("canary_min_q10_return_pct", -3.50)
+        )
         self.canary_max_drawdown_pct = max(
             0.1, float(self.config.get("canary_max_drawdown_pct", 5.0))
         )
@@ -554,6 +557,10 @@ class ShadowStrategyEngine:
                 canary_blockers.append("winrate")
             if profit_factor < self.canary_min_profit_factor:
                 canary_blockers.append("profit_factor")
+            if tail_sample_count < self.canary_min_completed_trades:
+                canary_blockers.append("tail_samples")
+            elif q10_return_pct < self.canary_min_q10_return_pct:
+                canary_blockers.append("tail_risk_q10")
             if max_dd_pct > self.canary_max_drawdown_pct:
                 canary_blockers.append("drawdown")
             if adaptive_change_pending:
