@@ -244,3 +244,24 @@ BITVAVO_ACCESS_WINDOW=10000
 ```
 
 Voeg deze secrets nog niet toe zolang je alleen shadow mode wilt gebruiken. De adapter ondersteunt geen withdrawals en live orders blijven geblokkeerd door de bestaande execution gates. Dit is technische informatie, geen juridisch of financieel advies; controleer zelf de actuele Bitvavo-voorwaarden, jouw accountstatus en Nederlandse regelgeving voordat je live orders activeert.
+
+
+## Polymarket BTC Z-score shadow worker
+
+A separate read-only research worker now evaluates current BTC 5-minute and 15-minute Up/Down markets against a volatility/time-to-expiry probability model. It accepts only contracts whose resolution text identifies Chainlink BTC/USD TWAP, reads public Gamma/CLOB data, and records hypothetical settlement PnL. The worker does **not** import the execution adapter and cannot submit orders.
+
+Run locally:
+
+```bash
+python -m pip install -e '.[live]'
+python -m autotrader.prediction.worker --config config.yaml
+```
+
+Run as an isolated container:
+
+```bash
+docker build -f Dockerfile.polymarket-shadow -t autotrader-polymarket-shadow .
+docker run --rm -v autotrader-polymarket-data:/data autotrader-polymarket-shadow
+```
+
+The default evidence gate requires at least 200 settled shadow trades, positive modeled after-fee PnL, profit factor >= 1.20 and max drawdown <= 8%. Even when that gate passes, automatic live promotion remains disabled. See `docs/POLYMARKET_ZSCORE_SHADOW.md`.
