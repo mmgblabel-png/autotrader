@@ -1260,6 +1260,65 @@ def _shadow_fee_ranked_candidates(
     )[: max(1, int(limit))]
 
 
+def _sync_shadow_canary(
+    agent: AutoTrader,
+    shadow_status: dict[str, Any],
+    configs: dict[str, dict[str, Any]],
+) -> dict[str, object]:
+    strategy = agent._strategies.get("shadow_canary")
+    if strategy is None or not hasattr(strategy, "configure_candidate"):
+        return {"available": False, "locked": False, "candidate": None}
+
+    locked = bool(getattr(strategy, "candidate_locked", False))
+    current = str(getattr(strategy, "candidate_name", "") or "")
+    if locked:
+        return {
+            "available": True,
+            "locked": True,
+            "candidate": current or None,
+            "active": bool(strategy._config.get("_canary_active", False)),
+        }
+
+    rows = [
+        row
+        for row in (shadow_status.get("strategies", []) or [])
+        if bool(row.get("canary_ready"))
+        and not bool(row.get("position_open"))
+        and str(row.get("name") or "") in configs
+    ]
+    rows.sort(
+        key=lambda row: (
+            float(row.get("score") or 0.0),
+            float(row.get("stressed_net_pnl_eur") or 0.0),
+            int(row.get("completed_trades") or 0),
+        ),
+        reverse=True,
+    )
+    if not rows:
+        return {
+            "available": True,
+            "locked": False,
+            "candidate": None,
+            "eligible_count": 0,
+        }
+
+    chosen = rows[0]
+    name = str(chosen.get("name") or "")
+    configured = bool(
+        strategy.configure_candidate(name, dict(configs[name]), chosen)
+    )
+    return {
+        "available": True,
+        "locked": bool(getattr(strategy, "candidate_locked", False)),
+        "candidate": str(getattr(strategy, "candidate_name", "") or "") or None,
+        "eligible_count": len(rows),
+        "configured": configured,
+        "shadow_score": float(chosen.get("score") or 0.0),
+        "shadow_net_pnl_eur": float(chosen.get("realized_net_pnl_eur") or 0.0),
+        "stressed_net_pnl_eur": float(chosen.get("stressed_net_pnl_eur") or 0.0),
+    }
+
+
 async def _shadow_strategy_loop(app: FastAPI, agent: AutoTrader) -> None:
     """Run many candidate strategy/market combinations without sending orders."""
     cfg = agent._config.get("shadow_lab", {}) or {}
@@ -1346,6 +1405,15 @@ async def _shadow_strategy_loop(app: FastAPI, agent: AutoTrader) -> None:
                 if updated_names:
                     app.state.shadow_strategy_engine.flush()
                 app.state.shadow_dynamic_configs = dynamic_configs
+                summary_cfg = dict(strategies)
+                summary_cfg.update(dynamic_configs)
+                shadow_status = app.state.shadow_strategy_engine.status(summary_cfg)
+                app.state.shadow_last_status = shadow_status
+                app.state.shadow_canary_status = _sync_shadow_canary(
+                    agent,
+                    shadow_status,
+                    summary_cfg,
+                )
                 candidate_count = len(updated_names)
                 previous_count = getattr(app.state, "shadow_last_candidate_count", None)
                 candidate_count_changed = candidate_count != previous_count
@@ -1375,9 +1443,6 @@ async def _shadow_strategy_loop(app: FastAPI, agent: AutoTrader) -> None:
                 now_mono = time.monotonic()
                 last_summary = float(getattr(app.state, "shadow_summary_last_log_at", 0.0) or 0.0)
                 if first_success or candidate_count_changed or now_mono - last_summary >= 300.0:
-                    summary_cfg = dict(strategies)
-                    summary_cfg.update(dynamic_configs)
-                    shadow_status = app.state.shadow_strategy_engine.status(summary_cfg)
                     rows = list(shadow_status.get("strategies", []) or [])
                     promotable = [row for row in rows if row.get("promotion_ready")]
                     top = max(rows, key=lambda row: float(row.get("score") or 0.0), default={})
@@ -1605,6 +1670,12 @@ async def _lifespan(app: FastAPI):
     app.state.shadow_backfill_attempted = set()
     app.state.shadow_last_candidate_count = None
     app.state.shadow_summary_last_log_at = 0.0
+    app.state.shadow_last_status = {"strategies": []}
+    app.state.shadow_canary_status = {
+        "available": "shadow_canary" in agent._strategies,
+        "locked": False,
+        "candidate": None,
+    }
     app.state.live_readiness_last_log_state = None
     app.state.live_readiness_last_log_at = 0.0
     app.state.allocator_v2 = StrategyAllocatorV2(agent._config.get("allocator_v2", {}) or {})
@@ -2642,6 +2713,11 @@ def shadow_strategy_status() -> dict[str, object]:
         **payload,
         "last_update_at": getattr(app.state, "shadow_strategy_last_at", None),
         "runtime_error": getattr(app.state, "shadow_strategy_error", None),
+        "live_canary": getattr(
+            app.state,
+            "shadow_canary_status",
+            {"available": False, "locked": False, "candidate": None},
+        ),
     }
 
 
@@ -3446,13 +3522,14 @@ def bitpanda_fusion_balance_analysis() -> dict[str, object]:
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
-_VALID: Final[set[str]] = {"market_maker", "arbitrage", "grid", "grid_eth", "sniper"}
+_VALID: Final[set[str]] = {"market_maker", "arbitrage", "grid", "grid_eth", "sniper", "shadow_canary"}
 _STRATEGY_DISPLAY_NAMES: Final[dict[str, str]] = {
     "market_maker": "MarketMaker",
     "arbitrage": "ArbitrageHunter",
     "grid": "GridRunner",
     "grid_eth": "GridRunnerETH",
     "sniper": "SniperBot",
+    "shadow_canary": "ShadowCanary",
 }
 
 

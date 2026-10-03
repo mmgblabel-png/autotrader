@@ -43,6 +43,7 @@ class StrategyAllocator:
         "grid": "GridRunner",
         "grid_eth": "GridRunnerETH",
         "sniper": "SniperBot",
+        "shadow_canary": "ShadowCanary",
     }
 
     def __init__(self, config: dict) -> None:

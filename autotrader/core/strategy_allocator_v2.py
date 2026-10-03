@@ -57,6 +57,7 @@ class StrategyAllocatorV2:
             "grid": "GridRunner",
             "grid_eth": "GridRunnerETH",
             "sniper": "SniperBot",
+            "shadow_canary": "ShadowCanary",
             "arbitrage": "ArbitrageHunter",
             "mean_reversion": "MeanReversionShadow",
             "volatility_breakout": "VolatilityBreakoutShadow",

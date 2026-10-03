@@ -26,6 +26,7 @@ from autotrader.strategies.base import BaseStrategy
 from autotrader.strategies.grid_runner import GridRunner
 from autotrader.strategies.market_maker import MarketMaker
 from autotrader.strategies.sniper_bot import SniperBot
+from autotrader.strategies.shadow_canary import ShadowCanaryStrategy
 
 log = get_logger("AutoTrader")
 
@@ -35,6 +36,7 @@ _STRATEGY_REGISTRY: Dict[str, type] = {
     "grid": GridRunner,
     "grid_eth": GridRunner,
     "sniper": SniperBot,
+    "shadow_canary": ShadowCanaryStrategy,
 }
 
 
@@ -489,6 +491,7 @@ class AutoTrader:
                 "grid": "GridRunner",
                 "grid_eth": "GridRunnerETH",
                 "sniper": "SniperBot",
+                "shadow_canary": "ShadowCanary",
             }
             if key in name_map:
                 self._rm.set_config(name_map[key], rc)
@@ -501,6 +504,7 @@ class AutoTrader:
             "grid": "GridRunner",
             "grid_eth": "GridRunnerETH",
             "sniper": "SniperBot",
+            "shadow_canary": "ShadowCanary",
         }
         protection_defaults = self._config.get("autonomous_fund", {}) or {}
         protection_map = {
