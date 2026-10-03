@@ -92,6 +92,41 @@ describe("AIHF ecosystem contracts", function () {
     expect(await vault.lockedBalance(user.address)).to.equal(pro);
   });
 
+  it("enforces a four-year team schedule with a one-year cliff", async function () {
+    const { ethers, networkHelpers, token, treasury, user } = await deployFixture();
+    const DAY = 24 * 60 * 60;
+    const latest = await ethers.provider.getBlock("latest");
+    if (!latest) throw new Error("latest block unavailable");
+
+    const start = latest.timestamp;
+    const duration = 4 * 365 * DAY;
+    const cliff = 365 * DAY;
+    const allocation = ethers.parseEther("15000000");
+
+    const vesting = await ethers.deployContract("AIHFVestingWallet", [
+      user.address,
+      start,
+      duration,
+      cliff
+    ]);
+    await vesting.waitForDeployment();
+    await token.connect(treasury).transfer(await vesting.getAddress(), allocation);
+
+    await networkHelpers.time.increase(cliff - 1);
+    expect(await vesting.releasable(await token.getAddress())).to.equal(0n);
+
+    await networkHelpers.time.increase(1);
+    const cliffReleasable = await vesting.releasable(await token.getAddress());
+    expect(cliffReleasable).to.be.greaterThanOrEqual(allocation / 4n);
+
+    await vesting.connect(user).release(await token.getAddress());
+    expect(await token.balanceOf(user.address)).to.be.greaterThanOrEqual(allocation / 4n);
+
+    await networkHelpers.time.increase(3 * 365 * DAY);
+    await vesting.connect(user).release(await token.getAddress());
+    expect(await token.balanceOf(user.address)).to.equal(allocation);
+  });
+
   it("rejects over-withdraw requests", async function () {
     const { token, vault, treasury, user, reader } = await deployFixture();
 
