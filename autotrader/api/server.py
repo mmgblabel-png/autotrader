@@ -81,6 +81,7 @@ from autotrader.fund.automation import AutonomousFundScheduler
 from autotrader.connectors.bitvavo import BitvavoAdapter, BitvavoError
 from autotrader.connectors.coinbase_advanced import CoinbaseAdvancedMarketData, CoinbaseMarketDataError, CoinbaseAuthenticationError
 from autotrader.core.coinbase_zscore_shadow import CoinbaseZScoreShadowEngine
+from autotrader.core.coinbase_autonomous_executor import CoinbaseAutonomousExecutor
 from autotrader.connectors.bitpanda_fusion import BitpandaFusionAdapter
 from autotrader.api.dashboard_html import dashboard_html
 from autotrader.ml.shadow import walk_forward, lookahead_analysis, recursive_analysis
@@ -1591,6 +1592,17 @@ async def _coinbase_zscore_shadow_loop(app: FastAPI) -> None:
         try:
             status = await asyncio.to_thread(app.state.coinbase_zscore_shadow.tick)
             app.state.coinbase_zscore_shadow_error = None
+    coinbase_auto_cfg = agent._config.get("coinbase_autonomous_execution", {}) or {}
+    app.state.coinbase_autonomous_enabled = bool(coinbase_auto_cfg.get("enabled", False))
+    app.state.coinbase_autonomous_executor = CoinbaseAutonomousExecutor(coinbase_auto_cfg)
+    try:
+        app.state.coinbase_autonomous_interval_seconds = max(
+            2.0, float(coinbase_auto_cfg.get("interval_seconds", 5.0))
+        )
+    except (TypeError, ValueError):
+        app.state.coinbase_autonomous_interval_seconds = 5.0
+    app.state.coinbase_autonomous_error = None
+    app.state.coinbase_autonomous_status = app.state.coinbase_autonomous_executor.status()
             if first_success:
                 log.info(
                     "Coinbase Z-score shadow active: product=%s durations=%s api_key_required=%s live_orders_sent=%s",
@@ -1604,6 +1616,37 @@ async def _coinbase_zscore_shadow_loop(app: FastAPI) -> None:
             app.state.coinbase_zscore_shadow_error = type(exc).__name__
             log.warning("Coinbase Z-score shadow tick failed safely: %s", type(exc).__name__)
         await asyncio.sleep(app.state.coinbase_zscore_shadow_interval_seconds)
+
+
+async def _coinbase_autonomous_loop(app: FastAPI) -> None:
+    """Run the bounded Coinbase SPOT canary behind the existing operator arm."""
+    first_log = True
+    while True:
+        try:
+            shadow_status = app.state.coinbase_zscore_shadow.status()
+            status = await asyncio.to_thread(
+                app.state.coinbase_autonomous_executor.tick,
+                armed=bool(getattr(app.state, "live_armed", False)),
+                shadow_status=shadow_status,
+            )
+            app.state.coinbase_autonomous_status = status
+            app.state.coinbase_autonomous_error = None
+            if first_log:
+                log.info(
+                    "Coinbase autonomous canary active: product=%s mode=%s live_orders_sent=%s failed_gates=%s",
+                    status.get("product_id"),
+                    status.get("mode"),
+                    status.get("live_orders_sent"),
+                    ((status.get("readiness") or {}).get("failed_gates") or []),
+                )
+                first_log = False
+        except Exception as exc:
+            app.state.coinbase_autonomous_error = getattr(exc, "category", type(exc).__name__)
+            log.warning(
+                "Coinbase autonomous canary tick failed safely: %s",
+                app.state.coinbase_autonomous_error,
+            )
+        await asyncio.sleep(app.state.coinbase_autonomous_interval_seconds)
 
 
 @contextlib.asynccontextmanager
@@ -1808,6 +1851,14 @@ async def _lifespan(app: FastAPI):
         if app.state.coinbase_zscore_shadow_enabled
         else None
     )
+    app.state.coinbase_autonomous_task = (
+        asyncio.create_task(
+            _coinbase_autonomous_loop(app),
+            name="autotrader-coinbase-autonomous-loop",
+        )
+        if app.state.coinbase_autonomous_enabled
+        else None
+    )
     app.state.shadow_strategy_task = asyncio.create_task(
         _shadow_strategy_loop(app, agent), name="autotrader-shadow-strategy-loop"
     )
@@ -1840,6 +1891,8 @@ async def _lifespan(app: FastAPI):
         app.state.arbitrage_shadow_task.cancel()
         if app.state.coinbase_zscore_shadow_task is not None:
             app.state.coinbase_zscore_shadow_task.cancel()
+        if app.state.coinbase_autonomous_task is not None:
+            app.state.coinbase_autonomous_task.cancel()
         app.state.shadow_strategy_task.cancel()
         app.state.opportunity_router_task.cancel()
         app.state.autonomous_fund_task.cancel()
@@ -1852,6 +1905,9 @@ async def _lifespan(app: FastAPI):
         if app.state.coinbase_zscore_shadow_task is not None:
             with contextlib.suppress(asyncio.CancelledError):
                 await app.state.coinbase_zscore_shadow_task
+        if app.state.coinbase_autonomous_task is not None:
+            with contextlib.suppress(asyncio.CancelledError):
+                await app.state.coinbase_autonomous_task
         with contextlib.suppress(asyncio.CancelledError):
             await app.state.shadow_strategy_task
         with contextlib.suppress(asyncio.CancelledError):
@@ -3442,6 +3498,33 @@ def coinbase_zscore_shadow_status() -> dict[str, object]:
         **engine.status(),
         "enabled": bool(getattr(app.state, "coinbase_zscore_shadow_enabled", False)),
         "runtime_error": getattr(app.state, "coinbase_zscore_shadow_error", None),
+    }
+
+
+@app.get("/api/coinbase/autonomous", tags=["coinbase"])
+def coinbase_autonomous_status() -> dict[str, object]:
+    """Return bounded Coinbase autonomous execution readiness and state."""
+    executor = getattr(app.state, "coinbase_autonomous_executor", None)
+    if executor is None:
+        return {
+            "venue": "coinbase_advanced",
+            "enabled": False,
+            "mode": "autonomous_spot_canary",
+            "reason": "executor_not_initialized",
+        }
+    try:
+        readiness = executor.readiness(
+            armed=bool(getattr(app.state, "live_armed", False)),
+            shadow_status=app.state.coinbase_zscore_shadow.status(),
+        )
+    except Exception as exc:
+        readiness = {
+            "ready_for_new_entry": False,
+            "failed_gates": [getattr(exc, "category", type(exc).__name__)],
+        }
+    return {
+        **executor.status(readiness=readiness),
+        "runtime_error": getattr(app.state, "coinbase_autonomous_error", None),
     }
 
 
