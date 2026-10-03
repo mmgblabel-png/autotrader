@@ -5,26 +5,34 @@ ENV PIP_DISABLE_PIP_VERSION_CHECK=1 \
     PYTHONDONTWRITEBYTECODE=1
 
 WORKDIR /build
-COPY pyproject.toml README.md config.yaml ./
+
+COPY pyproject.toml README.md config.polymarket-shadow.yaml ./
 COPY autotrader ./autotrader
 COPY tests ./tests
+
 RUN python -m pip install --upgrade pip \
     && python -m pip install -e ".[dev,live]" \
     && python -m pytest -q tests/test_prediction_zscore.py
 
 FROM python:3.12-slim AS runtime
+
 ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
     PIP_DISABLE_PIP_VERSION_CHECK=1 \
     PIP_NO_CACHE_DIR=1 \
     AUTOTRADER_CONFIG=/app/config.yaml
+
 WORKDIR /app
+
 RUN groupadd --gid 10001 autotrader \
     && useradd --uid 10001 --gid autotrader --create-home --shell /usr/sbin/nologin autotrader \
     && mkdir -p /data \
     && chown -R autotrader:autotrader /data /app
+
 COPY --from=builder /usr/local /usr/local
-COPY --chown=autotrader:autotrader config.yaml /app/config.yaml
+COPY --chown=autotrader:autotrader config.polymarket-shadow.yaml /app/config.yaml
 COPY --chown=autotrader:autotrader autotrader /app/autotrader
+
 USER autotrader
+
 CMD ["python", "-m", "autotrader.prediction.worker", "--config", "/app/config.yaml"]
