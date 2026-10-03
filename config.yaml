@@ -500,3 +500,32 @@ strategies:
     protection_trailing_drawdown_pct: 1.25
     protection_partial_profit_trigger_pct: 0.75
     protection_partial_profit_fraction: 0.50
+
+prediction_market_shadow:
+  enabled: true
+  durations_seconds: [300, 900]
+  shadow_bankroll_usdc: 80
+  state_path: /data/polymarket_zscore_shadow.json
+  status_path: /data/polymarket_zscore_status.json
+  status_interval_seconds: 15
+  reconnect_seconds: 5
+  http_timeout_seconds: 4
+  strike_capture_grace_seconds: 75
+  volatility_lookback_seconds: 3600
+  assumed_fee_bps: 100
+  assumed_slippage_bps: 25
+  promotion_min_settled_trades: 200
+  promotion_min_profit_factor: 1.20
+  promotion_max_drawdown_pct: 8.0
+  model:
+    min_sigma_annual: 0.10
+    max_sigma_annual: 3.00
+    min_seconds_to_expiry: 20
+    twap_window_seconds: 60
+    log_drift_annual: 0.0
+    min_after_cost_edge: 0.025
+    safety_margin_bps: 75
+    kelly_fraction: 0.25
+    max_bankroll_fraction: 0.05
+    max_stake_usdc: 5.0
+    min_stake_usdc: 1.0
