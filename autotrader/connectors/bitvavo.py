@@ -61,77 +61,163 @@ class BitvavoAdapter:
         payload = f"{timestamp}{method.upper()}/v2{endpoint}{body_text}"
         return hmac.new(secret.encode("utf-8"), payload.encode("utf-8"), hashlib.sha256).hexdigest()
 
+    @staticmethod
+    def _private_read_retry_delay(exc: urllib.error.HTTPError, attempt: int) -> float | None:
+        """Return a bounded retry delay for idempotent private GET requests.
+
+        Bitvavo documents 429 retries against the `bitvavo-ratelimit-resetat`
+        response header and exponential delays for 5xx responses. We never
+        retry mutating POST/DELETE requests here because a timed-out order
+        operation may already have reached the exchange.
+        """
+        if exc.code == 429:
+            reset_at = exc.headers.get("bitvavo-ratelimit-resetat") if exc.headers else None
+            max_wait = max(
+                0.0,
+                min(
+                    60.0,
+                    float(os.getenv("BITVAVO_PRIVATE_READ_MAX_WAIT_SECONDS", "5")),
+                ),
+            )
+            if reset_at:
+                try:
+                    delay = max(0.0, float(reset_at) / 1000.0 - time.time())
+                except (TypeError, ValueError):
+                    delay = None
+                if delay is not None:
+                    return delay if delay <= max_wait else None
+            return min(max_wait, 0.5 * (2 ** attempt)) if max_wait > 0 else None
+        if 500 <= exc.code <= 599:
+            return min(2.0, 0.5 * (2 ** attempt))
+        return None
+
     def _private_request(self, method: str, endpoint: str, body: dict[str, Any] | None = None, query: dict[str, str] | None = None) -> Any:
         if not self.api_key or not self.api_secret:
             raise BitvavoError("BITVAVO_API_KEY and BITVAVO_API_SECRET are required")
         method = method.upper()
-        # Query-only private endpoints (notably DELETE /order) have no HTTP
-        # body. Signing an invented "{}" body makes Bitvavo reject the HMAC
-        # with errorCode 309 even though the query and API key are valid.
+        # Only authenticated reads are retried. Never replay an exchange
+        # mutation automatically: an order/cancel timeout can be ambiguous.
+        attempts = (
+            max(1, min(4, int(os.getenv("BITVAVO_PRIVATE_READ_ATTEMPTS", "3"))))
+            if method == "GET"
+            else 1
+        )
         body_text = "" if body is None else json.dumps(body, separators=(",", ":"))
         query_text = urllib.parse.urlencode(query) if query else ""
         signed_endpoint = endpoint + (f"?{query_text}" if query_text else "")
-        timestamp = str(int(time.time() * 1000))
-        payload = f"{timestamp}{method}/v2{signed_endpoint}{body_text}"
-        signature = self._create_signature(self.api_secret, timestamp, method, signed_endpoint, body_text)
-        if os.getenv("BITVAVO_DEBUG_SIGNING", "false").lower() in {"1", "true", "yes"}:
-            LOGGER.warning(
-                "Bitvavo signing debug method=%s path=/v2%s timestamp=%s body_len=%d "
-                "payload_sha256=%s signature_prefix=%s signature_suffix=%s",
-                method,
-                endpoint,
-                timestamp,
-                len(body_text.encode("utf-8")),
-                hashlib.sha256(payload.encode("utf-8")).hexdigest(),
-                signature[:4],
-                signature[-4:],
-            )
-        headers = {
-            "Bitvavo-Access-Key": self.api_key,
-            "Bitvavo-Access-Timestamp": timestamp,
-            "Bitvavo-Access-Signature": signature,
-            "Bitvavo-Access-Window": str(self.access_window),
-            "Content-Type": "application/json",
-        }
         url = self.BASE_URL + signed_endpoint
-        request = urllib.request.Request(url, data=body_text.encode() if body_text else None, method=method, headers=headers)
-        try:
-            with urllib.request.urlopen(request, timeout=self.timeout) as response:
-                return json.loads(response.read().decode())
-        except urllib.error.HTTPError as exc:
-            error_code = None
-            error_message = None
+
+        for attempt in range(attempts):
+            # A fresh timestamp/signature is required after any retry delay.
+            timestamp = str(int(time.time() * 1000))
+            payload = f"{timestamp}{method}/v2{signed_endpoint}{body_text}"
+            signature = self._create_signature(
+                self.api_secret,
+                timestamp,
+                method,
+                signed_endpoint,
+                body_text,
+            )
+            if os.getenv("BITVAVO_DEBUG_SIGNING", "false").lower() in {"1", "true", "yes"}:
+                LOGGER.warning(
+                    "Bitvavo signing debug method=%s path=/v2%s timestamp=%s body_len=%d "
+                    "payload_sha256=%s signature_prefix=%s signature_suffix=%s",
+                    method,
+                    endpoint,
+                    timestamp,
+                    len(body_text.encode("utf-8")),
+                    hashlib.sha256(payload.encode("utf-8")).hexdigest(),
+                    signature[:4],
+                    signature[-4:],
+                )
+            headers = {
+                "Bitvavo-Access-Key": self.api_key,
+                "Bitvavo-Access-Timestamp": timestamp,
+                "Bitvavo-Access-Signature": signature,
+                "Bitvavo-Access-Window": str(self.access_window),
+                "Content-Type": "application/json",
+            }
+            request = urllib.request.Request(
+                url,
+                data=body_text.encode() if body_text else None,
+                method=method,
+                headers=headers,
+            )
             try:
-                payload = json.loads(exc.read().decode())
-                raw_code = payload.get("errorCode")
-                error_code = int(raw_code) if raw_code is not None else None
-                raw_message = payload.get("error")
-                error_message = str(raw_message) if raw_message is not None else None
-            except (ValueError, TypeError, json.JSONDecodeError, UnicodeDecodeError):
-                pass
-            if error_code == 309:
-                category = "invalid_signature"
-            elif error_code == 310:
-                category = "trade_permission_missing"
-            elif exc.code in {401, 403}:
-                category = "authentication_rejected"
-            else:
-                category = "bitvavo_http_error"
-            raise BitvavoError(
-                "Bitvavo private request was rejected",
-                category=category,
-                status=exc.code,
-                error_code=error_code,
-                error_message=error_message,
-            ) from exc
-        except (urllib.error.URLError, TimeoutError) as exc:
-            raise BitvavoError("Bitvavo private request could not reach the service", category="network_error") from exc
-        except (json.JSONDecodeError, UnicodeDecodeError) as exc:
-            raise BitvavoError("Bitvavo returned an invalid response", category="invalid_response") from exc
-        except BitvavoError:
-            raise
-        except Exception as exc:
-            raise BitvavoError("Bitvavo private request failed", category="bitvavo_error") from exc
+                with urllib.request.urlopen(request, timeout=self.timeout) as response:
+                    return json.loads(response.read().decode())
+            except urllib.error.HTTPError as exc:
+                error_code = None
+                error_message = None
+                try:
+                    error_payload = json.loads(exc.read().decode())
+                    raw_code = error_payload.get("errorCode")
+                    error_code = int(raw_code) if raw_code is not None else None
+                    raw_message = error_payload.get("error")
+                    error_message = str(raw_message) if raw_message is not None else None
+                except (ValueError, TypeError, json.JSONDecodeError, UnicodeDecodeError):
+                    pass
+
+                retry_delay = (
+                    self._private_read_retry_delay(exc, attempt)
+                    if method == "GET" and attempt + 1 < attempts
+                    else None
+                )
+                if retry_delay is not None:
+                    LOGGER.warning(
+                        "Retrying Bitvavo private GET after HTTP %s in %.3fs (attempt %d/%d)",
+                        exc.code,
+                        retry_delay,
+                        attempt + 2,
+                        attempts,
+                    )
+                    time.sleep(retry_delay)
+                    continue
+
+                if error_code == 309:
+                    category = "invalid_signature"
+                elif error_code == 310:
+                    category = "trade_permission_missing"
+                elif exc.code == 429 or error_code == 105:
+                    category = "rate_limited"
+                elif exc.code in {401, 403}:
+                    category = "authentication_rejected"
+                else:
+                    category = "bitvavo_http_error"
+                raise BitvavoError(
+                    "Bitvavo private request was rejected",
+                    category=category,
+                    status=exc.code,
+                    error_code=error_code,
+                    error_message=error_message,
+                ) from exc
+            except (urllib.error.URLError, TimeoutError) as exc:
+                if method == "GET" and attempt + 1 < attempts:
+                    delay = min(2.0, 0.5 * (2 ** attempt))
+                    LOGGER.warning(
+                        "Retrying Bitvavo private GET after network error in %.3fs (attempt %d/%d)",
+                        delay,
+                        attempt + 2,
+                        attempts,
+                    )
+                    time.sleep(delay)
+                    continue
+                raise BitvavoError(
+                    "Bitvavo private request could not reach the service",
+                    category="network_error",
+                ) from exc
+            except (json.JSONDecodeError, UnicodeDecodeError) as exc:
+                raise BitvavoError(
+                    "Bitvavo returned an invalid response",
+                    category="invalid_response",
+                ) from exc
+            except BitvavoError:
+                raise
+            except Exception as exc:
+                raise BitvavoError(
+                    "Bitvavo private request failed",
+                    category="bitvavo_error",
+                ) from exc
 
     def candles(
         self,
