@@ -8,6 +8,7 @@ from typing import Any, Iterable
 _ORDER_TYPE_BY_STRATEGY = {
     "MarketMaker": "limit",
     "SniperBot": "market",
+    "ShadowCanary": "limit",
 }
 
 _TERMINAL_ORDER_STATES = {
