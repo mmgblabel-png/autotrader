@@ -62,6 +62,7 @@ from autotrader.core.execution_gateway import ExecutionGateway
 from autotrader.core.order_manager import OrderStatus
 from autotrader.core.bitvavo_security import validate_bitvavo_security
 from autotrader.core.live_preflight import validate_bitvavo_live_strategies
+from autotrader.core.live_arm_state import LiveArmIntentStore
 from autotrader.core.market_feed import BitpandaFusionMarketFeed
 from autotrader.core.market_universe import MultiExchangeMarketUniverse
 from autotrader.core.shadow_strategy_engine import ShadowStrategyEngine
@@ -887,6 +888,41 @@ def _apply_strategy_evidence_gate(agent: AutoTrader) -> dict[str, object]:
     }
 
 
+def _maybe_restore_persisted_live_arm(app: FastAPI) -> dict[str, object]:
+    """Restore a previously armed runtime only for the same deployed release."""
+    if not bool(getattr(app.state, "live_mode", False)):
+        return {"restored": False, "reason": "not_live_mode"}
+    if bool(getattr(app.state, "live_armed", False)):
+        return {"restored": False, "reason": "already_armed"}
+    if not bool(getattr(app.state, "live_arm_auto_resume_eligible", False)):
+        return {"restored": False, "reason": "no_same_release_operator_intent"}
+
+    now = time.monotonic()
+    last = float(getattr(app.state, "live_arm_restore_last_attempt", 0.0) or 0.0)
+    if now - last < 5.0:
+        return {"restored": False, "reason": "retry_interval"}
+    app.state.live_arm_restore_last_attempt = now
+
+    try:
+        check = live_readiness()
+    except Exception as exc:
+        log.warning("Persistent live-arm restore check failed safely: %s", type(exc).__name__)
+        return {"restored": False, "reason": type(exc).__name__}
+
+    if not bool(check.get("ready_to_arm")):
+        return {
+            "restored": False,
+            "reason": "readiness_blocked",
+            "failed_gates": sorted(
+                key for key, value in (check.get("gates") or {}).items() if not value
+            ),
+        }
+
+    app.state.live_armed = True
+    log.info("Restored persisted operator live-arm intent after all readiness gates passed.")
+    return {"restored": True, "reason": "same_release_operator_intent"}
+
+
 async def _tick_loop(app: FastAPI, agent: AutoTrader) -> None:
     """Drive all active strategies for the lifetime of the API process.
 
@@ -897,6 +933,7 @@ async def _tick_loop(app: FastAPI, agent: AutoTrader) -> None:
     while True:
         try:
             if app.state.live_mode:
+                _maybe_restore_persisted_live_arm(app)
                 if getattr(app.state, "autonomous_decision_engine", None) is not None:
                     try:
                         risk_payload = _calculated_risk_payload(agent)
@@ -1509,6 +1546,13 @@ async def _lifespan(app: FastAPI):
         1, int(round(journal_reconcile_seconds / app.state.tick_interval_seconds))
     )
     app.state.live_mode = os.getenv("EXECUTION_MODE", "paper").strip().lower() == "live"
+    app.state.live_arm_store = LiveArmIntentStore()
+    persisted_arm = app.state.live_arm_store.load()
+    app.state.live_arm_intent = bool(persisted_arm.armed)
+    app.state.live_arm_auto_resume_eligible = bool(
+        app.state.live_mode and app.state.live_arm_store.should_resume()
+    )
+    app.state.live_arm_restore_last_attempt = 0.0
     app.state.live_armed = False
     if app.state.live_mode:
         agent.live_reconcile()
@@ -2296,6 +2340,13 @@ def live_readiness():
         "ready": ready,
         "ready_to_arm": ready,
         "armed": bool(getattr(app.state, "live_armed", False)),
+        "arm_persistence": {
+            **getattr(app.state, "live_arm_store", LiveArmIntentStore()).status(),
+            "runtime_intent": bool(getattr(app.state, "live_arm_intent", False)),
+            "same_release_auto_resume": bool(
+                getattr(app.state, "live_arm_auto_resume_eligible", False)
+            ),
+        },
         "mode": app.state.execution_gateway.mode.value,
         "resume_mode": bool(
             ready
@@ -2343,7 +2394,7 @@ def live_readiness():
                 else "Ready for explicit runtime activation."
             )
         ),
-        "warning": "Activation is runtime-only and never changes Railway variables.",
+        "warning": "Activation persists only for the same deployed release; a new deployment requires a fresh operator arm.",
     }
 
 
@@ -2363,19 +2414,51 @@ def activate_live(
     check = live_readiness()
     if not check["ready_to_arm"]:
         raise HTTPException(status_code=409, detail={"message":"Live trading is not ready.","gates":check["gates"]})
+    try:
+        app.state.live_arm_store.write(True, source="operator_activate")
+    except Exception as exc:
+        app.state.live_armed = False
+        app.state.live_arm_intent = False
+        app.state.live_arm_auto_resume_eligible = False
+        log.error("Live activation persistence failed safely: %s", type(exc).__name__)
+        raise HTTPException(
+            status_code=503,
+            detail="Live intent could not be persisted; trading remains disarmed.",
+        ) from exc
+    app.state.live_arm_intent = True
+    app.state.live_arm_auto_resume_eligible = bool(
+        app.state.live_arm_store.should_resume()
+    )
     app.state.live_armed = True
-    return {"armed": True, "message": "Live trading armed for this running process. No order was placed."}
+    return {
+        "armed": True,
+        "persistent": True,
+        "message": "Live trading armed. Same-release container restarts will re-arm only after all readiness gates pass.",
+    }
 
 
 @app.post("/api/live/deactivate", tags=["execution"])
 def deactivate_live(_: None = Depends(_require_control_token)):
     app.state.live_armed = False
+    app.state.live_arm_intent = False
+    app.state.live_arm_auto_resume_eligible = False
     app.state.execution_v2_desired_state = {}
+    persistence_error = None
+    try:
+        app.state.live_arm_store.write(False, source="operator_deactivate")
+    except Exception as exc:
+        persistence_error = type(exc).__name__
+        log.error("Live deactivation persistence failed: %s", persistence_error)
     try:
         get_agent().live_reconcile()
     except Exception as exc:
         log.warning("Post-deactivation order reconciliation failed: %s", exc)
-    return {"armed": False, "message": "Live trading disarmed. Existing exchange orders are not automatically canceled."}
+    return {
+        "armed": False,
+        "persistent": persistence_error is None,
+        "persistence_error": persistence_error,
+        "message": "Live trading disarmed. Existing exchange orders are not automatically canceled.",
+    }
 
 
 @app.get("/api/learning/status", tags=["ml"])
@@ -3021,6 +3104,8 @@ def health():
             "tick_count": getattr(app.state, "tick_count", 0),
             "last_tick_at": getattr(app.state, "last_tick_at", None),
             "last_tick_error": getattr(app.state, "last_tick_error", None),
+            "armed": bool(getattr(app.state, "live_armed", False)),
+            "persistent_arm_intent": bool(getattr(app.state, "live_arm_intent", False)),
         },
     }
 
