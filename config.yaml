@@ -45,6 +45,8 @@ research_lab:
   mean_reversion_lookback: 20
   mean_reversion_entry_z: 1.5
   walk_forward_window: 180
+  walk_forward_purge_bars: 6
+  walk_forward_embargo_bars: 2
   monte_carlo_simulations: 10000
   monte_carlo_horizon_periods: 365
   monte_carlo_block_size: 5
@@ -128,6 +130,12 @@ shadow_lab:
   canary_min_net_pnl_eur: 0.10
   canary_min_profit_factor: 1.05
   canary_max_drawdown_pct: 5.0
+  drift_gate_enabled: true
+  drift_min_samples: 80
+  drift_baseline_bars: 120
+  drift_recent_bars: 40
+  drift_max_mean_shift_sigma: 2.5
+  drift_max_vol_ratio: 2.5
   dynamic_markets_per_strategy: 12
   backfill_candles: 120
   backfill_interval: 1m
