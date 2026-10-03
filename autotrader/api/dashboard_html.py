@@ -28,6 +28,7 @@ DASHBOARD_HTML = r'''<!doctype html>
 <div id="app" class="hidden"><div class="wrap"><header class="top"><div class="brand"><div class="logo">AT</div><div><div class="eyebrow">Portfolio control room</div><div class="title">AutoTrader</div><div class="sub">Bitvavo monitoring · live updates · beveiligde sessie</div></div></div><div class="top-actions"><span class="pill">Mode: <b id="mode">paper</b></span><button class="secondary" onclick="refresh()">Vernieuwen</button><button id="livebtn" onclick="activateLive()" disabled>Live Trading</button><button class="secondary" onclick="logout()">Uitloggen</button></div></header>
 <div id="notice" class="notice">Live Trading blijft fail-closed. De knop wordt alleen actief wanneer alle server-side gates en Bitvavo-credentials aantoonbaar klaarstaan.</div><div class="hero-strip"><div class="card"><div class="hero-label">Systeemstatus</div><div class="hero-value"><span id="systemstatus" class="green">ONLINE</span></div><div class="sub">Bitvavo + Coinbase connectivity, risk gates en learning runtime</div></div><div class="card"><div class="hero-label">Coinbase API</div><div id="coinbasehero" class="hero-value">—</div><div class="sub">Authenticated Advanced Trade</div></div><div class="card"><div class="hero-label">Arbitrage scanner</div><div id="arbhero" class="hero-value">—</div><div class="sub">Shadow · netto edge na kosten</div></div></div>
 <section class="section"><div class="card" style="margin-bottom:14px"><h2>Live Trading</h2><div class="metric"><span>Readiness</span><b id="liveready">controleren…</b></div><div id="livecheck" class="sub" style="margin-top:10px">Geen live orders worden geplaatst door deze statuscontrole.</div><div style="margin-top:12px"><button class="secondary" onclick="groupStrategyControl('start-live')">Start alle live bots</button><button class="secondary" onclick="groupStrategyControl('stop-live')" style="margin-left:8px">Stop alle live bots</button><button id="liveaction" onclick="activateLive()" disabled style="margin-left:8px">Live Trading activeren</button><button id="livestop" class="secondary" onclick="deactivateLive()" style="display:none;margin-left:8px">Stop Live Trading</button></div></div></section>
+<section class="section"><div class="card" style="margin-bottom:14px"><h2>Coinbase Live</h2><div class="metric"><span>Readiness</span><b id="coinbaseliveready">controleren…</b></div><div id="coinbaselivecheck" class="sub" style="margin-top:10px">Coinbase blijft onafhankelijk fail-closed.</div><div style="margin-top:12px"><button id="coinbaseliveaction" onclick="activateCoinbaseLive()" disabled>Coinbase Live activeren</button><button id="coinbaselivestop" class="secondary" onclick="deactivateCoinbaseLive()" style="display:none;margin-left:8px">Stop Coinbase Live</button></div></div></section>
 <section class="section"><div class="grid"><div class="card"><div id="eurlabel" class="label">Portfolio waarde EUR</div><div id="eur" class="value">—</div><div id="eurdelta" class="sub">—</div></div><div class="card"><div id="btclabel" class="label">Portfolio waarde BTC</div><div id="btc" class="value blue">—</div><div id="btcrate" class="sub">—</div></div><div class="card"><div class="label">PnL</div><div id="pnl" class="value">—</div><div id="pnlpct" class="sub">—</div></div><div class="card"><div class="label">Drawdown</div><div id="dd" class="value amber">—</div><div class="sub">Vanaf lokale equity-piek</div></div></div></section>
 <div class="section-title"><h3>Hedge Fund Command Center</h3><div class="line"></div><span id="fundbadge" class="badge">FUND CORE</span></div>
 <section class="section">
@@ -563,6 +564,41 @@ async function deactivateLive(){
   await refreshLiveReadiness(); alert('Live Trading is gestopt. Nieuwe orders worden niet meer uitgevoerd.');
  }catch(e){alert(e.message||'Stoppen mislukt');}
 }
+
+function renderCoinbaseLiveReadiness(d){
+ const armed=!!d.coinbase_armed, ready=!!d.ready_to_arm, failed=d.failed_gates||[];
+ $('coinbaseliveready').textContent=armed?'ARMED · LIVE':(ready?'READY':'NOT READY');
+ $('coinbaseliveready').className=armed?'blue':(ready?'green':'amber');
+ $('coinbaselivecheck').textContent=armed
+   ? 'Coinbase autonome SPOT execution is armed. Orders blijven onder alle risk- en evidence-gates.'
+   : (ready ? 'Coinbase is technisch klaar. Activeren blijft een expliciete operatoractie.' : 'Nog niet klaar: '+failed.join(', '));
+ $('coinbaseliveaction').disabled=!ready||armed;
+ $('coinbaselivestop').style.display=armed?'inline-block':'none';
+}
+async function refreshCoinbaseLiveReadiness(){
+ try{renderCoinbaseLiveReadiness(await get('/api/coinbase/live/readiness'))}
+ catch(e){$('coinbaseliveready').textContent='ONBEKEND';$('coinbaselivecheck').textContent=e.message;$('coinbaseliveaction').disabled=true}
+}
+async function activateCoinbaseLive(){
+ try{
+  const ctl=prompt('Vul je AUTOTRADER_CONTROL_TOKEN in. Deze wordt niet opgeslagen.');
+  if(!ctl) return;
+  const phrase=prompt('Bevestig door exact I_UNDERSTAND_COINBASE_LIVE_ORDERS in te vullen.');
+  if(phrase!=='I_UNDERSTAND_COINBASE_LIVE_ORDERS') return;
+  const r=await fetch('/api/coinbase/live/activate',{method:'POST',headers:{...headers(),'Content-Type':'application/json','X-Autotrader-Token':ctl},body:JSON.stringify({confirmation:phrase})});
+  const d=await r.json(); if(!r.ok) throw Error(d.detail?.message||d.detail||'Coinbase activering geweigerd');
+  await refreshCoinbaseLiveReadiness(); alert('Coinbase Live is geactiveerd.');
+ }catch(e){alert(e.message||'Coinbase live activering mislukt')}
+}
+async function deactivateCoinbaseLive(){
+ try{
+  const ctl=prompt('Vul je AUTOTRADER_CONTROL_TOKEN in. Deze wordt niet opgeslagen.');
+  if(!ctl) return;
+  const r=await fetch('/api/coinbase/live/deactivate',{method:'POST',headers:{...headers(),'X-Autotrader-Token':ctl}});
+  const d=await r.json(); if(!r.ok) throw Error(d.detail||'Coinbase stoppen mislukt');
+  await refreshCoinbaseLiveReadiness(); alert('Coinbase Live is gestopt.');
+ }catch(e){alert(e.message||'Coinbase stoppen mislukt')}
+}
 async function refresh(){
  let now=new Date().toLocaleString();
  $('last').textContent='Bijwerken…';$('apierror').textContent='';
@@ -608,6 +644,7 @@ async function refresh(){
   if(fr.status==='fulfilled')renderFeeReality(fr.value);else fail(fr,'Fee Reality');
   if(uni.status==='fulfilled')renderUniverse(uni.value);else fail(uni,'Full Market Universe');
   if(lr.status==='fulfilled')renderLiveReadiness(lr.value);else fail(lr,'Live readiness');
+  await refreshCoinbaseLiveReadiness();
  }catch(e){setSectionError('Dashboard',e)}
  $('last').textContent='Bijgewerkt '+now
 }
