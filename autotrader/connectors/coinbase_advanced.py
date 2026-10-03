@@ -81,6 +81,7 @@ class CoinbaseAdvancedMarketData:
     ORDERS_PATH = "/api/v3/brokerage/orders"
     ORDER_PREVIEW_PATH = "/api/v3/brokerage/orders/preview"
     ORDER_HISTORY_PATH = "/api/v3/brokerage/orders/historical"
+    ORDER_HISTORY_BATCH_PATH = "/api/v3/brokerage/orders/historical/batch"
     CANCEL_ORDERS_PATH = "/api/v3/brokerage/orders/batch_cancel"
 
     def __init__(
@@ -242,6 +243,7 @@ class CoinbaseAdvancedMarketData:
         method: str,
         path: str,
         payload: dict[str, Any] | None = None,
+        params: dict[str, Any] | None = None,
     ) -> Any:
         method = method.upper().strip()
         token = self._build_rest_jwt(method, path)
@@ -253,8 +255,17 @@ class CoinbaseAdvancedMarketData:
         }
         if body is not None:
             headers["Content-Type"] = "application/json"
+        url = self.BASE_URL + path
+        if params:
+            clean = {
+                key: value
+                for key, value in params.items()
+                if value is not None and value != ""
+            }
+            if clean:
+                url += "?" + urllib.parse.urlencode(clean, doseq=True)
         request = urllib.request.Request(
-            self.BASE_URL + path,
+            url,
             data=body,
             method=method,
             headers=headers,
@@ -292,8 +303,12 @@ class CoinbaseAdvancedMarketData:
                 category="network_error",
             ) from exc
 
-    def _auth_get(self, path: str) -> Any:
-        return self._auth_request("GET", path)
+    def _auth_get(
+        self,
+        path: str,
+        params: dict[str, Any] | None = None,
+    ) -> Any:
+        return self._auth_request("GET", path, params=params)
 
     @staticmethod
     def _spot_market_payload(
@@ -303,6 +318,8 @@ class CoinbaseAdvancedMarketData:
         quote_size: str | None = None,
         base_size: str | None = None,
         portfolio_id: str | None = None,
+        attached_take_profit_price: str | None = None,
+        attached_stop_loss_price: str | None = None,
     ) -> dict[str, Any]:
         side = side.upper().strip()
         if side not in {"BUY", "SELL"}:
@@ -325,6 +342,15 @@ class CoinbaseAdvancedMarketData:
         }
         if portfolio_id:
             payload["retail_portfolio_id"] = str(portfolio_id)
+        if attached_take_profit_price or attached_stop_loss_price:
+            if side != "BUY":
+                raise ValueError("attached exits are only supported on SPOT BUY parents")
+            trigger: dict[str, str] = {}
+            if attached_take_profit_price:
+                trigger["limit_price"] = str(attached_take_profit_price)
+            if attached_stop_loss_price:
+                trigger["stop_trigger_price"] = str(attached_stop_loss_price)
+            payload["attached_order_configuration"] = {"trigger_bracket_gtc": trigger}
         return payload
 
     def preview_spot_market_order(
@@ -335,6 +361,8 @@ class CoinbaseAdvancedMarketData:
         quote_size: str | None = None,
         base_size: str | None = None,
         portfolio_id: str | None = None,
+        attached_take_profit_price: str | None = None,
+        attached_stop_loss_price: str | None = None,
     ) -> dict[str, Any]:
         """Preview a SPOT market order. This method never places an order."""
         payload = self._spot_market_payload(
@@ -343,6 +371,8 @@ class CoinbaseAdvancedMarketData:
             quote_size=quote_size,
             base_size=base_size,
             portfolio_id=portfolio_id,
+            attached_take_profit_price=attached_take_profit_price,
+            attached_stop_loss_price=attached_stop_loss_price,
         )
         response = self._auth_request("POST", self.ORDER_PREVIEW_PATH, payload)
         if not isinstance(response, dict):
@@ -358,6 +388,8 @@ class CoinbaseAdvancedMarketData:
         quote_size: str | None = None,
         base_size: str | None = None,
         portfolio_id: str | None = None,
+        attached_take_profit_price: str | None = None,
+        attached_stop_loss_price: str | None = None,
         preview_id: str | None = None,
     ) -> dict[str, Any]:
         """Place one authenticated SPOT market order.
@@ -371,6 +403,8 @@ class CoinbaseAdvancedMarketData:
             quote_size=quote_size,
             base_size=base_size,
             portfolio_id=portfolio_id,
+            attached_take_profit_price=attached_take_profit_price,
+            attached_stop_loss_price=attached_stop_loss_price,
         )
         payload["client_order_id"] = str(client_order_id)
         if preview_id:
@@ -394,6 +428,40 @@ class CoinbaseAdvancedMarketData:
             raise CoinbaseTradingError("Unexpected Coinbase get-order response", category="unexpected_response")
         return dict(response["order"])
 
+    def list_orders(
+        self,
+        *,
+        product_id: str | None = None,
+        portfolio_id: str | None = None,
+        limit: int = 100,
+    ) -> list[dict[str, Any]]:
+        """List recent authenticated orders for idempotency reconciliation."""
+        params: dict[str, Any] = {
+            "limit": max(1, min(250, int(limit))),
+            "product_ids": [self.normalize_product_id(product_id)] if product_id else None,
+            "retail_portfolio_id": portfolio_id or None,
+        }
+        response = self._auth_request("GET", self.ORDER_HISTORY_BATCH_PATH, params=params)
+        rows = response.get("orders") if isinstance(response, dict) else None
+        if not isinstance(rows, list):
+            raise CoinbaseTradingError("Unexpected Coinbase list-orders response", category="unexpected_response")
+        return [dict(row) for row in rows if isinstance(row, dict)]
+
+    def find_order_by_client_id(
+        self,
+        client_order_id: str,
+        *,
+        product_id: str | None = None,
+        portfolio_id: str | None = None,
+    ) -> dict[str, Any] | None:
+        target = str(client_order_id).strip()
+        if not target:
+            return None
+        for row in self.list_orders(product_id=product_id, portfolio_id=portfolio_id, limit=100):
+            if str(row.get("client_order_id") or "").strip() == target:
+                return row
+        return None
+
     def cancel_orders(self, order_ids: list[str]) -> dict[str, Any]:
         ids = [str(value).strip() for value in order_ids if str(value).strip()]
         if not ids:
@@ -403,13 +471,19 @@ class CoinbaseAdvancedMarketData:
             raise CoinbaseTradingError("Unexpected Coinbase cancel response", category="unexpected_response")
         return response
 
-    def account_balances(self) -> dict[str, object]:
-        """Return a privacy-safe balance summary from Coinbase Advanced.
-
-        Account UUIDs, names, API credentials and other identifiers are never
-        returned. Balances are aggregated by currency across active accounts.
-        """
-        payload = self._auth_get(self.ACCOUNTS_PATH)
+    def account_balances(
+        self,
+        portfolio_id: str | None = None,
+    ) -> dict[str, object]:
+        """Return a privacy-safe balance summary from one Coinbase portfolio."""
+        payload = (
+            self._auth_get(
+                self.ACCOUNTS_PATH,
+                {"retail_portfolio_id": portfolio_id},
+            )
+            if portfolio_id
+            else self._auth_get(self.ACCOUNTS_PATH)
+        )
         accounts = payload.get("accounts") if isinstance(payload, dict) else None
         if not isinstance(accounts, list):
             raise CoinbaseAuthenticationError(
@@ -467,13 +541,18 @@ class CoinbaseAdvancedMarketData:
             "venue": "coinbase_advanced",
             "authenticated": True,
             "read_only": True,
+            "portfolio_scoped": bool(portfolio_id),
+            "portfolio_id": str(portfolio_id) if portfolio_id else None,
             "account_count": len(accounts),
             "active_account_count": active_accounts,
             "asset_count": len(assets),
             "assets": assets,
         }
 
-    def authenticated_accounts_probe(self) -> dict[str, object]:
+    def authenticated_accounts_probe(
+        self,
+        portfolio_id: str | None = None,
+    ) -> dict[str, object]:
         fmt = self._credential_format()
         result: dict[str, object] = {
             "venue": "coinbase_advanced",
@@ -482,6 +561,8 @@ class CoinbaseAdvancedMarketData:
             "authenticated": False,
             "status": None,
             "account_count": None,
+            "portfolio_scoped": bool(portfolio_id),
+            "portfolio_id": str(portfolio_id) if portfolio_id else None,
             "error_category": None,
         }
         if not fmt["credentials_present"] or not fmt["format_compatible"]:
@@ -492,7 +573,14 @@ class CoinbaseAdvancedMarketData:
             )
             return result
         try:
-            payload = self._auth_get(self.ACCOUNTS_PATH)
+            payload = (
+                self._auth_get(
+                    self.ACCOUNTS_PATH,
+                    {"retail_portfolio_id": portfolio_id},
+                )
+                if portfolio_id
+                else self._auth_get(self.ACCOUNTS_PATH)
+            )
             accounts = payload.get("accounts") if isinstance(payload, dict) else None
             result["authenticated"] = isinstance(accounts, list)
             result["status"] = 200 if result["authenticated"] else None

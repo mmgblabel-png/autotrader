@@ -121,6 +121,7 @@ shadow_lab:
   promotion_min_winrate_pct: 55.0
   promotion_min_net_pnl_eur: 0.15
   promotion_min_profit_factor: 1.10
+  promotion_min_q10_return_pct: -2.50
   promotion_cost_stress_multiplier: 1.25
   promotion_max_drawdown_pct: 6.0
   canary_min_completed_trades: 12
@@ -368,9 +369,9 @@ profit_policy:
 
 strategies:
   market_maker:
-    enabled: true
-    live_capable: true
-    allocation_eur: 17
+    enabled: false
+    live_capable: false
+    allocation_eur: 0
     max_order_eur: 12
     max_open_orders: 1
     exclusive_symbol: true
@@ -428,16 +429,16 @@ strategies:
   grid:
     enabled: true
     live_capable: true
-    allocation_eur: 15
-    max_order_eur: 9
+    allocation_eur: 44
+    max_order_eur: 12
     max_open_orders: 1
     exclusive_symbol: true
     symbol: SOL-EUR
     exchange: bitvavo
-    order_value_eur: 8.0
+    order_value_eur: 10.0
     order_size: 0.0
     entry_offset_pct: 0.60
-    exit_markup_pct: 0.80
+    exit_markup_pct: 1.00
     cycle_cooldown_seconds: 60
     failure_cooldown_seconds: 15
     allocation_failure_cooldown_seconds: 5
@@ -452,10 +453,10 @@ strategies:
     protection_partial_profit_fraction: 0.50
 
   grid_eth:
-    enabled: true
-    live_capable: true
+    enabled: false
+    live_capable: false
     strategy_name: GridRunnerETH
-    allocation_eur: 12
+    allocation_eur: 0
     max_order_eur: 9
     max_open_orders: 1
     exclusive_symbol: true
@@ -572,6 +573,9 @@ coinbase_zscore_shadow:
 coinbase_autonomous_execution:
   enabled: true
   product_id: BTC-EUR
+  # Set COINBASE_AGENT_PORTFOLIO_ID to an isolated Advanced portfolio UUID.
+  # Empty keeps current default-portfolio behavior until that portfolio/key is provisioned.
+  portfolio_id: ""
   interval_seconds: 5
   # Only this sleeve is controlled by the Coinbase agent. Remaining BTC is not
   # adopted as bot inventory.

@@ -2044,10 +2044,20 @@ def pnl_summary():
     for name, state in states.items():
         display_name = _STRATEGY_DISPLAY_NAMES[name]
         stats = by_strategy.get(display_name, {})
+        strategy = agent._strategies.get(name)
+        evidence_blocked = bool(
+            strategy
+            and strategy._config.get("_evidence_entry_blocked", False)
+        )
+        status = (
+            "quarantined"
+            if state["running"] and evidence_blocked
+            else ("running" if state["running"] else "stopped")
+        )
         rows.append(
             {
                 "name": name,
-                "status": "running" if state["running"] else "stopped",
+                "status": status,
                 "cost": 0.0,
                 "pnl24h": stats.get("net_pnl", 0.0),
                 "pnl7d": stats.get("net_pnl", 0.0),
@@ -2643,10 +2653,33 @@ def activate_live(
         app.state.live_arm_store.should_resume()
     )
     app.state.live_armed = True
+
+    coinbase_armed = False
+    coinbase_failed_gates: list[str] = []
+    try:
+        cb_check = coinbase_live_readiness()
+        coinbase_failed_gates = list(cb_check.get("failed_gates") or [])
+        if bool(cb_check.get("ready_to_arm")):
+            app.state.coinbase_live_arm_store.write(
+                True, source="operator_activate_via_global_live"
+            )
+            app.state.coinbase_live_arm_intent = True
+            app.state.coinbase_live_arm_auto_resume_eligible = bool(
+                app.state.coinbase_live_arm_store.should_resume()
+            )
+            app.state.coinbase_live_armed = True
+            coinbase_armed = True
+    except Exception as cb_exc:
+        log.warning(
+            "Global live activation left Coinbase disarmed safely: %s",
+            getattr(cb_exc, "category", type(cb_exc).__name__),
+        )
     return {
         "armed": True,
         "persistent": True,
-        "message": "Live trading armed. Same-release container restarts will re-arm only after all readiness gates pass.",
+        "coinbase_armed": coinbase_armed,
+        "coinbase_failed_gates": coinbase_failed_gates,
+        "message": "Live trading armed. Coinbase is armed only when its independent trade-preview and risk gates also pass.",
     }
 
 
@@ -2655,6 +2688,15 @@ def deactivate_live(_: None = Depends(_require_control_token)):
     app.state.live_armed = False
     app.state.live_arm_intent = False
     app.state.live_arm_auto_resume_eligible = False
+    app.state.coinbase_live_armed = False
+    app.state.coinbase_live_arm_intent = False
+    app.state.coinbase_live_arm_auto_resume_eligible = False
+    try:
+        app.state.coinbase_live_arm_store.write(
+            False, source="operator_deactivate_via_global_live"
+        )
+    except Exception as cb_exc:
+        log.error("Coinbase live deactivation persistence failed: %s", type(cb_exc).__name__)
     app.state.execution_v2_desired_state = {}
     persistence_error = None
     try:

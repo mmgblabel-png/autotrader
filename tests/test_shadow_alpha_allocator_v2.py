@@ -328,3 +328,70 @@ def test_shadow_promotion_requires_profit_factor_and_cost_stress(tmp_path: Path)
     row = engine.status({"mean_reversion": cfg})["strategies"][0]
     assert row["profit_factor"] < 1.10
     assert row["promotion_ready"] is False
+
+
+def test_shadow_promotion_blocks_bad_empirical_lower_tail(tmp_path: Path):
+    engine = ShadowStrategyEngine({
+        "path": str(tmp_path / "shadow.json"),
+        "fee_pct_each_leg": 0.0,
+        "slippage_pct_each_leg": 0.0,
+        "promotion_min_completed_trades": 10,
+        "promotion_min_winrate_pct": 50.0,
+        "promotion_min_net_pnl_eur": 0.10,
+        "promotion_min_profit_factor": 1.10,
+        "promotion_min_q10_return_pct": -2.50,
+        "promotion_cost_stress_multiplier": 1.0,
+        "promotion_max_drawdown_pct": 20.0,
+    })
+    cfg = {"kind": "mean_reversion", "shadow_order_eur": 10.0}
+    good = [0.20] * 9 + [-0.10]
+    engine._states["mean_reversion"] = ShadowStats(
+        completed_trades=10,
+        wins=9,
+        losses=1,
+        realized_net_pnl_eur=sum(good),
+        outcomes=good,
+    )
+    row = engine.status({"mean_reversion": cfg})["strategies"][0]
+    assert row["outcome_q10_return_pct"] >= -2.50
+    assert row["promotion_ready"] is True
+
+    bad_tail = [0.60] * 9 + [-0.60]
+    engine._states["mean_reversion"] = ShadowStats(
+        completed_trades=10,
+        wins=9,
+        losses=1,
+        realized_net_pnl_eur=sum(bad_tail),
+        outcomes=bad_tail,
+    )
+    row = engine.status({"mean_reversion": cfg})["strategies"][0]
+    assert row["realized_net_pnl_eur"] > 0
+    assert row["profit_factor"] > 1.10
+    assert row["outcome_q10_return_pct"] < -2.50
+    assert "tail_risk_q10" in row["promotion_blockers"]
+    assert row["promotion_ready"] is False
+
+
+def test_shadow_tail_gate_requires_mature_outcome_sample(tmp_path: Path):
+    engine = ShadowStrategyEngine({
+        "path": str(tmp_path / "shadow.json"),
+        "promotion_min_completed_trades": 10,
+        "promotion_min_winrate_pct": 50.0,
+        "promotion_min_net_pnl_eur": 0.10,
+        "promotion_min_profit_factor": 1.10,
+        "promotion_min_q10_return_pct": -2.50,
+        "promotion_cost_stress_multiplier": 1.0,
+        "promotion_max_drawdown_pct": 20.0,
+    })
+    cfg = {"kind": "mean_reversion", "shadow_order_eur": 10.0}
+    engine._states["mean_reversion"] = ShadowStats(
+        completed_trades=10,
+        wins=9,
+        losses=1,
+        realized_net_pnl_eur=1.0,
+        outcomes=[0.20] * 5,
+    )
+    row = engine.status({"mean_reversion": cfg})["strategies"][0]
+    assert row["tail_sample_count"] == 5
+    assert "tail_samples" in row["promotion_blockers"]
+    assert row["promotion_ready"] is False
