@@ -86,7 +86,7 @@ class SniperBot(BaseStrategy):
                 cfg["_autonomous_entry_reason"] = "risk_kill_switch"
                 self._prev_price = current_price
                 return
-            autonomous_allowed = bool(cfg.get("_autonomous_entry_allowed", True))
+            autonomous_allowed, _entry_reason = self.autonomous_entry_decision()
             if not autonomous_allowed:
                 self._prev_price = current_price
                 return
