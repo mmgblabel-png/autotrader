@@ -279,11 +279,12 @@ class MarketMaker(BaseStrategy):
                         cfg["_autonomous_entry_allowed"] = False
                         cfg["_autonomous_entry_reason"] = "risk_kill_switch"
                         log.info("MM BUY paused: risk kill-switch active.")
-                    if not bool(cfg.get("_autonomous_entry_allowed", True)):
+                    entry_allowed, entry_reason = self.autonomous_entry_decision()
+                    if not entry_allowed:
                         can_bid = False
                         log.info(
                             "MM autonomous BUY paused: %s",
-                            str(cfg.get("_autonomous_entry_reason") or "entry_not_selected"),
+                            entry_reason,
                         )
                     required_edge = max(0.0, float(cfg.get("_required_entry_edge_pct", 0.0)))
                     if required_edge > 0 and exit_markup_value < required_edge:
