@@ -136,6 +136,10 @@ shadow_lab:
   drift_recent_bars: 40
   drift_max_mean_shift_sigma: 2.5
   drift_max_vol_ratio: 2.5
+  tail_risk_gate_enabled: true
+  tail_risk_min_samples: 12
+  tail_risk_quantile: 0.10
+  tail_risk_max_loss_pct: 4.0
   dynamic_markets_per_strategy: 12
   backfill_candles: 120
   backfill_interval: 1m
