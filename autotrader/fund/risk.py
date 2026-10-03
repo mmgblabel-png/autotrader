@@ -201,6 +201,79 @@ class FundRiskEngine:
         base = max(self.state.day_start_nav_eur, 1e-12)
         return max(0.0, -self.state.daily_realized_pnl_eur / base * 100.0)
 
+    def max_entry_notional_eur(
+        self,
+        *,
+        strategy: str,
+        symbol: str = "",
+        require_verified_nav: bool = False,
+    ) -> float:
+        """Return the remaining EUR headroom for a new risk-increasing order.
+
+        The result is the tightest currently available capacity across the
+        single-trade, gross, strategy, asset and protected-capital constraints.
+        It never relaxes a hard mandate limit. Live callers fail closed when
+        verified NAV is missing or stale.
+        """
+        self._roll_day_if_needed()
+        if not self.mandate.enabled:
+            return float("inf")
+
+        nav = max(self.state.current_nav_eur, 1e-12)
+        nav_age = self.nav_age_seconds()
+        if require_verified_nav and not self.state.nav_verified:
+            return 0.0
+        if require_verified_nav and (
+            nav_age is None or nav_age > self.mandate.live_nav_max_age_seconds
+        ):
+            return 0.0
+        if self.drawdown_pct() >= self.mandate.max_portfolio_drawdown_pct:
+            return 0.0
+        if self.daily_loss_pct() >= self.mandate.max_daily_loss_pct:
+            return 0.0
+
+        if self.state.capital_floor_armed and self.required_deleveraging_eur > 1e-9:
+            return 0.0
+
+        effective_limits = self.growth.effective_limits(
+            nav_eur=nav,
+            mandate_limits={
+                "max_single_trade_pct": self.mandate.max_single_trade_pct,
+                "max_gross_exposure_pct": self.mandate.max_gross_exposure_pct,
+                "max_strategy_exposure_pct": self.mandate.max_strategy_exposure_pct,
+                "max_asset_exposure_pct": self.mandate.max_asset_exposure_pct,
+                "min_cash_reserve_pct": self.mandate.min_cash_reserve_pct,
+            },
+        )
+
+        strategy_key = str(strategy).strip()
+        symbol_key = str(symbol).upper().replace("/", "-").strip()
+        strategy_exposure = max(
+            0.0, self.state.strategy_exposure_eur.get(strategy_key, 0.0)
+        )
+        asset_exposure = max(
+            0.0, self.state.asset_exposure_eur.get(symbol_key, 0.0)
+        ) if symbol_key else 0.0
+
+        headrooms = [
+            nav * effective_limits["max_single_trade_pct"] / 100.0,
+            nav * effective_limits["max_gross_exposure_pct"] / 100.0
+            - self.gross_exposure_eur,
+            nav * effective_limits["max_strategy_exposure_pct"] / 100.0
+            - strategy_exposure,
+        ]
+        if symbol_key:
+            headrooms.append(
+                nav * effective_limits["max_asset_exposure_pct"] / 100.0
+                - asset_exposure
+            )
+        if self.state.capital_floor_armed:
+            headrooms.append(
+                self.risk_capital_available_eur - self.gross_exposure_eur
+            )
+
+        return max(0.0, min(headrooms))
+
     def pretrade_check(
         self,
         *,
