@@ -115,3 +115,14 @@ Recommended endpoints:
 ## Operational fallback
 
 If native Sandbox pass automation cannot be made reliable, keep the LAND open and move premium authorization to the external AIHF portal. The in-world rooms remain educational/showcase spaces. This is safer than pretending a transferable pass is equivalent to a live vault entitlement.
+
+
+## Official Sandbox references
+
+Architecture assumptions in this document should be re-checked before production against:
+- NFT Sensor: https://docs.sandbox.game/en/creator/game-maker/docs/components/nft/nft-sensor
+- Monetisation / NFT gating: https://docs.sandbox.game/en/creator/monetisation
+- Experience access restrictions: https://docs.sandbox.game/en/creator/game-maker/publish-experiences/experience-manager/access-restrictions
+- Mint & list assets / Catalysts: https://docs.sandbox.game/en/creator/voxedit/mint-assets-sell-nfts
+
+Current public documentation says native NFT Sensor gating can use specific Sandbox NFT asset URLs and supported collections, while Sandbox asset minting is performed through Workspaces/Catalysts on Polygon. Collection creation is not currently public, so V1 should use individually managed pass assets instead of assuming a custom public collection is available.
