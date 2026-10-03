@@ -58,6 +58,33 @@ class RiskManager:
         """Attach the fund-level capital preservation gate."""
         self._fund_engine = fund_engine
 
+    def max_entry_notional(self, strategy: str, *, symbol: str = "") -> float:
+        """Return the currently available EUR capacity for a new entry.
+
+        Strategy-level limits are combined with the fund-level growth/risk
+        headroom. Live mode fails closed when verified fund NAV is unavailable.
+        """
+        self._ensure_current_day()
+        if self.is_killed(strategy):
+            return 0.0
+
+        cfg = self._get_cfg(strategy)
+        daily_pnl = self._daily_pnl.get(strategy, 0.0)
+        if max(0.0, -daily_pnl) >= cfg.max_daily_loss:
+            return 0.0
+
+        cap = max(0.0, float(cfg.max_position_size))
+        if self._fund_engine is not None:
+            fund_cap = self._fund_engine.risk.max_entry_notional_eur(
+                strategy=strategy,
+                symbol=symbol,
+                require_verified_nav=(
+                    os.getenv("EXECUTION_MODE", "paper").strip().lower() == "live"
+                ),
+            )
+            cap = min(cap, float(fund_cap))
+        return max(0.0, cap)
+
     def check_order(
         self,
         strategy: str,
