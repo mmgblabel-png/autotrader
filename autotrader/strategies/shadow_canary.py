@@ -309,6 +309,8 @@ class ShadowCanaryStrategy(BaseStrategy):
     def tick(self) -> None:
         if not self._running or not bool(self._config.get("_canary_active", False)):
             return
+        if time.time() < float(self._config.get("_failure_cooldown_until", 0.0) or 0.0):
+            return
         price = float(self._config.get("_current_price", 0.0) or 0.0)
         if price <= 0 or not math.isfinite(price):
             return
@@ -379,6 +381,16 @@ class ShadowCanaryStrategy(BaseStrategy):
             return
         enter, reason = self._entry_signal(price)
         if not enter:
+            return
+        required_edge = max(
+            0.0,
+            float(self._config.get("_required_entry_edge_pct", 0.0) or 0.0),
+        )
+        candidate_exit_edge = max(
+            float(self._config.get("min_exit_net_pct", 0.0) or 0.0),
+            float(self._config.get("take_profit_pct", 0.0) or 0.0),
+        )
+        if required_edge > 0 and candidate_exit_edge + 1e-9 < required_edge:
             return
 
         requested_eur = min(
