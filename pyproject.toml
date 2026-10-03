@@ -14,6 +14,7 @@ dependencies = [
     "slowapi>=0.1.9",
     "PyJWT>=2.8,<3",
     "cryptography>=42,<47",
+    "eth-account>=0.13,<0.14",
 ]
 
 [project.optional-dependencies]
