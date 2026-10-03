@@ -476,9 +476,13 @@ class CoinbaseAdvancedMarketData:
         portfolio_id: str | None = None,
     ) -> dict[str, object]:
         """Return a privacy-safe balance summary from one Coinbase portfolio."""
-        payload = self._auth_get(
-            self.ACCOUNTS_PATH,
-            {"retail_portfolio_id": portfolio_id or None},
+        payload = (
+            self._auth_get(
+                self.ACCOUNTS_PATH,
+                {"retail_portfolio_id": portfolio_id},
+            )
+            if portfolio_id
+            else self._auth_get(self.ACCOUNTS_PATH)
         )
         accounts = payload.get("accounts") if isinstance(payload, dict) else None
         if not isinstance(accounts, list):
@@ -569,9 +573,13 @@ class CoinbaseAdvancedMarketData:
             )
             return result
         try:
-            payload = self._auth_get(
-                self.ACCOUNTS_PATH,
-                {"retail_portfolio_id": portfolio_id or None},
+            payload = (
+                self._auth_get(
+                    self.ACCOUNTS_PATH,
+                    {"retail_portfolio_id": portfolio_id},
+                )
+                if portfolio_id
+                else self._auth_get(self.ACCOUNTS_PATH)
             )
             accounts = payload.get("accounts") if isinstance(payload, dict) else None
             result["authenticated"] = isinstance(accounts, list)
