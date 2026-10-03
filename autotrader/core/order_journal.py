@@ -47,6 +47,18 @@ class OrderJournal:
           accepted_at REAL NOT NULL,
           FOREIGN KEY(client_order_id) REFERENCES orders(client_order_id)
         );
+        CREATE TABLE IF NOT EXISTS inventory_reconciliations (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          market TEXT NOT NULL,
+          strategy TEXT NOT NULL,
+          fill_cutoff REAL NOT NULL,
+          journal_quantity TEXT NOT NULL,
+          exchange_total TEXT NOT NULL,
+          reason TEXT NOT NULL,
+          observed_at REAL NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_inventory_reconciliations_market_strategy
+          ON inventory_reconciliations(market, strategy, fill_cutoff);
         """)
         columns = {row["name"] for row in self._db.execute("PRAGMA table_info(orders)").fetchall()}
         if "strategy" not in columns:
@@ -521,46 +533,101 @@ class OrderJournal:
             rows = self._db.execute("SELECT * FROM fills WHERE client_order_id=? ORDER BY observed_at", (client_order_id,)).fetchall()
         return [dict(row) for row in rows]
 
-    def net_base_inventory(self, market: str, strategy: str) -> Decimal:
-        """Return base-asset inventory created by this strategy's recorded fills."""
-        base = market.upper().split("-", 1)[0]
+    def latest_inventory_reconciliation(self, market: str, strategy: str) -> dict[str, Any] | None:
         with self._lock:
-            rows = self._db.execute(
+            row = self._db.execute(
                 """
-                SELECT o.side, f.amount, f.fee, f.raw_json
+                SELECT market,strategy,fill_cutoff,journal_quantity,exchange_total,reason,observed_at
+                FROM inventory_reconciliations
+                WHERE market=? AND strategy=?
+                ORDER BY fill_cutoff DESC, id DESC
+                LIMIT 1
+                """,
+                (market.upper(), strategy),
+            ).fetchone()
+        return dict(row) if row else None
+
+    def record_inventory_reconciliation(
+        self,
+        market: str,
+        strategy: str,
+        *,
+        exchange_total: Decimal,
+        reason: str,
+    ) -> bool:
+        """Persist a non-PnL ownership reset after exchange absence is verified.
+
+        Historical fills remain untouched. Future inventory calculations ignore
+        pre-reconciliation fill-derived inventory and resume from later fills.
+        """
+        market = market.upper()
+        with self._lock:
+            latest_fill = self._db.execute(
+                """
+                SELECT MAX(f.observed_at) AS ts
                 FROM fills AS f
                 JOIN orders AS o ON o.client_order_id=f.client_order_id
                 WHERE o.market=? AND o.strategy=?
-                ORDER BY f.observed_at
                 """,
-                (market.upper(), strategy),
-            ).fetchall()
-        total = Decimal("0")
-        for row in rows:
-            amount = Decimal(str(row["amount"] or "0"))
-            side = str(row["side"] or "").lower()
-            total += amount if side == "buy" else -amount
-            try:
-                payload = json.loads(row["raw_json"] or "{}")
-            except (TypeError, json.JSONDecodeError):
-                payload = {}
-            if str(payload.get("feeCurrency") or "").upper() == base:
-                total -= abs(Decimal(str(row["fee"] or payload.get("fee") or "0")))
-        return max(total, Decimal("0"))
+                (market, strategy),
+            ).fetchone()
+            cutoff = float((latest_fill or {})["ts"] or 0.0)
+            if cutoff <= 0:
+                return False
+            existing = self._db.execute(
+                """
+                SELECT 1 FROM inventory_reconciliations
+                WHERE market=? AND strategy=? AND fill_cutoff>=?
+                LIMIT 1
+                """,
+                (market, strategy, cutoff),
+            ).fetchone()
+            if existing:
+                return False
+            inventory = self.inventory_cost_basis(market, strategy)
+            quantity = max(Decimal("0"), Decimal(str(inventory.get("quantity") or "0")))
+            if quantity <= 0:
+                return False
+            self._db.execute(
+                """
+                INSERT INTO inventory_reconciliations(
+                    market,strategy,fill_cutoff,journal_quantity,exchange_total,reason,observed_at
+                ) VALUES(?,?,?,?,?,?,?)
+                """,
+                (
+                    market,
+                    strategy,
+                    cutoff,
+                    str(quantity),
+                    str(max(Decimal("0"), exchange_total)),
+                    str(reason),
+                    time.time(),
+                ),
+            )
+            self._db.commit()
+            return True
+
+    def net_base_inventory(self, market: str, strategy: str) -> Decimal:
+        """Return effective bot-owned inventory after durable reconciliations."""
+        state = self.inventory_cost_basis(market, strategy)
+        return max(Decimal("0"), Decimal(str(state.get("quantity") or "0")))
+
 
     def inventory_cost_basis(self, market: str, strategy: str) -> dict[str, Decimal]:
-        """Average-cost basis for currently bot-owned base inventory."""
+        """Average-cost basis for effective bot-owned base inventory."""
         base, _, quote = market.upper().partition("-")
+        reconciliation = self.latest_inventory_reconciliation(market, strategy)
+        cutoff = float((reconciliation or {}).get("fill_cutoff") or 0.0)
         with self._lock:
             rows = self._db.execute(
                 """
-                SELECT o.side, f.amount, f.price, f.fee, f.raw_json
+                SELECT o.side, f.amount, f.price, f.fee, f.raw_json, f.observed_at
                 FROM fills AS f
                 JOIN orders AS o ON o.client_order_id=f.client_order_id
-                WHERE o.market=? AND o.strategy=?
+                WHERE o.market=? AND o.strategy=? AND f.observed_at>?
                 ORDER BY f.observed_at, f.fill_key
                 """,
-                (market.upper(), strategy),
+                (market.upper(), strategy, cutoff),
             ).fetchall()
         quantity = Decimal("0")
         cost = Decimal("0")
@@ -610,10 +677,12 @@ class OrderJournal:
         friction.
         """
         base, _, quote = market.upper().partition("-")
+        reconciliation = self.latest_inventory_reconciliation(market, strategy)
+        cutoff = float((reconciliation or {}).get("fill_cutoff") or 0.0)
         with self._lock:
             rows = self._db.execute(
                 """
-                SELECT o.side, f.amount, f.price, f.fee, f.raw_json
+                SELECT o.side, f.amount, f.price, f.fee, f.raw_json, f.observed_at
                 FROM fills AS f
                 JOIN orders AS o ON o.client_order_id=f.client_order_id
                 WHERE o.market=? AND o.strategy=?
@@ -632,7 +701,13 @@ class OrderJournal:
         losing_exits = 0
         unpriced_fee_count = 0
 
+        reconciliation_applied = cutoff <= 0
         for row in rows:
+            observed_at = float(row["observed_at"] or 0.0)
+            if not reconciliation_applied and observed_at > cutoff:
+                quantity = Decimal("0")
+                inventory_cost = Decimal("0")
+                reconciliation_applied = True
             amount = abs(Decimal(str(row["amount"] or "0")))
             price = abs(Decimal(str(row["price"] or "0")))
             fee = abs(Decimal(str(row["fee"] or "0")))
@@ -682,6 +757,9 @@ class OrderJournal:
                     quantity = Decimal("0")
                     inventory_cost = Decimal("0")
 
+        if not reconciliation_applied:
+            quantity = Decimal("0")
+            inventory_cost = Decimal("0")
         avg_entry = inventory_cost / quantity if quantity > 0 else Decimal("0")
         mark = max(Decimal("0"), Decimal(str(mark_price or "0")))
         exit_cost_ratio = max(Decimal("0"), Decimal(str(estimated_exit_cost_pct))) / Decimal("100")

@@ -167,7 +167,8 @@ class GridRunner(BaseStrategy):
                 return
             self.mark_dust_inventory(sellable_inventory, current_price)
             log.info(
-                "GRID inventory not currently sellable: %s sellable %.8f from bot inventory %.8f; minimum %.8f.",
+                "[%s] GRID inventory not currently sellable: %s sellable %.8f from bot inventory %.8f; minimum %.8f.",
+                self.name,
                 symbol,
                 sellable_inventory,
                 bot_inventory,
@@ -188,8 +189,10 @@ class GridRunner(BaseStrategy):
         entry_allowed, entry_reason = self.autonomous_entry_decision()
         if not entry_allowed:
             log.info(
-                "GRID autonomous entry paused: %s",
+                "[%s] GRID autonomous entry paused: %s market=%s",
+                self.name,
                 entry_reason,
+                symbol,
             )
             return
 
