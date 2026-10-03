@@ -1,0 +1,85 @@
+name: AIHF Polygon Amoy Manual Deploy
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirm:
+        description: 'Type DEPLOY_AMOY to confirm testnet-only deployment'
+        required: true
+        type: string
+      deploy_vesting:
+        description: 'Also deploy the 12m cliff / 48m vesting wallet'
+        required: true
+        default: false
+        type: boolean
+
+permissions:
+  contents: read
+
+concurrency:
+  group: aihf-amoy-deploy
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    if: ${{ github.ref == 'refs/heads/aihf-ecosystem-token-v1' && inputs.confirm == 'DEPLOY_AMOY' }}
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ecosystem-token
+    env:
+      POLYGON_AMOY_RPC_URL: ${{ secrets.AIHF_POLYGON_AMOY_RPC_URL }}
+      DEPLOYER_PRIVATE_KEY: ${{ secrets.AIHF_AMOY_DEPLOYER_PRIVATE_KEY }}
+      AIHF_TREASURY_ADDRESS: ${{ secrets.AIHF_AMOY_TREASURY_ADDRESS }}
+      AIHF_TEAM_BENEFICIARY: ${{ secrets.AIHF_AMOY_TEAM_BENEFICIARY }}
+      AIHF_READER_THRESHOLD: '100'
+      AIHF_PRO_THRESHOLD: '1000'
+      AIHF_QUANT_THRESHOLD: '10000'
+      AIHF_UNLOCK_COOLDOWN_SECONDS: '604800'
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Reject missing Amoy configuration
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "$POLYGON_AMOY_RPC_URL"
+          test -n "$DEPLOYER_PRIVATE_KEY"
+          test -n "$AIHF_TREASURY_ADDRESS"
+          if [ "${{ inputs.deploy_vesting }}" = "true" ]; then
+            test -n "$AIHF_TEAM_BENEFICIARY"
+          fi
+
+      - name: Install contract dependencies
+        run: npm install --no-audit --no-fund
+
+      - name: Pre-deployment validation
+        run: npm run check
+
+      - name: Deploy AIHF token and access vault to Polygon Amoy
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm run deploy:amoy | tee amoy-token-vault-deployment.txt
+
+      - name: Deploy team vesting wallet to Polygon Amoy
+        if: ${{ inputs.deploy_vesting }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm run deploy:vesting:amoy | tee amoy-vesting-deployment.txt
+
+      - name: Upload immutable deployment evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: aihf-amoy-deployment-${{ github.sha }}
+          path: |
+            ecosystem-token/amoy-token-vault-deployment.txt
+            ecosystem-token/amoy-vesting-deployment.txt
+          if-no-files-found: error
+          retention-days: 90

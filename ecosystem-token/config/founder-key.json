@@ -1,0 +1,47 @@
+{
+  "version": 1,
+  "name": "MMinc Founder Key",
+  "product": "Sandbox Founder Access NFT",
+  "chain": "polygon",
+  "sandbox_native_asset_required_for_sensor": true,
+  "production_collection": {
+    "status": "not_authorized",
+    "max_supply": null,
+    "note": "Production scarcity is frozen only after closed-beta evidence, legal review and final Sandbox minting plan."
+  },
+  "closed_beta": {
+    "maximum_minted_copies": 5,
+    "mint_only_when_founder_room_sensor_is_ready": true,
+    "auto_trader_capital_allowed": false
+  },
+  "visual_identity": {
+    "base": "matte black",
+    "frame": "metallic gold",
+    "energy": "cyan",
+    "theme": "access / utility / identity"
+  },
+  "grants": [
+    "founder_room",
+    "founder_lore_quest",
+    "founder_cosmetics",
+    "founder_recognition",
+    "priority_closed_beta_invites"
+  ],
+  "does_not_grant": [
+    "reader_research_without_reader_entitlement",
+    "pro_research_without_pro_entitlement",
+    "quant_research_without_quant_entitlement",
+    "api_access_without_live_entitlement",
+    "autotrader_execution",
+    "autotrader_profit_share",
+    "autotrader_nav_claim",
+    "trading_advantage"
+  ],
+  "economics": {
+    "dividend": false,
+    "profit_share": false,
+    "nav_claim": false,
+    "guaranteed_resale_value": false,
+    "pay_to_win": false
+  }
+}

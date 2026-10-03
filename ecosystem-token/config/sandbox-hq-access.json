@@ -1,0 +1,149 @@
+{
+  "version": 1,
+  "ecosystem": "AIHF",
+  "experience": {
+    "name": "MMinc AI HedgeFund HQ",
+    "land": {
+      "network": "polygon",
+      "coordinates": [92, 115],
+      "token_id": "130448",
+      "sandbox_inventory_status": "awaiting_indexer_sync"
+    },
+    "design_principle": "public-first, utility-gated, no-pay-to-win"
+  },
+  "entitlement_source": {
+    "contract": "AIHFAccessVault",
+    "method": "tierOf(address)",
+    "network_phase": "polygon-amoy",
+    "finality_policy": "safe_or_finalized_block",
+    "fail_mode": "deny_new_premium_access"
+  },
+  "tiers": {
+    "READER": {
+      "minimum_locked_aihf": 100,
+      "sandbox_pass": "AIHF Reader Access Pass"
+    },
+    "PRO": {
+      "minimum_locked_aihf": 1000,
+      "sandbox_pass": "AIHF Pro Access Pass"
+    },
+    "QUANT": {
+      "minimum_locked_aihf": 10000,
+      "sandbox_pass": "AIHF Quant Access Pass"
+    }
+  },
+  "sandbox_pass_policy": {
+    "format": "sandbox_native_pass_asset",
+    "chain": "polygon",
+    "native_sensor": "NFT Sensor",
+    "asset_urls": {
+      "READER": null,
+      "PRO": null,
+      "QUANT": null
+    },
+    "issuance": "entitlement-linked, epoch-based",
+    "maximum_epoch_days": 30,
+    "transferability_warning": true,
+    "security_boundary": "A Sandbox pass never authorizes sensitive web research or API access by itself. Live AIHF vault entitlement is always rechecked outside The Sandbox.",
+    "revocation_model": "web entitlement revokes immediately; Sandbox in-world pass perks expire at the end of the issuance epoch"
+  },
+  "founder_key": {
+    "name": "MMinc Founder Key",
+    "format": "separate_scarce_sandbox_nft",
+    "grants": [
+      "founder_room",
+      "founder_cosmetics",
+      "founder_lore_quest",
+      "priority_beta_invites"
+    ],
+    "does_not_grant": [
+      "pro_research_without_pro_entitlement",
+      "quant_research_without_quant_entitlement",
+      "autotrader_profit_share",
+      "autotrader_nav_claim",
+      "trading_advantage"
+    ]
+  },
+  "zones": [
+    {
+      "id": "public_lobby",
+      "label": "Public Lobby",
+      "minimum_tier": "NONE",
+      "sandbox_gate": "none",
+      "live_entitlement_required": false
+    },
+    {
+      "id": "research_floor",
+      "label": "Research Floor",
+      "minimum_tier": "READER",
+      "sandbox_gate": "READER",
+      "live_entitlement_required": true
+    },
+    {
+      "id": "pro_strategy_lab",
+      "label": "Pro Strategy Lab",
+      "minimum_tier": "PRO",
+      "sandbox_gate": "PRO",
+      "live_entitlement_required": true
+    },
+    {
+      "id": "quant_vault",
+      "label": "Quant Vault",
+      "minimum_tier": "QUANT",
+      "sandbox_gate": "QUANT",
+      "live_entitlement_required": true
+    },
+    {
+      "id": "shadow_agent_room",
+      "label": "Shadow Agent Performance Room",
+      "minimum_tier": "READER",
+      "sandbox_gate": "READER",
+      "live_entitlement_required": true
+    },
+    {
+      "id": "founder_room",
+      "label": "Founder Room",
+      "minimum_tier": "NONE",
+      "sandbox_gate": "FOUNDER_KEY",
+      "live_entitlement_required": false
+    },
+    {
+      "id": "treasury_gallery",
+      "label": "Treasury & Ecosystem Visualisation",
+      "minimum_tier": "NONE",
+      "sandbox_gate": "none",
+      "live_entitlement_required": false
+    },
+    {
+      "id": "onboarding_quests",
+      "label": "Quest & Gamified Onboarding",
+      "minimum_tier": "NONE",
+      "sandbox_gate": "none",
+      "live_entitlement_required": false
+    }
+  ],
+  "external_portals": [
+    {
+      "id": "aihf_dashboard",
+      "requires_wallet_signature": true,
+      "requires_live_entitlement": true
+    },
+    {
+      "id": "research_portal",
+      "requires_wallet_signature": true,
+      "requires_live_entitlement": true
+    },
+    {
+      "id": "strategy_marketplace",
+      "requires_wallet_signature": true,
+      "requires_live_entitlement": true
+    }
+  ],
+  "economics": {
+    "autotrader_live_capital_allowed": false,
+    "pay_to_win": false,
+    "profit_share": false,
+    "nav_claim": false,
+    "dex_liquidity_phase": "post-audit-post-legal-only"
+  }
+}
