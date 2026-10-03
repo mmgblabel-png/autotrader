@@ -30,6 +30,7 @@ def _rising_engine(tmp_path):
         min_after_cost_edge_bps=2.0,
         min_probability_long=0.55,
         min_vol_observations=8,
+        min_sigma_annual=1.0,
         drift_lookback_seconds=90.0,
         strike_capture_grace_seconds=45.0,
         max_notional_eur=5.0,
