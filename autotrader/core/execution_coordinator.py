@@ -170,6 +170,65 @@ class ExecutionCoordinator:
                         results.append({"client_order_id": order.order_id, "status": "failed", "category": "allocation", "reason": allocation.reason})
                         continue
 
+                if (
+                    self.risk_manager is not None
+                    and order.side is OrderSide.BUY
+                    and hasattr(self.risk_manager, "max_entry_notional")
+                ):
+                    permitted = max(
+                        0.0,
+                        float(
+                            self.risk_manager.max_entry_notional(
+                                order.strategy or "MarketMaker",
+                                symbol=order.symbol,
+                            )
+                        ),
+                    )
+                    sizing_price = (
+                        Decimal(str(order.price))
+                        if order.price is not None
+                        else observed_price
+                    )
+                    original_notional = Decimal(str(order.quantity)) * sizing_price
+                    if permitted <= 0:
+                        self.om.update(order.order_id, OrderStatus.FAILED)
+                        reason = "no live fund/strategy entry headroom"
+                        if self.failure_handler is not None:
+                            self.failure_handler(order, "risk_headroom", reason)
+                        log.warning(
+                            "Order %s blocked by risk headroom: %s",
+                            order.order_id,
+                            reason,
+                        )
+                        results.append({
+                            "client_order_id": order.order_id,
+                            "status": "failed",
+                            "category": "risk_headroom",
+                            "reason": reason,
+                        })
+                        continue
+                    permitted_decimal = Decimal(str(permitted))
+                    if (
+                        sizing_price > 0
+                        and permitted_decimal + Decimal("0.000000001") < original_notional
+                    ):
+                        target_notional = permitted_decimal * Decimal("0.999")
+                        if target_notional <= 0:
+                            self.om.update(order.order_id, OrderStatus.FAILED)
+                            results.append({
+                                "client_order_id": order.order_id,
+                                "status": "failed",
+                                "category": "risk_headroom",
+                            })
+                            continue
+                        order.quantity = float(target_notional / sizing_price)
+                        log.info(
+                            "Order %s auto-resized from %.4f EUR to %.4f EUR to fit fund risk headroom.",
+                            order.order_id,
+                            float(original_notional),
+                            float(target_notional),
+                        )
+
                 if order.order_type is OrderType.LIMIT:
                     if order.time_in_force != "GTC" or not order.post_only:
                         response = self.adapter.place_limit_order(
