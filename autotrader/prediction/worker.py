@@ -57,7 +57,7 @@ class PolymarketZScoreShadowWorker:
             max_stake=float(model_cfg.get("max_stake_usdc", 5.0)),
             min_stake=float(model_cfg.get("min_stake_usdc", 1.0)),
         )
-        self.duration_seconds = tuple(
+        self.persistent_state_confirmed = bool(config.get("persistent_state_confirmed", False))\n        self.duration_seconds = tuple(
             int(x) for x in config.get("durations_seconds", [300, 900]) if int(x) in {300, 900}
         ) or (300, 900)
         self.fee_bps = max(0.0, float(config.get("assumed_fee_bps", 100.0)))
@@ -219,7 +219,7 @@ class PolymarketZScoreShadowWorker:
             "strategy": "polymarket_btc_zscore",
             "settlement_feed": "chainlink_btc_usd_twap_60s_via_polymarket_public_stream",
             "secondary_reference": "binance_reference_available_in_main_autotrader_only",
-            "durations_seconds": list(self.duration_seconds),
+            "durations_seconds": list(self.duration_seconds),\n            "persistent_state_confirmed": self.persistent_state_confirmed,
             "volatility_samples": len(self.samples),
             "active_windows": [
                 {
