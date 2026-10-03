@@ -330,6 +330,50 @@ def test_shadow_promotion_requires_profit_factor_and_cost_stress(tmp_path: Path)
     assert row["promotion_ready"] is False
 
 
+def test_shadow_tail_risk_gate_blocks_canary_and_promotion(tmp_path: Path):
+    engine = ShadowStrategyEngine({
+        "path": str(tmp_path / "shadow.json"),
+        "fee_pct_each_leg": 0.0,
+        "slippage_pct_each_leg": 0.0,
+        "promotion_min_completed_trades": 10,
+        "promotion_min_winrate_pct": 50.0,
+        "promotion_min_net_pnl_eur": 0.10,
+        "promotion_min_profit_factor": 1.10,
+        "promotion_max_drawdown_pct": 10.0,
+        "canary_min_completed_trades": 10,
+        "canary_min_winrate_pct": 50.0,
+        "canary_min_net_pnl_eur": 0.10,
+        "canary_min_profit_factor": 1.05,
+        "canary_max_drawdown_pct": 10.0,
+        "drift_gate_enabled": False,
+        "tail_risk_gate_enabled": True,
+        "tail_risk_min_samples": 10,
+        "tail_risk_quantile": 0.10,
+        "tail_risk_max_loss_pct": 4.0,
+    })
+    engine._states["mean_reversion"] = ShadowStats(
+        prices=[100.0] * 30,
+        completed_trades=10,
+        wins=8,
+        losses=2,
+        realized_net_pnl_eur=0.70,
+        outcomes=[-0.50, -0.40] + [0.20] * 8,
+        max_drawdown_eur=0.10,
+    )
+    cfg = {"kind": "mean_reversion", "shadow_order_eur": 6.0}
+    row = engine.status({"mean_reversion": cfg})["strategies"][0]
+
+    assert row["realized_net_pnl_eur"] > 0
+    assert row["profit_factor"] > 1.10
+    assert row["tail_risk"]["ready"] is True
+    assert row["tail_risk"]["tail_risk_flag"] is True
+    assert row["tail_risk"]["quantile_net_pnl_eur"] < 0
+    assert "tail_risk" in row["canary_blockers"]
+    assert "tail_risk" in row["promotion_blockers"]
+    assert row["canary_ready"] is False
+    assert row["promotion_ready"] is False
+
+
 def test_shadow_drift_gate_blocks_canary_and_promotion(tmp_path: Path):
     engine = ShadowStrategyEngine({
         "path": str(tmp_path / "shadow.json"),
