@@ -220,14 +220,23 @@ class ProfitEngine:
     def update_unrealized_pnl(self, strategy: str, pnl: float) -> None:
         self._ensure(strategy).unrealized_pnl = pnl
 
-    def mark_to_market(self, strategy: str, symbol: str, price: float) -> float:
-        """Update unrealized PnL for one strategy/symbol from a live mark."""
+    def mark_to_market(
+        self,
+        strategy: str,
+        symbol: str,
+        price: float,
+        *,
+        quote_to_eur: float = 1.0,
+    ) -> float:
+        """Update unrealized PnL in EUR for one strategy/symbol."""
         key = (strategy, symbol.upper().replace("/", "-"))
         position = self._positions.get(key)
-        if position is None or position.quantity <= 0 or price <= 0:
+        rate = 1.0 if key[1].endswith("-EUR") else max(0.0, float(quote_to_eur or 0.0))
+        if position is None or position.quantity <= 0 or price <= 0 or rate <= 0:
             self._ensure(strategy).unrealized_pnl = 0.0
             return 0.0
-        pnl = position.quantity * (float(price) - position.average_price)
+        price_eur = float(price) * rate
+        pnl = position.quantity * (price_eur - position.average_price)
         self._ensure(strategy).unrealized_pnl = pnl
         return pnl
 
