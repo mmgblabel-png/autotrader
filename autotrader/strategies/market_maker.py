@@ -246,7 +246,28 @@ class MarketMaker(BaseStrategy):
                     size = min(size, bot_inventory, available_base)
                     log.info("MM inventory cycle: bot inventory %.8f, quoting SELL only.", bot_inventory)
                 else:
-                    can_bid = available_quote >= (size * bid_price)
+                    requested_bid_notional = size * bid_price
+                    quote_limited_notional = min(
+                        requested_bid_notional,
+                        max(0.0, available_quote),
+                    )
+                    bounded_bid_notional = self.bounded_entry_notional(
+                        quote_limited_notional,
+                        price=bid_price,
+                        symbol=symbol,
+                    )
+                    if bounded_bid_notional > 0:
+                        size = bounded_bid_notional / bid_price
+                        can_bid = True
+                        if bounded_bid_notional + 1e-9 < requested_bid_notional:
+                            log.info(
+                                "MM BUY resized: %s %.2f -> %.2f EUR to fit quote/risk headroom.",
+                                symbol,
+                                requested_bid_notional,
+                                bounded_bid_notional,
+                            )
+                    else:
+                        can_bid = False
                     can_ask = False
                     if entry_killed:
                         can_bid = False
@@ -297,10 +318,29 @@ class MarketMaker(BaseStrategy):
                             spread_pct * 100,
                         )
             else:
-                can_bid = available_quote >= (size * bid_price) and not entry_killed
+                requested_bid_notional = size * bid_price
+                quote_limited_notional = min(
+                    requested_bid_notional,
+                    max(0.0, available_quote),
+                )
+                bounded_bid_notional = self.bounded_entry_notional(
+                    quote_limited_notional,
+                    price=bid_price,
+                    symbol=symbol,
+                )
+                if bounded_bid_notional > 0 and not entry_killed:
+                    size = bounded_bid_notional / bid_price
+                    can_bid = True
+                else:
+                    can_bid = False
                 can_ask = available_base >= size
             if not can_bid and (not cycle_mode or bot_inventory <= 0):
-                log.info("MM bid skipped: insufficient available quote balance.")
+                minimum_entry = self.minimum_tradable_notional(bid_price)
+                log.info(
+                    "MM bid skipped: no tradable quote/risk headroom (available_quote=%.2f EUR minimum=%.2f EUR).",
+                    available_quote,
+                    minimum_entry,
+                )
             if not can_ask and (not cycle_mode or bot_inventory >= min_size):
                 log.info("MM ask skipped: insufficient available bot-owned base balance.")
 
