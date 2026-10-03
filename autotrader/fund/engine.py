@@ -103,6 +103,20 @@ class HedgeFundEngine:
             for row in rows
         ]
 
+    def max_entry_notional_eur(
+        self,
+        *,
+        strategy: str,
+        symbol: str = "",
+        require_verified_nav: bool = False,
+    ) -> float:
+        """Return remaining fund-level EUR capacity for a new entry."""
+        return self.risk.max_entry_notional_eur(
+            strategy=strategy,
+            symbol=symbol,
+            require_verified_nav=require_verified_nav,
+        )
+
     def pretrade_check(
         self,
         *,
