@@ -75,7 +75,7 @@ class RiskManager:
 
         cap = max(0.0, float(cfg.max_position_size))
         if self._fund_engine is not None:
-            fund_cap = self._fund_engine.risk.max_entry_notional_eur(
+            fund_cap = self._fund_engine.max_entry_notional_eur(
                 strategy=strategy,
                 symbol=symbol,
                 require_verified_nav=(
