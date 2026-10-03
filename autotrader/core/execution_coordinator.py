@@ -145,23 +145,39 @@ class ExecutionCoordinator:
                             order,
                             self.om.open_orders(),
                         )
-                        sizing_price = Decimal(str(order.price)) if order.price is not None else observed_price
-                        quote_to_eur = Decimal(str(getattr(order, "quote_to_eur", 1.0) or 0.0))
-                    if quote_to_eur <= 0:
-                        self.om.update(order.order_id, OrderStatus.FAILED)
-                        results.append({
-                            "client_order_id": order.order_id,
-                            "status": "failed",
-                            "category": "quote_valuation",
-                            "reason": "missing quote-to-EUR valuation",
-                        })
-                        continue
-                    original_notional = Decimal(str(order.quantity)) * sizing_price * quote_to_eur
+                        sizing_price = (
+                            Decimal(str(order.price))
+                            if order.price is not None
+                            else observed_price
+                        )
+                        quote_to_eur = Decimal(
+                            str(getattr(order, "quote_to_eur", 1.0) or 0.0)
+                        )
+                        if quote_to_eur <= 0:
+                            self.om.update(order.order_id, OrderStatus.FAILED)
+                            results.append({
+                                "client_order_id": order.order_id,
+                                "status": "failed",
+                                "category": "quote_valuation",
+                                "reason": "missing quote-to-EUR valuation",
+                            })
+                            continue
+                        original_notional = (
+                            Decimal(str(order.quantity))
+                            * sizing_price
+                            * quote_to_eur
+                        )
                         # Keep a tiny margin below the cap so exchange quantity
                         # precision cannot round the resized order back above it.
                         target_notional = permitted * Decimal("0.999")
-                        if sizing_price > 0 and target_notional > 0 and target_notional < original_notional:
-                            order.quantity = float(target_notional / (sizing_price * quote_to_eur))
+                        if (
+                            sizing_price > 0
+                            and target_notional > 0
+                            and target_notional < original_notional
+                        ):
+                            order.quantity = float(
+                                target_notional / (sizing_price * quote_to_eur)
+                            )
                             allocation = self.allocator.evaluate(
                                 order,
                                 self.om.open_orders(),
@@ -201,7 +217,23 @@ class ExecutionCoordinator:
                         if order.price is not None
                         else observed_price
                     )
-                    original_notional = Decimal(str(order.quantity)) * sizing_price
+                    quote_to_eur = Decimal(
+                        str(getattr(order, "quote_to_eur", 1.0) or 0.0)
+                    )
+                    if quote_to_eur <= 0:
+                        self.om.update(order.order_id, OrderStatus.FAILED)
+                        results.append({
+                            "client_order_id": order.order_id,
+                            "status": "failed",
+                            "category": "quote_valuation",
+                            "reason": "missing quote-to-EUR valuation",
+                        })
+                        continue
+                    original_notional = (
+                        Decimal(str(order.quantity))
+                        * sizing_price
+                        * quote_to_eur
+                    )
                     if permitted <= 0:
                         self.om.update(order.order_id, OrderStatus.FAILED)
                         reason = "no live fund/strategy entry headroom"
@@ -233,7 +265,9 @@ class ExecutionCoordinator:
                                 "category": "risk_headroom",
                             })
                             continue
-                        order.quantity = float(target_notional / sizing_price)
+                        order.quantity = float(
+                            target_notional / (sizing_price * quote_to_eur)
+                        )
                         log.info(
                             "Order %s auto-resized from %.4f EUR to %.4f EUR to fit fund risk headroom.",
                             order.order_id,
