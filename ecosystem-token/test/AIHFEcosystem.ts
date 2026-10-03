@@ -4,7 +4,7 @@ import { network } from "hardhat";
 describe("AIHF ecosystem contracts", function () {
   async function deployFixture() {
     const { ethers, networkHelpers } = await network.create();
-    const [treasury, user] = await ethers.getSigners();
+    const [treasury, user, relayer] = await ethers.getSigners();
 
     const token = await ethers.deployContract("AIHFAccessToken", [treasury.address]);
     await token.waitForDeployment();
@@ -19,7 +19,7 @@ describe("AIHF ecosystem contracts", function () {
     ]);
     await vault.waitForDeployment();
 
-    return { ethers, networkHelpers, treasury, user, token, vault, reader, pro, quant, cooldown };
+    return { ethers, networkHelpers, treasury, user, relayer, token, vault, reader, pro, quant, cooldown };
   }
 
   it("mints the complete fixed supply once to treasury", async function () {
@@ -90,6 +90,66 @@ describe("AIHF ecosystem contracts", function () {
     await vault.connect(user).cancelUnlock();
     expect(await vault.tierOf(user.address)).to.equal(2n);
     expect(await vault.lockedBalance(user.address)).to.equal(pro);
+  });
+
+  it("remains usable when a valid permit is frontrun by a relayer", async function () {
+    const { ethers, token, vault, treasury, user, relayer, reader } = await deployFixture();
+
+    await token.connect(treasury).transfer(user.address, reader);
+
+    const tokenAddress = await token.getAddress();
+    const vaultAddress = await vault.getAddress();
+    const chain = await ethers.provider.getNetwork();
+    const nonce = await token.nonces(user.address);
+    const deadline = BigInt(Math.floor(Date.now() / 1000) + 3600);
+
+    const signature = ethers.Signature.from(await user.signTypedData(
+      {
+        name: "AI HedgeFund Access Token",
+        version: "1",
+        chainId: chain.chainId,
+        verifyingContract: tokenAddress
+      },
+      {
+        Permit: [
+          { name: "owner", type: "address" },
+          { name: "spender", type: "address" },
+          { name: "value", type: "uint256" },
+          { name: "nonce", type: "uint256" },
+          { name: "deadline", type: "uint256" }
+        ]
+      },
+      {
+        owner: user.address,
+        spender: vaultAddress,
+        value: reader,
+        nonce,
+        deadline
+      }
+    ));
+
+    // Anyone may submit a permit. Simulate a relayer consuming it first.
+    await token.connect(relayer).permit(
+      user.address,
+      vaultAddress,
+      reader,
+      deadline,
+      signature.v,
+      signature.r,
+      signature.s
+    );
+
+    // The vault catches the now-stale permit and uses the allowance safely.
+    await vault.connect(user).lockWithPermit(
+      reader,
+      deadline,
+      signature.v,
+      signature.r,
+      signature.s
+    );
+
+    expect(await vault.activeLockedBalance(user.address)).to.equal(reader);
+    expect(await vault.tierOf(user.address)).to.equal(1n);
   });
 
   it("enforces a four-year team schedule with a one-year cliff", async function () {
