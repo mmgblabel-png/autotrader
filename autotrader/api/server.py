@@ -53,6 +53,8 @@ from slowapi.util import get_remote_address
 from autotrader.agent import AutoTrader
 from autotrader.api.auth import extract_bearer, issue_jwt, valid_credential, verify_login
 from autotrader.api.deps import get_agent, init_agent
+from autotrader.api.routes.ecosystem import router as ecosystem_router
+from autotrader.ecosystem.access import valid_ecosystem_session
 from autotrader.blockchain.mainnet_policy import MainnetExecutionPolicy
 from autotrader.core.logger import get_logger
 from autotrader.core.notifications import notify_paper_report
@@ -1532,6 +1534,7 @@ app = FastAPI(
 )
 
 app.state.execution_gateway = ExecutionGateway()
+app.include_router(ecosystem_router)
 
 
 @app.get("/dashboard", response_class=HTMLResponse, include_in_schema=False)
@@ -1549,10 +1552,36 @@ def _request_credential(request: Request) -> str | None:
     return request.headers.get("x-api-key") or extract_bearer(request.headers.get("authorization"))
 
 
+_ECOSYSTEM_PUBLIC_PATHS: Final[set[str]] = {
+    "/api/ecosystem/status",
+    "/api/ecosystem/catalog",
+    "/api/ecosystem/auth/nonce",
+    "/api/ecosystem/auth/verify",
+}
+
+
 @app.middleware("http")
 async def public_auth_middleware(request: Request, call_next):
-    """Require API-key or JWT credentials on public dashboard routes."""
-    if _protected_path(request.url.path) and not valid_credential(_request_credential(request)):
+    """Keep dashboard and public AIHF wallet sessions in separate auth domains."""
+    path = request.url.path
+
+    if path.startswith("/api/ecosystem/"):
+        if path in _ECOSYSTEM_PUBLIC_PATHS:
+            return await call_next(request)
+        token = extract_bearer(request.headers.get("authorization"))
+        if not valid_ecosystem_session(token):
+            if len(os.getenv("AIHF_SESSION_SECRET", "").strip()) < 32:
+                return JSONResponse(
+                    {"detail": "AIHF wallet-session authentication is not configured."},
+                    status_code=503,
+                )
+            return JSONResponse(
+                {"detail": "Missing or invalid AIHF wallet session."},
+                status_code=401,
+            )
+        return await call_next(request)
+
+    if _protected_path(path) and not valid_credential(_request_credential(request)):
         if not os.getenv("PUBLIC_API_KEY", "").strip() and not os.getenv("PUBLIC_JWT_SECRET", "").strip():
             return JSONResponse({"detail": "Dashboard authentication is not configured."}, status_code=503)
         return JSONResponse({"detail": "Missing or invalid dashboard credential."}, status_code=401)
