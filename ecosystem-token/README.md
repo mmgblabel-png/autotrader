@@ -32,7 +32,11 @@ Minimal OpenZeppelin-based ERC-20. The entire fixed supply is created once in th
 
 ### AIHFAccessVault
 
-A non-yielding lock contract used for token-gated product access.
+A non-yielding lock contract used for token-gated product access. Its permit path tolerates a valid permit being submitted first by a third party and then safely falls back to the resulting allowance.
+
+### AIHFVestingWallet
+
+An OpenZeppelin-based cliff vesting wallet for team/contributor grants. The launch policy uses a four-year linear schedule with a one-year cliff, so no team allocation is directly unlocked at launch.
 
 | Tier | Active locked AIHF | Intended utility |
 | --- | ---: | --- |
@@ -75,4 +79,4 @@ Do not deploy this version to Polygon mainnet or create public liquidity until a
 - incident-response runbook;
 - final mainnet deployment commit frozen and reproducible.
 
-See `docs/` for architecture, tokenomics, security, launch/compliance and integration specifications.
+See `docs/` for architecture, product/revenue model, tokenomics, security, operations, launch/compliance and integration specifications. The canonical tier feature catalog is `config/access-catalog.json`.
