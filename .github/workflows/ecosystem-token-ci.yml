@@ -1,0 +1,28 @@
+name: AIHF ecosystem token CI
+
+on:
+  push:
+    paths:
+      - "ecosystem-token/**"
+      - ".github/workflows/ecosystem-token-ci.yml"
+  pull_request:
+    paths:
+      - "ecosystem-token/**"
+      - ".github/workflows/ecosystem-token-ci.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  contracts:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ecosystem-token
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - run: npm install --no-audit --no-fund
+      - run: npm run check
