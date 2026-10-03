@@ -1014,13 +1014,28 @@ async def _tick_loop(app: FastAPI, agent: AutoTrader) -> None:
                                 )
                         base, _, quote = symbol.partition("-")
                         balances = getattr(app.state, "bitvavo_balances", {})
+                        balance_details = getattr(app.state, "bitvavo_balance_rows", {})
                         strategy._config["_live_balance_snapshot_ready"] = bool(
                             getattr(app.state, "bitvavo_balance_snapshot_ready", False)
                         )
                         strategy._config["_available_base"] = float(balances.get(base, 0.0))
                         strategy._config["_available_quote"] = float(balances.get(quote, 0.0))
+                        base_row = balance_details.get(base)
+                        exchange_base_total = None
+                        if isinstance(base_row, dict):
+                            try:
+                                exchange_base_total = max(
+                                    0.0,
+                                    float(base_row.get("available") or 0.0)
+                                    + float(base_row.get("inOrder") or 0.0),
+                                )
+                            except (TypeError, ValueError):
+                                exchange_base_total = None
+                        strategy._config["_exchange_base_total"] = exchange_base_total
+
                         inventory = agent._bitvavo.journal.inventory_cost_basis(symbol, strategy.name)
-                        strategy._config["_bot_base_inventory"] = float(inventory["quantity"])
+                        journal_inventory = max(0.0, float(inventory["quantity"]))
+                        strategy._config["_bot_base_inventory"] = journal_inventory
                         strategy._config["_bot_average_entry_price"] = float(inventory["average_entry_price"])
                         profit_snapshot = _strategy_profit_snapshot(
                             agent, symbol, strategy.name, price
