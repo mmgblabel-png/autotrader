@@ -215,6 +215,13 @@ class PolymarketZScoreShadowWorker:
 
     def status(self) -> dict[str, Any]:
         payload = self.ledger.status()
+        if not self.persistent_state_confirmed:
+            payload["promotion_ready"] = False
+            payload["promotion_blocker"] = "persistent_state_not_confirmed"
+        elif not bool(payload.get("promotion_ready")):
+            payload["promotion_blocker"] = "performance_gate"
+        else:
+            payload["promotion_blocker"] = None
         payload.update({
             "strategy": "polymarket_btc_zscore",
             "settlement_feed": "chainlink_btc_usd_twap_60s_via_polymarket_public_stream",
