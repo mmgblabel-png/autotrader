@@ -18,3 +18,5 @@ RUN python -m pip install --no-cache-dir --upgrade pip \
     && python -c "import autotrader.api.server; print('server-import-ok')"
 
 CMD ["sh", "-lc", "python -m http.server ${PORT:-8080}"]
+
+# Dedicated closed-beta validation image; not a production runtime image.
