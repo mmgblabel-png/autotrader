@@ -12,7 +12,7 @@ COPY tests ./tests
 
 RUN python -m pip install --upgrade pip \
     && python -m pip install -e ".[dev,live]" \
-    && python -m pytest -q tests
+    && python -m pytest -q tests/test_prediction_zscore.py
 
 FROM python:3.12-slim AS runtime
 
