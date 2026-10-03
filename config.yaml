@@ -572,6 +572,9 @@ coinbase_zscore_shadow:
 coinbase_autonomous_execution:
   enabled: true
   product_id: BTC-EUR
+  # Set COINBASE_AGENT_PORTFOLIO_ID to an isolated Advanced portfolio UUID.
+  # Empty keeps current default-portfolio behavior until that portfolio/key is provisioned.
+  portfolio_id: ""
   interval_seconds: 5
   # Only this sleeve is controlled by the Coinbase agent. Remaining BTC is not
   # adopted as bot inventory.
