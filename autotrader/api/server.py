@@ -79,7 +79,8 @@ from autotrader.core.autonomous_decision_engine import AutonomousDecisionEngine
 from autotrader.core.risk_lab import LeverageMartingaleRiskLab
 from autotrader.fund.automation import AutonomousFundScheduler
 from autotrader.connectors.bitvavo import BitvavoAdapter, BitvavoError
-from autotrader.connectors.coinbase_advanced import CoinbaseAdvancedMarketData, CoinbaseMarketDataError
+from autotrader.connectors.coinbase_advanced import CoinbaseAdvancedMarketData, CoinbaseMarketDataError, CoinbaseAuthenticationError
+from autotrader.core.coinbase_zscore_shadow import CoinbaseZScoreShadowEngine
 from autotrader.connectors.bitpanda_fusion import BitpandaFusionAdapter
 from autotrader.api.dashboard_html import dashboard_html
 from autotrader.ml.shadow import walk_forward, lookahead_analysis, recursive_analysis
@@ -1583,6 +1584,28 @@ async def _arbitrage_shadow_loop(app: FastAPI) -> None:
         await asyncio.sleep(app.state.arbitrage_shadow_interval_seconds)
 
 
+async def _coinbase_zscore_shadow_loop(app: FastAPI) -> None:
+    """Run the persistent Coinbase BTC short-horizon shadow engine."""
+    first_success = True
+    while True:
+        try:
+            status = await asyncio.to_thread(app.state.coinbase_zscore_shadow.tick)
+            app.state.coinbase_zscore_shadow_error = None
+            if first_success:
+                log.info(
+                    "Coinbase Z-score shadow active: product=%s durations=%s api_key_required=%s live_orders_sent=%s",
+                    status.get("product_id"),
+                    app.state.coinbase_zscore_shadow.config.durations_seconds,
+                    status.get("api_key_required_for_shadow"),
+                    status.get("live_orders_sent"),
+                )
+                first_success = False
+        except Exception as exc:
+            app.state.coinbase_zscore_shadow_error = type(exc).__name__
+            log.warning("Coinbase Z-score shadow tick failed safely: %s", type(exc).__name__)
+        await asyncio.sleep(app.state.coinbase_zscore_shadow_interval_seconds)
+
+
 @contextlib.asynccontextmanager
 async def _lifespan(app: FastAPI):
     """Initialise the agent, run its tick task, then stop it cleanly."""
@@ -1652,6 +1675,16 @@ async def _lifespan(app: FastAPI):
     app.state.arbitrage_shadow_cache = None
     app.state.arbitrage_shadow_cache_at = 0.0
     app.state.arbitrage_shadow_error = None
+    coinbase_z_cfg = agent._config.get("coinbase_zscore_shadow", {}) or {}
+    app.state.coinbase_zscore_shadow_enabled = bool(coinbase_z_cfg.get("enabled", False))
+    app.state.coinbase_zscore_shadow = CoinbaseZScoreShadowEngine(coinbase_z_cfg)
+    try:
+        app.state.coinbase_zscore_shadow_interval_seconds = max(
+            2.0, float(coinbase_z_cfg.get("interval_seconds", 5.0))
+        )
+    except (TypeError, ValueError):
+        app.state.coinbase_zscore_shadow_interval_seconds = 5.0
+    app.state.coinbase_zscore_shadow_error = None
     shadow_cfg = agent._config.get("shadow_lab", {}) or {}
     app.state.shadow_strategy_engine = ShadowStrategyEngine(shadow_cfg, learner=agent.adaptive_learning)
     app.state.leverage_martingale_risk_lab = LeverageMartingaleRiskLab(
@@ -1767,6 +1800,14 @@ async def _lifespan(app: FastAPI):
     app.state.arbitrage_shadow_task = asyncio.create_task(
         _arbitrage_shadow_loop(app), name="autotrader-arbitrage-shadow-loop"
     )
+    app.state.coinbase_zscore_shadow_task = (
+        asyncio.create_task(
+            _coinbase_zscore_shadow_loop(app),
+            name="autotrader-coinbase-zscore-shadow-loop",
+        )
+        if app.state.coinbase_zscore_shadow_enabled
+        else None
+    )
     app.state.shadow_strategy_task = asyncio.create_task(
         _shadow_strategy_loop(app, agent), name="autotrader-shadow-strategy-loop"
     )
@@ -1797,6 +1838,8 @@ async def _lifespan(app: FastAPI):
         log.info("Shutting down AutoTrader paper-mode agent…")
         app.state.tick_task.cancel()
         app.state.arbitrage_shadow_task.cancel()
+        if app.state.coinbase_zscore_shadow_task is not None:
+            app.state.coinbase_zscore_shadow_task.cancel()
         app.state.shadow_strategy_task.cancel()
         app.state.opportunity_router_task.cancel()
         app.state.autonomous_fund_task.cancel()
@@ -1806,6 +1849,9 @@ async def _lifespan(app: FastAPI):
             await app.state.tick_task
         with contextlib.suppress(asyncio.CancelledError):
             await app.state.arbitrage_shadow_task
+        if app.state.coinbase_zscore_shadow_task is not None:
+            with contextlib.suppress(asyncio.CancelledError):
+                await app.state.coinbase_zscore_shadow_task
         with contextlib.suppress(asyncio.CancelledError):
             await app.state.shadow_strategy_task
         with contextlib.suppress(asyncio.CancelledError):
@@ -3379,6 +3425,25 @@ def bitvavo_live_state() -> dict[str, object]:
         "open_orders": open_orders,
         "open_order_count": len(open_orders),
     }
+
+@app.get("/api/research/coinbase-zscore", tags=["research"])
+def coinbase_zscore_shadow_status() -> dict[str, object]:
+    """Return the persistent, non-executing Coinbase Z-score research state."""
+    engine = getattr(app.state, "coinbase_zscore_shadow", None)
+    if engine is None:
+        return {
+            "venue": "coinbase_advanced",
+            "mode": "shadow",
+            "enabled": False,
+            "live_orders_sent": False,
+            "reason": "engine_not_initialized",
+        }
+    return {
+        **engine.status(),
+        "enabled": bool(getattr(app.state, "coinbase_zscore_shadow_enabled", False)),
+        "runtime_error": getattr(app.state, "coinbase_zscore_shadow_error", None),
+    }
+
 
 @app.get("/api/security/coinbase", tags=["security"])
 def coinbase_security_status() -> dict[str, object]:
