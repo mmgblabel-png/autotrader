@@ -626,6 +626,7 @@ class ShadowStrategyEngine:
                 "outcome_q50_return_pct": round(q50_return_pct, 4),
                 "outcome_q90_return_pct": round(q90_return_pct, 4),
                 "promotion_min_q10_return_pct": round(self.min_q10_return_pct, 4),
+                "canary_min_q10_return_pct": round(self.canary_min_q10_return_pct, 4),
                 "stressed_net_pnl_eur": round(stressed_net_pnl, 4),
                 "cost_stress_multiplier": round(self.cost_stress_multiplier, 2),
                 "adaptive_change_pending": adaptive_change_pending,
