@@ -1,11 +1,12 @@
 # AIHF Ecosystem Token
 
-A testnet-first utility-token subsystem for the AI HedgeFund / AutoTrader project.
+A testnet-first utility-token subsystem for the AI HedgeFund / AutoTrader project, now integrated with the **Sandbox Monetized Empire / AI HedgeFund HQ** product surface.
 
 ## Design goals
 
 - Give holders access to research, premium dashboards, strategy tooling and future marketplace features.
-- Keep the token economically separate from the AutoTrader trading bankroll.
+- Extend those entitlements into a Sandbox HQ without treating a Sandbox NFT as authority for sensitive services.
+- Keep the token, Sandbox operating budget and LAND ecosystem economically separate from the AutoTrader trading bankroll.
 - Never represent equity, a profit share, a claim on fund assets, guaranteed yield or a promise of price appreciation.
 - Minimize smart-contract trust: fixed supply, no post-deployment minting, no upgrade proxy, no blacklist, no transfer tax and no owner backdoor.
 - Use Polygon Amoy first. Mainnet is intentionally absent from `hardhat.config.ts`, preventing accidental mainnet deployment from this version.
@@ -40,11 +41,28 @@ An OpenZeppelin-based cliff vesting wallet for team/contributor grants. The laun
 
 | Tier | Active locked AIHF | Intended utility |
 | --- | ---: | --- |
-| Reader | 100 | research feed, delayed analytics |
-| Pro | 1,000 | premium dashboard, deeper research, alerts |
-| Quant | 10,000 | advanced strategy lab, API/data entitlements, marketplace tooling |
+| Reader | 100 | research feed, delayed analytics, Sandbox Research Floor |
+| Pro | 1,000 | premium dashboard, deeper research, alerts, Sandbox Pro Strategy Lab |
+| Quant | 10,000 | advanced strategy lab, API/data entitlements, marketplace tooling, Sandbox Quant Vault |
 
 An unlock request immediately stops the requested amount from counting toward access and then waits seven days before withdrawal. The vault has no administrator and no reward/yield mechanism.
+
+## Sandbox Monetized Empire
+
+The integrated experience target is **MMinc AI HedgeFund HQ** on Sandbox LAND **(92,115)** / Polygon LAND token **#130448**.
+
+The native flow is:
+
+`public lobby -> AIHF education -> wallet connect -> live vault entitlement -> Sandbox pass/perks -> premium web portal`
+
+A native Sandbox pass is only an in-world presentation credential. Sensitive research, API and marketplace permissions always require a fresh wallet-authenticated AIHF vault entitlement.
+
+The separate **MMinc Founder Key** may unlock founder rooms, lore, cosmetics and beta invitations, but never bypasses Reader/Pro/Quant requirements.
+
+See:
+- `docs/SANDBOX_MONETIZED_EMPIRE.md`
+- `docs/SANDBOX_ACCESS_BRIDGE.md`
+- `config/sandbox-hq-access.json`
 
 ## Local validation
 
@@ -63,6 +81,8 @@ npm run check
 3. Use a public treasury address for testnet. For mainnet, treasury must be a Safe multisig.
 4. Configure variables from `.env.example`.
 5. Run `npm run deploy:amoy`.
+6. Integrate wallet auth and entitlement reads.
+7. Dry-run the Sandbox bridge before spending real Catalysts or issuing production passes.
 
 ## Mainnet hard gate
 
@@ -79,4 +99,6 @@ Do not deploy this version to Polygon mainnet or create public liquidity until a
 - incident-response runbook;
 - final mainnet deployment commit frozen and reproducible.
 
-See `docs/` for architecture, product/revenue model, tokenomics, security, operations, launch/compliance and integration specifications. The canonical tier feature catalog is `config/access-catalog.json`.
+Do not use AutoTrader live trading capital for token launch, LAND, Catalysts, Founder Key minting, marketing or liquidity.
+
+See `docs/` for architecture, product/revenue model, tokenomics, security, operations, Sandbox HQ, launch/compliance and integration specifications. The canonical tier feature catalog is `config/access-catalog.json`.
