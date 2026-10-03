@@ -52,4 +52,22 @@ describe("Sandbox Monetized Empire configuration", function () {
     expect(sandbox.experience.land.token_id).to.equal("130448");
     expect(JSON.stringify(sandbox)).not.to.match(/private[_ -]?key|seed phrase/i);
   });
+
+  it("keeps the Founder Key closed beta scarce and non-financial", async function () {
+    const founder = await loadJson("../config/founder-key.json");
+
+    expect(founder.closed_beta.maximum_minted_copies).to.be.at.most(5);
+    expect(founder.closed_beta.auto_trader_capital_allowed).to.equal(false);
+    expect(founder.production_collection.status).to.equal("not_authorized");
+    expect(founder.production_collection.max_supply).to.equal(null);
+    expect(founder.economics.dividend).to.equal(false);
+    expect(founder.economics.profit_share).to.equal(false);
+    expect(founder.economics.nav_claim).to.equal(false);
+    expect(founder.economics.pay_to_win).to.equal(false);
+
+    const denied = new Set(founder.does_not_grant);
+    expect(denied.has("pro_research_without_pro_entitlement")).to.equal(true);
+    expect(denied.has("quant_research_without_quant_entitlement")).to.equal(true);
+    expect(denied.has("autotrader_execution")).to.equal(true);
+  });
 });
