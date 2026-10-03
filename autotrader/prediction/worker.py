@@ -244,7 +244,7 @@ async def _run_stream(worker: PolymarketZScoreShadowWorker) -> None:
     client = AsyncPublicClient()
     try:
         async with await client.subscribe(
-            CryptoPricesChainlinkTwapSpec(window_seconds=60, symbols=["btc/usd"])
+            [CryptoPricesChainlinkTwapSpec(window_seconds=60, symbols=["btc/usd"])]
         ) as stream:
             async for event in stream:
                 payload = event.payload
