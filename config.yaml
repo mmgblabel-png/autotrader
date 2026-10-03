@@ -226,7 +226,7 @@ execution_v2:
 live_evidence_gate:
   enabled: true
   min_completed_exits: 4
-  minimum_net_pnl_eur: -0.10
+  minimum_net_pnl_eur: 0.00
 
 calculated_risk:
   enabled: true
