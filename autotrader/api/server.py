@@ -820,6 +820,35 @@ def _manage_stale_bot_orders(app: FastAPI, agent: AutoTrader) -> dict[str, objec
     return result
 
 
+def _symbol_scoped_balance_total(
+    rows: object,
+    symbol: str,
+) -> float | None:
+    """Interpret a successful symbol-scoped Bitvavo balance response safely.
+
+    A matching row yields available+inOrder. An empty list means the explicitly
+    requested asset has no balance entry and is therefore zero. Any other
+    malformed/mismatched response remains unknown and fails closed.
+    """
+    if not isinstance(rows, list):
+        return None
+    target = str(symbol or "").upper()
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        if str(row.get("symbol") or "").upper() != target:
+            continue
+        try:
+            return max(
+                0.0,
+                float(row.get("available") or 0.0)
+                + float(row.get("inOrder") or row.get("in_order") or 0.0),
+            )
+        except (TypeError, ValueError):
+            return None
+    return 0.0 if not rows else None
+
+
 def _apply_strategy_evidence_gate(agent: AutoTrader) -> dict[str, object]:
     """Overlay historical evidence on entry eligibility without mutating router state."""
     cfg = agent._config.get("live_evidence_gate", {}) or {}
@@ -1121,21 +1150,14 @@ async def _tick_loop(app: FastAPI, agent: AutoTrader) -> None:
                                         ),
                                         None,
                                     )
-                                    explicit_total = None
-                                    explicit_reason = ""
-                                    if explicit_row is not None:
-                                        explicit_total = max(
-                                            0.0,
-                                            float(explicit_row.get("available") or 0.0)
-                                            + float(explicit_row.get("inOrder") or 0.0),
-                                        )
-                                        explicit_reason = "verified_exchange_zero_balance"
-                                    elif isinstance(explicit_rows, list) and not explicit_rows:
-                                        # A successful symbol-scoped /balance query
-                                        # returning no row means that asset has no
-                                        # balance entry at the exchange.
-                                        explicit_total = 0.0
-                                        explicit_reason = "verified_exchange_absent_balance"
+                                    explicit_total = _symbol_scoped_balance_total(
+                                        explicit_rows, base
+                                    )
+                                    explicit_reason = (
+                                        "verified_exchange_absent_balance"
+                                        if isinstance(explicit_rows, list) and not explicit_rows
+                                        else "verified_exchange_zero_balance"
+                                    )
                                     if explicit_total is not None and explicit_total <= 1e-12:
                                         recorded = agent._bitvavo.journal.record_inventory_reconciliation(
                                             symbol,
