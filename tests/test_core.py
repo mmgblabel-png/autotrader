@@ -491,7 +491,14 @@ def test_api_pnl_summary_matches_dashboard_strategy_shape(api_client):
     assert payload["mode"] == "paper"
     assert isinstance(payload["pnl_per_strategy"], list)
     rows = {row["name"]: row for row in payload["pnl_per_strategy"]}
-    assert set(rows) == {"market_maker", "arbitrage", "grid", "grid_eth", "sniper"}
+    assert set(rows) == {
+        "market_maker",
+        "arbitrage",
+        "grid",
+        "grid_eth",
+        "sniper",
+        "shadow_canary",
+    }
     assert rows["market_maker"]["status"] == "stopped"
     assert "pnl_by_strategy" in payload
 
