@@ -368,8 +368,8 @@ profit_policy:
 
 strategies:
   market_maker:
-    enabled: true
-    live_capable: true
+    enabled: false
+    live_capable: false
     allocation_eur: 0
     max_order_eur: 12
     max_open_orders: 1
@@ -452,8 +452,8 @@ strategies:
     protection_partial_profit_fraction: 0.50
 
   grid_eth:
-    enabled: true
-    live_capable: true
+    enabled: false
+    live_capable: false
     strategy_name: GridRunnerETH
     allocation_eur: 0
     max_order_eur: 9
