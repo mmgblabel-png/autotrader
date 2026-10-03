@@ -210,8 +210,7 @@ class CoinbaseAutonomousExecutor:
         )
 
     def _balances(self) -> dict[str, float]:
-        payload = self.client.account_balances(self.config.portfolio_id or None)
-        result = {"EUR": 0.0, "BTC": 0.0}
+        payload = (\n            self.client.account_balances(self.config.portfolio_id)\n            if self.config.portfolio_id\n            else self.client.account_balances()\n        )\n        result = {"EUR": 0.0, "BTC": 0.0}
         for row in payload.get("assets", []) if isinstance(payload, dict) else []:
             if not isinstance(row, dict):
                 continue
@@ -241,8 +240,7 @@ class CoinbaseAutonomousExecutor:
             self.state.day_pnl_eur = 0.0
 
     def _global_gates(self, *, armed: bool, shadow_status: dict[str, Any]) -> dict[str, bool]:
-        auth = self.client.authenticated_accounts_probe(self.config.portfolio_id or None)
-        return {
+        auth = (\n            self.client.authenticated_accounts_probe(self.config.portfolio_id)\n            if self.config.portfolio_id\n            else self.client.authenticated_accounts_probe()\n        )\n        return {
             "enabled": self.config.enabled,
             "execution_mode_live": os.getenv("EXECUTION_MODE", "paper").strip().lower() == "live",
             "live_execution_approved": _env_true("LIVE_EXECUTION_APPROVED"),
