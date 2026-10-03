@@ -1143,32 +1143,32 @@ async def _tick_loop(app: FastAPI, agent: AutoTrader) -> None:
                                             exchange_total=Decimal(str(explicit_total)),
                                             reason=explicit_reason,
                                         )
-                                            if recorded:
-                                                inventory = agent._bitvavo.journal.inventory_cost_basis(
-                                                    symbol, strategy.name
-                                                )
-                                                journal_inventory = max(
-                                                    0.0, float(inventory["quantity"])
-                                                )
-                                                strategy._config["_bot_base_inventory"] = journal_inventory
-                                                strategy._config["_bot_average_entry_price"] = float(
-                                                    inventory["average_entry_price"]
-                                                )
-                                                strategy._config[
-                                                    "_inventory_reconciliation_reason"
-                                                ] = explicit_reason
-                                                strategy._config[
-                                                    "_inventory_reconciled_at"
-                                                ] = time.time()
-                                                strategy._config[
-                                                    "_zero_balance_inventory_confirmations"
-                                                ] = 0
-                                                log.warning(
-                                                    "Inventory ownership reconciled: strategy=%s market=%s exchange_total=%.12f; historical fills preserved.",
-                                                    strategy.name,
-                                                    symbol,
-                                                    explicit_total,
-                                                )
+                                        if recorded:
+                                            inventory = agent._bitvavo.journal.inventory_cost_basis(
+                                                symbol, strategy.name
+                                            )
+                                            journal_inventory = max(
+                                                0.0, float(inventory["quantity"])
+                                            )
+                                            strategy._config["_bot_base_inventory"] = journal_inventory
+                                            strategy._config["_bot_average_entry_price"] = float(
+                                                inventory["average_entry_price"]
+                                            )
+                                            strategy._config[
+                                                "_inventory_reconciliation_reason"
+                                            ] = explicit_reason
+                                            strategy._config[
+                                                "_inventory_reconciled_at"
+                                            ] = time.time()
+                                            strategy._config[
+                                                "_zero_balance_inventory_confirmations"
+                                            ] = 0
+                                            log.warning(
+                                                "Inventory ownership reconciled: strategy=%s market=%s exchange_total=%.12f; historical fills preserved.",
+                                                strategy.name,
+                                                symbol,
+                                                explicit_total,
+                                            )
                             else:
                                 strategy._config[
                                     "_zero_balance_inventory_confirmations"
