@@ -93,8 +93,11 @@ class MarketMaker(BaseStrategy):
 
         spread_pct, adaptive_momentum = self._update_adaptive_state(mid_price)
         order_value_eur = max(0.0, float(cfg.get("order_value_eur", 0.0) or 0.0))
+        quote_to_eur = self.quote_to_eur_rate()
         if order_value_eur > 0:
-            size = order_value_eur / mid_price
+            if quote_to_eur <= 0:
+                return
+            size = order_value_eur / (mid_price * quote_to_eur)
             min_base = max(0.0, float(cfg.get("_min_order_base", 0.0) or 0.0))
             if min_base > 0:
                 size = max(size, min_base)
@@ -146,7 +149,7 @@ class MarketMaker(BaseStrategy):
                 self._round_to_tick(entry_price * (1 + exit_markup_pct), tick_size) if tick_size > 0 else round(entry_price * (1 + exit_markup_pct), 8),
                 min_profit_exit_price,
             )
-        notional = size * mid_price
+        notional = self.quote_notional_to_eur(size * mid_price)
 
         live_snapshot = bool(cfg.get("_live_balance_snapshot_ready", False))
         can_bid = not entry_killed
@@ -190,7 +193,7 @@ class MarketMaker(BaseStrategy):
                     if protected_size > 0 and (
                         minimum_sell <= 0 or protected_size >= minimum_sell
                     ):
-                        notional = protected_size * mid_price
+                        notional = self.quote_notional_to_eur(protected_size * mid_price)
                         if self._rm.check_order(
                             self.name,
                             notional,
@@ -207,6 +210,7 @@ class MarketMaker(BaseStrategy):
                                 time_in_force="IOC",
                                 post_only=False,
                                 strategy=self.name,
+                            quote_to_eur=quote_to_eur,
                             )
                             self._om.register(order)
                             mark_protection_order_pending(cfg, protection)
@@ -246,10 +250,11 @@ class MarketMaker(BaseStrategy):
                     size = min(size, bot_inventory, available_base)
                     log.info("MM inventory cycle: bot inventory %.8f, quoting SELL only.", bot_inventory)
                 else:
-                    requested_bid_notional = size * bid_price
+                    requested_bid_notional = self.quote_notional_to_eur(size * bid_price)
+                    available_quote_eur = self.quote_notional_to_eur(available_quote)
                     quote_limited_notional = min(
                         requested_bid_notional,
-                        max(0.0, available_quote),
+                        available_quote_eur,
                     )
                     bounded_bid_notional = self.bounded_entry_notional(
                         quote_limited_notional,
@@ -257,7 +262,7 @@ class MarketMaker(BaseStrategy):
                         symbol=symbol,
                     )
                     if bounded_bid_notional > 0:
-                        size = bounded_bid_notional / bid_price
+                        size = bounded_bid_notional / (bid_price * quote_to_eur)
                         can_bid = True
                         if bounded_bid_notional + 1e-9 < requested_bid_notional:
                             log.info(
@@ -318,10 +323,11 @@ class MarketMaker(BaseStrategy):
                             spread_pct * 100,
                         )
             else:
-                requested_bid_notional = size * bid_price
+                requested_bid_notional = self.quote_notional_to_eur(size * bid_price)
+                available_quote_eur = self.quote_notional_to_eur(available_quote)
                 quote_limited_notional = min(
                     requested_bid_notional,
-                    max(0.0, available_quote),
+                    available_quote_eur,
                 )
                 bounded_bid_notional = self.bounded_entry_notional(
                     quote_limited_notional,
@@ -329,7 +335,7 @@ class MarketMaker(BaseStrategy):
                     symbol=symbol,
                 )
                 if bounded_bid_notional > 0 and not entry_killed:
-                    size = bounded_bid_notional / bid_price
+                    size = bounded_bid_notional / (bid_price * quote_to_eur)
                     can_bid = True
                 else:
                     can_bid = False
@@ -338,7 +344,7 @@ class MarketMaker(BaseStrategy):
                 minimum_entry = self.minimum_tradable_notional(bid_price)
                 log.info(
                     "MM bid skipped: no tradable quote/risk headroom (available_quote=%.2f EUR minimum=%.2f EUR).",
-                    available_quote,
+                    self.quote_notional_to_eur(available_quote),
                     minimum_entry,
                 )
             if not can_ask and (not cycle_mode or bot_inventory >= min_size):
@@ -349,7 +355,7 @@ class MarketMaker(BaseStrategy):
 
         placed = False
         if can_bid:
-            bid_notional = size * bid_price
+            bid_notional = self.quote_notional_to_eur(size * bid_price)
             if self._rm.check_order(self.name, bid_notional, symbol=symbol):
                 bid = Order(exchange=exchange, symbol=symbol, side=OrderSide.BUY,
                             order_type=OrderType.LIMIT, quantity=size, price=bid_price,
@@ -359,7 +365,7 @@ class MarketMaker(BaseStrategy):
                 log.info("BID  %s %.4f @ %.2f  (notional=%.2f)", symbol, size, bid_price, bid_notional)
 
         if can_ask:
-            ask_notional = size * ask_price
+            ask_notional = self.quote_notional_to_eur(size * ask_price)
             if self._rm.check_order(self.name, ask_notional, symbol=symbol, risk_reducing=True):
                 ask = Order(exchange=exchange, symbol=symbol, side=OrderSide.SELL,
                             order_type=OrderType.LIMIT, quantity=size, price=ask_price,
