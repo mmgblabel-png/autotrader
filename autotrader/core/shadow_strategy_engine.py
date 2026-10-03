@@ -149,22 +149,20 @@ class ShadowStrategyEngine:
 
     @staticmethod
     def _percentile(values: list[float], quantile: float) -> float:
-        """Deterministic linear percentile for small shadow-trade samples."""
+        """Conservative empirical lower-quantile for shadow tail-risk gates.
+
+        Linear interpolation can hide a single severe loss in small samples.
+        Using the lower observed order statistic keeps promotion fail-closed
+        until the lower tail itself improves.
+        """
         if not values:
             return 0.0
         ordered = sorted(float(value) for value in values if math.isfinite(float(value)))
         if not ordered:
             return 0.0
-        if len(ordered) == 1:
-            return ordered[0]
         q = max(0.0, min(1.0, float(quantile)))
-        position = (len(ordered) - 1) * q
-        lower = int(math.floor(position))
-        upper = int(math.ceil(position))
-        if lower == upper:
-            return ordered[lower]
-        weight = position - lower
-        return ordered[lower] * (1.0 - weight) + ordered[upper] * weight
+        index = int(math.floor((len(ordered) - 1) * q))
+        return ordered[index]
 
     @property
     def round_trip_cost_pct(self) -> float:
