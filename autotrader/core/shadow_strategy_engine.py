@@ -76,6 +76,21 @@ class ShadowStrategyEngine:
         self.min_net_pnl_eur = float(self.config.get("promotion_min_net_pnl_eur", 0.50))
         self.min_profit_factor = max(1.0, float(self.config.get("promotion_min_profit_factor", 1.10)))
         self.cost_stress_multiplier = max(1.0, float(self.config.get("promotion_cost_stress_multiplier", 1.25)))
+        self.canary_min_completed_trades = max(
+            4, int(self.config.get("canary_min_completed_trades", 12))
+        )
+        self.canary_min_winrate_pct = float(
+            self.config.get("canary_min_winrate_pct", 52.0)
+        )
+        self.canary_min_net_pnl_eur = float(
+            self.config.get("canary_min_net_pnl_eur", 0.10)
+        )
+        self.canary_min_profit_factor = max(
+            1.0, float(self.config.get("canary_min_profit_factor", 1.05))
+        )
+        self.canary_max_drawdown_pct = max(
+            0.1, float(self.config.get("canary_max_drawdown_pct", 5.0))
+        )
         self._states: dict[str, ShadowStats] = {}
         self._load()
 
@@ -399,6 +414,39 @@ class ShadowStrategyEngine:
                 and not adaptive_change_pending
             )
 
+            promotion_blockers = []
+            if trades < self.min_completed_trades:
+                promotion_blockers.append("completed_trades")
+            if state.realized_net_pnl_eur < self.min_net_pnl_eur:
+                promotion_blockers.append("net_pnl")
+            if stressed_net_pnl <= 0.0:
+                promotion_blockers.append("stressed_net_pnl")
+            if winrate < self.min_winrate_pct:
+                promotion_blockers.append("winrate")
+            if profit_factor < self.min_profit_factor:
+                promotion_blockers.append("profit_factor")
+            if max_dd_pct > self.max_drawdown_pct:
+                promotion_blockers.append("drawdown")
+            if adaptive_change_pending:
+                promotion_blockers.append("adaptive_change_pending")
+
+            canary_blockers = []
+            if trades < self.canary_min_completed_trades:
+                canary_blockers.append("completed_trades")
+            if state.realized_net_pnl_eur < self.canary_min_net_pnl_eur:
+                canary_blockers.append("net_pnl")
+            if stressed_net_pnl <= 0.0:
+                canary_blockers.append("stressed_net_pnl")
+            if winrate < self.canary_min_winrate_pct:
+                canary_blockers.append("winrate")
+            if profit_factor < self.canary_min_profit_factor:
+                canary_blockers.append("profit_factor")
+            if max_dd_pct > self.canary_max_drawdown_pct:
+                canary_blockers.append("drawdown")
+            if adaptive_change_pending:
+                canary_blockers.append("adaptive_change_pending")
+            canary_ready = not canary_blockers
+
             # Transparent 0-100 score for comparing shadow candidates only.
             # It never authorizes live trading and deliberately rewards sample
             # maturity while penalizing drawdown and negative net performance.
@@ -461,6 +509,13 @@ class ShadowStrategyEngine:
                 "adaptive_overrides": learned_state.get("current_overrides", {}),
                 "promotable": promotable,
                 "promotion_ready": promotable,
+                "promotion_blockers": promotion_blockers,
+                "canary_ready": canary_ready,
+                "canary_blockers": canary_blockers,
+                "canary_action": (
+                    "lock_into_single_live_canary_slot"
+                    if canary_ready else "continue_shadow_validation"
+                ),
                 "promotion_action": (
                     "queue_for_operator_approved_live_release"
                     if promotable else "continue_shadow_validation"
@@ -486,6 +541,15 @@ class ShadowStrategyEngine:
                 "auto_set_live_capable": False,
                 "auto_send_live_orders": False,
                 "operator_live_release_required": True,
+            },
+            "canary_rules": {
+                "min_completed_trades": self.canary_min_completed_trades,
+                "min_winrate_pct": self.canary_min_winrate_pct,
+                "min_net_pnl_eur": self.canary_min_net_pnl_eur,
+                "min_profit_factor": self.canary_min_profit_factor,
+                "require_positive_stressed_net_pnl": True,
+                "require_no_pending_adaptive_change": True,
+                "max_drawdown_pct": self.canary_max_drawdown_pct,
             },
             "promotion_rules": {
                 "min_completed_trades": self.min_completed_trades,
