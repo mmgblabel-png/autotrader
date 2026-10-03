@@ -33,6 +33,7 @@ def _env_true(name: str, default: bool = False) -> bool:
 class CoinbaseAutonomousConfig:
     enabled: bool = True
     product_id: str = "BTC-EUR"
+    portfolio_id: str = ""
     interval_seconds: float = 5.0
     managed_capital_pct: float = 20.0
     cash_reserve_pct: float = 20.0
@@ -54,6 +55,7 @@ class CoinbaseAutonomousConfig:
         return cls(
             enabled=bool(cfg.get("enabled", True)),
             product_id=str(cfg.get("product_id", "BTC-EUR")).upper(),
+            portfolio_id=str(os.getenv("COINBASE_AGENT_PORTFOLIO_ID", cfg.get("portfolio_id", "")) or "").strip(),
             interval_seconds=max(2.0, float(cfg.get("interval_seconds", 5.0))),
             managed_capital_pct=min(20.0, max(1.0, float(cfg.get("managed_capital_pct", 20.0)))),
             cash_reserve_pct=min(90.0, max(20.0, float(cfg.get("cash_reserve_pct", 20.0)))),
@@ -91,12 +93,25 @@ class PendingOrder:
     window_key: str = ""
     window_end: float = 0.0
 
+@dataclass
+class SubmissionIntent:
+    client_order_id: str
+    side: str
+    purpose: str
+    created_at: float
+    quote_size: str = ""
+    base_size: str = ""
+    window_key: str = ""
+    window_end: float = 0.0
+    retry_count: int = 0
+
 
 @dataclass
 class CoinbaseAutonomousState:
     managed_cash_eur: float = 0.0
     position: ManagedPosition | None = None
     pending: PendingOrder | None = None
+    submission_intent: SubmissionIntent | None = None
     live_orders_sent: int = 0
     settled_trades: int = 0
     realized_pnl_eur: float = 0.0
@@ -154,6 +169,7 @@ class CoinbaseAutonomousExecutor:
             return
         position = raw.get("position")
         pending = raw.get("pending")
+        submission_intent = raw.get("submission_intent")
         if isinstance(position, dict):
             try:
                 self.state.position = ManagedPosition(**position)
@@ -162,6 +178,11 @@ class CoinbaseAutonomousExecutor:
         if isinstance(pending, dict):
             try:
                 self.state.pending = PendingOrder(**pending)
+            except TypeError:
+                pass
+        if isinstance(submission_intent, dict):
+            try:
+                self.state.submission_intent = SubmissionIntent(**submission_intent)
             except TypeError:
                 pass
         for key in (
@@ -189,7 +210,7 @@ class CoinbaseAutonomousExecutor:
         )
 
     def _balances(self) -> dict[str, float]:
-        payload = self.client.account_balances()
+        payload = self.client.account_balances(self.config.portfolio_id or None)
         result = {"EUR": 0.0, "BTC": 0.0}
         for row in payload.get("assets", []) if isinstance(payload, dict) else []:
             if not isinstance(row, dict):
@@ -220,7 +241,7 @@ class CoinbaseAutonomousExecutor:
             self.state.day_pnl_eur = 0.0
 
     def _global_gates(self, *, armed: bool, shadow_status: dict[str, Any]) -> dict[str, bool]:
-        auth = self.client.authenticated_accounts_probe()
+        auth = self.client.authenticated_accounts_probe(self.config.portfolio_id or None)
         return {
             "enabled": self.config.enabled,
             "execution_mode_live": os.getenv("EXECUTION_MODE", "paper").strip().lower() == "live",
@@ -261,6 +282,69 @@ class CoinbaseAutonomousExecutor:
         if status in {"FILLED", "DONE", "COMPLETED"} or bool(order.get("settled")):
             return size, price, fees
         return None
+
+    def _recover_submission_intent(self, now: float) -> None:
+        """Resolve an uncertain submit before any new order is allowed."""
+        intent = self.state.submission_intent
+        if intent is None:
+            return
+        found = self.client.find_order_by_client_id(
+            intent.client_order_id,
+            product_id=self.config.product_id,
+            portfolio_id=self.config.portfolio_id or None,
+        )
+        if found is not None:
+            order_id = str(found.get("order_id") or "").strip()
+            if order_id:
+                self.state.pending = PendingOrder(
+                    order_id=order_id,
+                    side=intent.side,
+                    purpose=intent.purpose,
+                    client_order_id=intent.client_order_id,
+                    submitted_at=intent.created_at,
+                    window_key=intent.window_key,
+                    window_end=intent.window_end,
+                )
+                self.state.submission_intent = None
+                self.state.live_orders_sent += 1
+                self.state.last_action = {
+                    "at": now,
+                    "action": "SUBMISSION_RECONCILED",
+                    "order_id": order_id,
+                    "client_order_id": intent.client_order_id,
+                    "purpose": intent.purpose,
+                }
+                self._save()
+                return
+        age = max(0.0, now - float(intent.created_at))
+        if age < 30.0 or intent.retry_count >= 1:
+            return
+        # One retry uses the exact same client_order_id. Coinbase documents
+        # client_order_id as the duplicate-order safeguard; never generate a
+        # new ID while the previous outcome is uncertain.
+        intent.retry_count += 1
+        self._save()
+        response = self.client.create_spot_market_order(
+            client_order_id=intent.client_order_id,
+            product_id=self.config.product_id,
+            side=intent.side,
+            quote_size=intent.quote_size or None,
+            base_size=intent.base_size or None,
+            portfolio_id=self.config.portfolio_id or None,
+        )
+        order_id = self._order_id(response)
+        self.state.pending = PendingOrder(
+            order_id=order_id,
+            side=intent.side,
+            purpose=intent.purpose,
+            client_order_id=intent.client_order_id,
+            submitted_at=now,
+            window_key=intent.window_key,
+            window_end=intent.window_end,
+        )
+        self.state.submission_intent = None
+        self.state.live_orders_sent += 1
+        self._save()
 
     def _refresh_pending(self, now: float) -> None:
         pending = self.state.pending
@@ -322,18 +406,30 @@ class CoinbaseAutonomousExecutor:
     def _submit_sell(self, *, base_size: float, purpose: str, now: float, reference_bid: float) -> dict[str, Any]:
         size_text = f"{base_size:.8f}".rstrip("0").rstrip(".")
         preview = self.client.preview_spot_market_order(
-            product_id=self.config.product_id, side="SELL", base_size=size_text
+            product_id=self.config.product_id,
+            side="SELL",
+            base_size=size_text,
+            portfolio_id=self.config.portfolio_id or None,
         )
         notional = base_size * reference_bid
         fee_bps, slip_bps = self._preview_costs(preview, reference_bid, notional)
         # Exits and reserve-building sells are risk-reducing, so preview costs
         # are recorded but do not prevent liquidation when a hard risk gate fires.
         client_id = str(uuid.uuid4())
+        self.state.submission_intent = SubmissionIntent(
+            client_order_id=client_id,
+            side="SELL",
+            purpose=purpose,
+            created_at=now,
+            base_size=size_text,
+        )
+        self._save()
         response = self.client.create_spot_market_order(
             client_order_id=client_id,
             product_id=self.config.product_id,
             side="SELL",
             base_size=size_text,
+            portfolio_id=self.config.portfolio_id or None,
             preview_id=str(preview.get("preview_id") or "") or None,
         )
         order_id = self._order_id(response)
@@ -342,6 +438,8 @@ class CoinbaseAutonomousExecutor:
             order_id=order_id, side="SELL", purpose=purpose,
             client_order_id=client_id, submitted_at=now,
         )
+        self.state.submission_intent = None
+        self._save()
         action = {
             "at": now, "action": f"{purpose.upper()}_SUBMITTED",
             "order_id": order_id, "base_size": base_size,
@@ -361,7 +459,10 @@ class CoinbaseAutonomousExecutor:
     ) -> dict[str, Any]:
         quote_text = f"{quote_eur:.2f}"
         preview = self.client.preview_spot_market_order(
-            product_id=self.config.product_id, side="BUY", quote_size=quote_text
+            product_id=self.config.product_id,
+            side="BUY",
+            quote_size=quote_text,
+            portfolio_id=self.config.portfolio_id or None,
         )
         fee_bps, slip_bps = self._preview_costs(preview, reference_ask, quote_eur)
         if fee_bps > self.config.max_preview_fee_bps:
@@ -369,22 +470,35 @@ class CoinbaseAutonomousExecutor:
         if slip_bps > self.config.max_preview_slippage_bps:
             return {"at": now, "action": "HOLD", "reason": "preview_slippage_too_high", "slippage_bps": slip_bps}
         client_id = str(uuid.uuid4())
+        window_key = str(decision.get("window_key") or "")
+        remaining = max(0.0, float(decision.get("seconds_remaining") or 0.0))
+        self.state.submission_intent = SubmissionIntent(
+            client_order_id=client_id,
+            side="BUY",
+            purpose="entry",
+            created_at=now,
+            quote_size=quote_text,
+            window_key=window_key,
+            window_end=now + remaining,
+        )
+        self._save()
         response = self.client.create_spot_market_order(
             client_order_id=client_id,
             product_id=self.config.product_id,
             side="BUY",
             quote_size=quote_text,
+            portfolio_id=self.config.portfolio_id or None,
             preview_id=str(preview.get("preview_id") or "") or None,
         )
         order_id = self._order_id(response)
-        window_key = str(decision.get("window_key") or "")
-        remaining = max(0.0, float(decision.get("seconds_remaining") or 0.0))
         self.state.live_orders_sent += 1
         self.state.pending = PendingOrder(
             order_id=order_id, side="BUY", purpose="entry",
             client_order_id=client_id, submitted_at=now,
             window_key=window_key, window_end=now + remaining,
         )
+        self.state.submission_intent = None
+        self._save()
         self.state.seen_windows.append(window_key)
         self.state.seen_windows = self.state.seen_windows[-5000:]
         action = {
@@ -405,7 +519,7 @@ class CoinbaseAutonomousExecutor:
         max_trade = nav * self.config.max_single_trade_pct / 100.0
         gates = self._global_gates(armed=armed, shadow_status=shadow_status)
         return {
-            "ready_for_new_entry": all(gates.values()),
+            "ready_for_new_entry": all(gates.values()) and self.state.submission_intent is None,
             "gates": gates,
             "failed_gates": sorted(k for k, v in gates.items() if not v),
             "portfolio_nav_eur": round(nav, 8),
@@ -414,6 +528,9 @@ class CoinbaseAutonomousExecutor:
             "managed_sleeve_target_eur": round(sleeve, 8),
             "max_single_trade_eur": round(max_trade, 8),
             "managed_cash_eur": round(self.state.managed_cash_eur, 8),
+            "portfolio_id": self.config.portfolio_id or None,
+            "portfolio_isolated": bool(self.config.portfolio_id),
+            "submission_outcome_unknown": self.state.submission_intent is not None,
             "best_bid": bid,
             "best_ask": ask,
         }
@@ -428,6 +545,7 @@ class CoinbaseAutonomousExecutor:
         ts = float(time.time() if now is None else now)
         shadow = shadow_status or {}
         try:
+            self._recover_submission_intent(ts)
             self._refresh_pending(ts)
             ready = self.readiness(armed=armed, shadow_status=shadow)
             bid = float(ready["best_bid"])
@@ -484,6 +602,7 @@ class CoinbaseAutonomousExecutor:
             if (
                 action is None
                 and self.state.pending is None
+                and self.state.submission_intent is None
                 and self.state.position is None
                 and env_ready
                 and float(balances.get("EUR") or 0.0) + 1e-9 < total_cash_target
@@ -501,6 +620,7 @@ class CoinbaseAutonomousExecutor:
             if (
                 action is None
                 and self.state.pending is None
+                and self.state.submission_intent is None
                 and self.state.position is None
                 and bool(ready["ready_for_new_entry"])
                 and not day_stop
@@ -562,6 +682,9 @@ class CoinbaseAutonomousExecutor:
             "managed_cash_eur": round(self.state.managed_cash_eur, 8),
             "managed_position": asdict(self.state.position) if self.state.position else None,
             "pending_order": asdict(self.state.pending) if self.state.pending else None,
+            "submission_intent": asdict(self.state.submission_intent) if self.state.submission_intent else None,
+            "portfolio_id": self.config.portfolio_id or None,
+            "portfolio_isolated": bool(self.config.portfolio_id),
             "settled_trades": int(self.state.settled_trades),
             "realized_pnl_eur": round(self.state.realized_pnl_eur, 8),
             "day_pnl_eur": round(self.state.day_pnl_eur, 8),
