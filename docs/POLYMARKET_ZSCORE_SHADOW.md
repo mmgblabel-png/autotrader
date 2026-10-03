@@ -33,6 +33,10 @@ Sizing uses fractional Kelly but is bounded by both an absolute stake cap and a 
 
 The price-to-beat is captured only near the start of a new 5m/15m epoch from the settlement-source TWAP stream. If the worker starts too late, it skips that window. It never invents or back-fills a strike from a different venue.
 
+## Persistence gate
+
+The dedicated Railway service must have persistent storage mounted at `/data`. Until that has been verified, `persistent_state_confirmed` remains `false` and the worker forcibly reports `promotion_ready=false` with `promotion_blocker=persistent_state_not_confirmed`. This prevents ephemeral redeploys from producing misleading promotion evidence.
+
 ## Promotion gate
 
 `promotion_ready` is evidence only; there is no automatic promotion to live trading. Defaults require:
