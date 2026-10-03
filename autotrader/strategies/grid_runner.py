@@ -161,7 +161,7 @@ class GridRunner(BaseStrategy):
                     quantity=sell_size,
                     price=round(price, 8),
                     strategy=self.name,
-                quote_to_eur=quote_to_eur,
+                    quote_to_eur=quote_to_eur,
                 ))
                 log.info("GRID SELL %s %.8f @ %.8f", symbol, sell_size, price)
                 return
@@ -252,7 +252,7 @@ class GridRunner(BaseStrategy):
             quantity=buy_size,
             price=round(buy_price, 8),
             strategy=self.name,
-        quote_to_eur=quote_to_eur,
+            quote_to_eur=quote_to_eur,
         ))
         log.info("GRID BUY %s %.8f @ %.8f", symbol, buy_size, buy_price)
 
