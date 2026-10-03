@@ -567,3 +567,24 @@ coinbase_zscore_shadow:
   promotion_min_settled_trades: 300
   promotion_min_profit_factor: 1.20
   promotion_max_drawdown_pct: 8.0
+
+
+coinbase_autonomous_execution:
+  enabled: true
+  product_id: BTC-EUR
+  interval_seconds: 5
+  # Only this sleeve is controlled by the Coinbase agent. Remaining BTC is not
+  # adopted as bot inventory.
+  managed_capital_pct: 20.0
+  cash_reserve_pct: 20.0
+  max_single_trade_pct: 20.0
+  max_order_eur: 5.0
+  min_order_eur: 1.0
+  max_daily_loss_pct: 3.0
+  max_drawdown_pct: 10.0
+  stop_loss_pct: 1.0
+  take_profit_pct: 1.5
+  max_preview_fee_bps: 60.0
+  max_preview_slippage_bps: 25.0
+  require_shadow_promotion: true
+  state_path: /data/coinbase_autonomous_canary.json
