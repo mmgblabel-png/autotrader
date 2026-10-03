@@ -553,6 +553,7 @@ class CoinbaseAutonomousExecutor:
         ts = float(time.time() if now is None else now)
         shadow = shadow_status or {}
         try:
+            had_uncertain_submission = self.state.submission_intent is not None
             self._recover_submission_intent(ts)
             self._refresh_pending(ts)
             ready = self.readiness(armed=armed, shadow_status=shadow)
@@ -575,6 +576,18 @@ class CoinbaseAutonomousExecutor:
             day_stop = self.state.day_start_managed_equity_eur > 0 and self.state.day_pnl_eur <= -day_limit
             drawdown_stop = self.state.max_drawdown_pct >= self.config.max_drawdown_pct
             action: dict[str, Any] | None = None
+
+            # A tick that started with an unknown submit outcome is reconciliation-only.
+            # Even after a recovered fill, do not chain a second order in the same tick.
+            if had_uncertain_submission:
+                self.state.last_error = None
+                self._save()
+                return self.status(
+                    readiness=ready,
+                    action=self.state.last_action,
+                    day_stop=day_stop,
+                    drawdown_stop=drawdown_stop,
+                )
 
             if self.state.pending is None and self.state.position is not None:
                 pos = self.state.position
