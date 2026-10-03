@@ -608,45 +608,26 @@ class OrderJournal:
             return True
 
     def net_base_inventory(self, market: str, strategy: str) -> Decimal:
-        """Return base-asset inventory created by this strategy's recorded fills."""
-        base = market.upper().split("-", 1)[0]
-        with self._lock:
-            rows = self._db.execute(
-                """
-                SELECT o.side, f.amount, f.fee, f.raw_json
-                FROM fills AS f
-                JOIN orders AS o ON o.client_order_id=f.client_order_id
-                WHERE o.market=? AND o.strategy=?
-                ORDER BY f.observed_at
-                """,
-                (market.upper(), strategy),
-            ).fetchall()
-        total = Decimal("0")
-        for row in rows:
-            amount = Decimal(str(row["amount"] or "0"))
-            side = str(row["side"] or "").lower()
-            total += amount if side == "buy" else -amount
-            try:
-                payload = json.loads(row["raw_json"] or "{}")
-            except (TypeError, json.JSONDecodeError):
-                payload = {}
-            if str(payload.get("feeCurrency") or "").upper() == base:
-                total -= abs(Decimal(str(row["fee"] or payload.get("fee") or "0")))
-        return max(total, Decimal("0"))
+        """Return effective bot-owned inventory after durable reconciliations."""
+        state = self.inventory_cost_basis(market, strategy)
+        return max(Decimal("0"), Decimal(str(state.get("quantity") or "0")))
+
 
     def inventory_cost_basis(self, market: str, strategy: str) -> dict[str, Decimal]:
-        """Average-cost basis for currently bot-owned base inventory."""
+        """Average-cost basis for effective bot-owned base inventory."""
         base, _, quote = market.upper().partition("-")
+        reconciliation = self.latest_inventory_reconciliation(market, strategy)
+        cutoff = float((reconciliation or {}).get("fill_cutoff") or 0.0)
         with self._lock:
             rows = self._db.execute(
                 """
-                SELECT o.side, f.amount, f.price, f.fee, f.raw_json
+                SELECT o.side, f.amount, f.price, f.fee, f.raw_json, f.observed_at
                 FROM fills AS f
                 JOIN orders AS o ON o.client_order_id=f.client_order_id
-                WHERE o.market=? AND o.strategy=?
+                WHERE o.market=? AND o.strategy=? AND f.observed_at>?
                 ORDER BY f.observed_at, f.fill_key
                 """,
-                (market.upper(), strategy),
+                (market.upper(), strategy, cutoff),
             ).fetchall()
         quantity = Decimal("0")
         cost = Decimal("0")
