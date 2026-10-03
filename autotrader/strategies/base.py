@@ -78,6 +78,55 @@ class BaseStrategy(ABC):
         # amount that looked just-valid back below the exchange minimum.
         return min_base * 1.001 if min_base > 0 else 0.0
 
+    def minimum_tradable_notional(self, price: float | None = None) -> float:
+        """Return the exchange minimum quote notional implied by live market rules."""
+        px = max(
+            0.0,
+            float(
+                price
+                if price is not None
+                else self._config.get("_current_price", self._config.get("_mid_price", 0.0))
+                or 0.0
+            ),
+        )
+        explicit_quote = max(
+            0.0, float(self._config.get("_min_order_quote", 0.0) or 0.0)
+        )
+        base_minimum = self.minimum_tradable_base(px)
+        return max(explicit_quote, base_minimum * px if px > 0 else 0.0)
+
+    def bounded_entry_notional(
+        self,
+        requested_eur: float,
+        *,
+        price: float,
+        symbol: str,
+    ) -> float:
+        """Shrink a BUY request to current hard-risk headroom.
+
+        A result of zero means no valid entry can be placed without violating
+        risk or exchange minimums. This helper never expands the requested size.
+        """
+        requested = max(0.0, float(requested_eur or 0.0))
+        px = max(0.0, float(price or 0.0))
+        if requested <= 0 or px <= 0:
+            return 0.0
+
+        permitted = requested
+        if hasattr(self._rm, "max_entry_notional"):
+            permitted = min(
+                permitted,
+                max(
+                    0.0,
+                    float(self._rm.max_entry_notional(self.name, symbol=symbol)),
+                ),
+            )
+
+        minimum = self.minimum_tradable_notional(px)
+        if minimum > 0 and permitted + 1e-9 < minimum:
+            return 0.0
+        return max(0.0, permitted)
+
     def inventory_is_dust(self, quantity: float, price: float | None = None) -> bool:
         quantity = max(0.0, float(quantity or 0.0))
         if quantity <= 0:
