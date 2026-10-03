@@ -84,6 +84,11 @@ class OpportunityRouter:
         self.default_taker_fee_bps = max(
             0.0, float(self.config.get("default_taker_fee_bps", 25.0))
         )
+        self.live_quote_assets = {
+            str(x).upper()
+            for x in (self.config.get("live_quote_assets") or ["EUR"])
+            if str(x).strip()
+        }
         self._history: dict[str, deque[float]] = defaultdict(lambda: deque(maxlen=self.history_size))
         self._latest: dict[str, MarketSnapshot] = {}
         self._last_error: dict[str, str] = {}
@@ -380,7 +385,10 @@ class OpportunityRouter:
                     "quote": snap.market.rsplit("-", 1)[1] if "-" in snap.market else "",
                     "pair_type": "crypto_fiat" if snap.market.endswith("-EUR") else "crypto_crypto",
                     "quote_to_eur": round(float(snap.quote_to_eur or 0.0), 12),
-                    "live_execution_supported_now": float(snap.quote_to_eur or 0.0) > 0,
+                    "live_execution_supported_now": (
+                        quote in self.live_quote_assets
+                        and float(snap.quote_to_eur or 0.0) > 0
+                    ),
                     "score": round(score, 2),
                     "economic_shadow_score": round(economic_shadow_score, 2),
                     "signal_strength": round(signal_strength, 2),
