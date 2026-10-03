@@ -123,6 +123,7 @@ shadow_lab:
   promotion_min_winrate_pct: 55.0
   promotion_min_net_pnl_eur: 0.15
   promotion_min_profit_factor: 1.10
+  promotion_min_q10_return_pct: -2.50
   promotion_cost_stress_multiplier: 1.25
   promotion_max_drawdown_pct: 6.0
   canary_min_completed_trades: 12
