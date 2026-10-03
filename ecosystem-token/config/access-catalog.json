@@ -1,5 +1,5 @@
 {
-  "version": 1,
+  "version": 2,
   "token": "AIHF",
   "tiers": {
     "NONE": {
@@ -8,7 +8,10 @@
       "api_requests_per_minute": 0,
       "features": [
         "public_project_status",
-        "public_methodology"
+        "public_methodology",
+        "sandbox_public_lobby",
+        "sandbox_ecosystem_gallery",
+        "sandbox_onboarding_quests"
       ]
     },
     "READER": {
@@ -19,7 +22,9 @@
         "research_feed",
         "historical_research",
         "market_watchlists",
-        "portfolio_education"
+        "portfolio_education",
+        "sandbox_research_floor",
+        "sandbox_shadow_agent_room"
       ]
     },
     "PRO": {
@@ -33,7 +38,10 @@
         "premium_dashboard",
         "strategy_analytics",
         "alerts",
-        "data_exports"
+        "data_exports",
+        "sandbox_research_floor",
+        "sandbox_shadow_agent_room",
+        "sandbox_pro_strategy_lab"
       ]
     },
     "QUANT": {
@@ -51,7 +59,11 @@
         "strategy_lab",
         "quant_api",
         "marketplace_creator_tools",
-        "research_signal_voting"
+        "research_signal_voting",
+        "sandbox_research_floor",
+        "sandbox_shadow_agent_room",
+        "sandbox_pro_strategy_lab",
+        "sandbox_quant_vault"
       ]
     }
   }
