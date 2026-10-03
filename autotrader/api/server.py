@@ -78,7 +78,11 @@ from autotrader.core.risk_lab import LeverageMartingaleRiskLab
 from autotrader.core.derivatives_risk_lab import DerivativesRiskLab
 from autotrader.fund.automation import AutonomousFundScheduler
 from autotrader.connectors.bitvavo import BitvavoAdapter, BitvavoError
-from autotrader.connectors.coinbase_advanced import CoinbaseAdvancedMarketData, CoinbaseMarketDataError
+from autotrader.connectors.coinbase_advanced import (
+    CoinbaseAdvancedMarketData,
+    CoinbaseAuthenticationError,
+    CoinbaseMarketDataError,
+)
 from autotrader.connectors.bitpanda_fusion import BitpandaFusionAdapter
 from autotrader.api.dashboard_html import dashboard_html
 from autotrader.ml.shadow import walk_forward, lookahead_analysis, recursive_analysis
@@ -2419,7 +2423,7 @@ def derivatives_risk_lab_status() -> dict[str, object]:
         if fund_risk.get("nav_verified") and fund_risk.get("nav_eur") is not None
         else None
     )
-    account_probe = app.state.coinbase_market_data.derivatives_risk_probe()
+    account_probe = CoinbaseAdvancedMarketData().derivatives_risk_probe()
     payload = app.state.derivatives_risk_lab.status(nav_eur=nav_eur)
     payload["account_probe"] = account_probe
     payload["live_capable"] = False
