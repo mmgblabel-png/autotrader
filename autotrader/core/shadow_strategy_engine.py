@@ -75,6 +75,9 @@ class ShadowStrategyEngine:
         self.max_drawdown_pct = float(self.config.get("promotion_max_drawdown_pct", 8.0))
         self.min_net_pnl_eur = float(self.config.get("promotion_min_net_pnl_eur", 0.50))
         self.min_profit_factor = max(1.0, float(self.config.get("promotion_min_profit_factor", 1.10)))
+        self.min_q10_return_pct = float(
+            self.config.get("promotion_min_q10_return_pct", -2.50)
+        )
         self.cost_stress_multiplier = max(1.0, float(self.config.get("promotion_cost_stress_multiplier", 1.25)))
         self.canary_min_completed_trades = max(
             4, int(self.config.get("canary_min_completed_trades", 12))
@@ -90,6 +93,16 @@ class ShadowStrategyEngine:
         )
         self.canary_max_drawdown_pct = max(
             0.1, float(self.config.get("canary_max_drawdown_pct", 5.0))
+        )
+        self.drift_gate_enabled = bool(self.config.get("drift_gate_enabled", True))
+        self.drift_min_samples = max(40, int(self.config.get("drift_min_samples", 80)))
+        self.drift_baseline_bars = max(20, int(self.config.get("drift_baseline_bars", 120)))
+        self.drift_recent_bars = max(10, int(self.config.get("drift_recent_bars", 40)))
+        self.drift_max_mean_shift_sigma = max(
+            0.5, float(self.config.get("drift_max_mean_shift_sigma", 2.5))
+        )
+        self.drift_max_vol_ratio = max(
+            1.1, float(self.config.get("drift_max_vol_ratio", 2.5))
         )
         self._states: dict[str, ShadowStats] = {}
         self._load()
@@ -143,6 +156,16 @@ class ShadowStrategyEngine:
             last_signal=f"version_reset_{version}",
         )
         return self._states[name]
+
+    @staticmethod
+    def _percentile(values: list[float], quantile: float) -> float:
+        """Conservative empirical lower-quantile for shadow tail-risk gates."""
+        ordered = sorted(float(value) for value in values if math.isfinite(float(value)))
+        if not ordered:
+            return 0.0
+        q = max(0.0, min(1.0, float(quantile)))
+        index = int(math.floor((len(ordered) - 1) * q))
+        return ordered[index]
 
     @property
     def round_trip_cost_pct(self) -> float:
@@ -374,6 +397,78 @@ class ShadowStrategyEngine:
         else:
             state.last_signal = f"hold_{move:.2f}%"
 
+    def _drift_status(self, state: ShadowStats) -> dict[str, Any]:
+        prices = [float(x) for x in state.prices if math.isfinite(float(x)) and float(x) > 0]
+        needed = max(
+            self.drift_min_samples,
+            self.drift_baseline_bars + self.drift_recent_bars + 1,
+        )
+        if not self.drift_gate_enabled:
+            return {
+                "enabled": False,
+                "ready": False,
+                "drift_flag": False,
+                "reason": "disabled",
+            }
+        if len(prices) < needed:
+            return {
+                "enabled": True,
+                "ready": False,
+                "drift_flag": False,
+                "reason": "insufficient_samples",
+                "samples": len(prices),
+                "required_samples": needed,
+            }
+
+        returns = [
+            math.log(prices[i] / prices[i - 1])
+            for i in range(1, len(prices))
+            if prices[i - 1] > 0 and prices[i] > 0
+        ]
+        baseline = returns[-(self.drift_baseline_bars + self.drift_recent_bars):-self.drift_recent_bars]
+        recent = returns[-self.drift_recent_bars:]
+        if len(baseline) < 2 or len(recent) < 2:
+            return {
+                "enabled": True,
+                "ready": False,
+                "drift_flag": False,
+                "reason": "insufficient_returns",
+            }
+
+        baseline_mean = statistics.fmean(baseline)
+        recent_mean = statistics.fmean(recent)
+        baseline_std = statistics.pstdev(baseline)
+        recent_std = statistics.pstdev(recent)
+        scale = max(baseline_std, 1e-8)
+        mean_shift_sigma = abs(recent_mean - baseline_mean) / scale
+        vol_ratio = recent_std / scale
+        low_vol_ratio = baseline_std / max(recent_std, 1e-8)
+        drift_flag = (
+            mean_shift_sigma > self.drift_max_mean_shift_sigma
+            or vol_ratio > self.drift_max_vol_ratio
+            or low_vol_ratio > self.drift_max_vol_ratio
+        )
+        reasons = []
+        if mean_shift_sigma > self.drift_max_mean_shift_sigma:
+            reasons.append("mean_shift")
+        if vol_ratio > self.drift_max_vol_ratio:
+            reasons.append("volatility_expansion")
+        if low_vol_ratio > self.drift_max_vol_ratio:
+            reasons.append("volatility_collapse")
+        return {
+            "enabled": True,
+            "ready": True,
+            "drift_flag": drift_flag,
+            "reason": ",".join(reasons) if reasons else "stable",
+            "samples": len(prices),
+            "baseline_bars": len(baseline),
+            "recent_bars": len(recent),
+            "mean_shift_sigma": round(mean_shift_sigma, 4),
+            "vol_ratio": round(vol_ratio, 4),
+            "max_mean_shift_sigma": self.drift_max_mean_shift_sigma,
+            "max_vol_ratio": self.drift_max_vol_ratio,
+        }
+
     def status(self, configs: dict[str, dict[str, Any]]) -> dict[str, Any]:
         rows = []
         learning = self.learner.snapshot() if self.learner is not None else {}
@@ -391,6 +486,13 @@ class ShadowStrategyEngine:
                 if negative_outcomes > 1e-12
                 else (float("inf") if positive_outcomes > 0 else 0.0)
             )
+            outcome_returns_pct = [
+                (float(value) / capital) * 100.0 for value in state.outcomes
+            ]
+            q10_return_pct = self._percentile(outcome_returns_pct, 0.10)
+            q50_return_pct = self._percentile(outcome_returns_pct, 0.50)
+            q90_return_pct = self._percentile(outcome_returns_pct, 0.90)
+            tail_sample_count = len(outcome_returns_pct)
             extra_stress_cost = (
                 trades
                 * capital
@@ -404,14 +506,19 @@ class ShadowStrategyEngine:
                 else {}
             )
             adaptive_change_pending = bool(learned_state.get("pending_change"))
+            drift = self._drift_status(state)
+            drift_blocked = bool(drift.get("ready") and drift.get("drift_flag"))
             promotable = (
                 trades >= self.min_completed_trades
                 and state.realized_net_pnl_eur >= self.min_net_pnl_eur
                 and stressed_net_pnl > 0.0
                 and winrate >= self.min_winrate_pct
                 and profit_factor >= self.min_profit_factor
+                and tail_sample_count >= self.min_completed_trades
+                and q10_return_pct >= self.min_q10_return_pct
                 and max_dd_pct <= self.max_drawdown_pct
                 and not adaptive_change_pending
+                and not drift_blocked
             )
 
             promotion_blockers = []
@@ -425,10 +532,16 @@ class ShadowStrategyEngine:
                 promotion_blockers.append("winrate")
             if profit_factor < self.min_profit_factor:
                 promotion_blockers.append("profit_factor")
+            if tail_sample_count < self.min_completed_trades:
+                promotion_blockers.append("tail_samples")
+            elif q10_return_pct < self.min_q10_return_pct:
+                promotion_blockers.append("tail_risk_q10")
             if max_dd_pct > self.max_drawdown_pct:
                 promotion_blockers.append("drawdown")
             if adaptive_change_pending:
                 promotion_blockers.append("adaptive_change_pending")
+            if drift_blocked:
+                promotion_blockers.append("distribution_drift")
 
             canary_blockers = []
             if trades < self.canary_min_completed_trades:
@@ -445,6 +558,8 @@ class ShadowStrategyEngine:
                 canary_blockers.append("drawdown")
             if adaptive_change_pending:
                 canary_blockers.append("adaptive_change_pending")
+            if drift_blocked:
+                canary_blockers.append("distribution_drift")
             canary_ready = not canary_blockers
 
             # Transparent 0-100 score for comparing shadow candidates only.
@@ -499,9 +614,15 @@ class ShadowStrategyEngine:
                 "realized_net_pnl_eur": round(state.realized_net_pnl_eur, 4),
                 "max_drawdown_pct": round(max_dd_pct, 2),
                 "profit_factor": round(profit_factor, 3) if math.isfinite(profit_factor) else None,
+                "tail_sample_count": tail_sample_count,
+                "outcome_q10_return_pct": round(q10_return_pct, 4),
+                "outcome_q50_return_pct": round(q50_return_pct, 4),
+                "outcome_q90_return_pct": round(q90_return_pct, 4),
+                "promotion_min_q10_return_pct": round(self.min_q10_return_pct, 4),
                 "stressed_net_pnl_eur": round(stressed_net_pnl, 4),
                 "cost_stress_multiplier": round(self.cost_stress_multiplier, 2),
                 "adaptive_change_pending": adaptive_change_pending,
+                "drift": drift,
                 "score": round(score, 1),
                 "review_status": review_status,
                 "last_signal": state.last_signal,
@@ -549,6 +670,7 @@ class ShadowStrategyEngine:
                 "min_profit_factor": self.canary_min_profit_factor,
                 "require_positive_stressed_net_pnl": True,
                 "require_no_pending_adaptive_change": True,
+                "require_no_distribution_drift": self.drift_gate_enabled,
                 "max_drawdown_pct": self.canary_max_drawdown_pct,
             },
             "promotion_rules": {
@@ -556,8 +678,11 @@ class ShadowStrategyEngine:
                 "min_winrate_pct": self.min_winrate_pct,
                 "min_net_pnl_eur": self.min_net_pnl_eur,
                 "min_profit_factor": self.min_profit_factor,
+                "min_q10_return_pct": self.min_q10_return_pct,
+                "require_tail_sample_count": self.min_completed_trades,
                 "cost_stress_multiplier": self.cost_stress_multiplier,
                 "require_no_pending_adaptive_change": True,
+                "require_no_distribution_drift": self.drift_gate_enabled,
                 "max_drawdown_pct": self.max_drawdown_pct,
             },
             "strategies": rows,
