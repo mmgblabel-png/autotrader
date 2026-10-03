@@ -13,6 +13,7 @@ from autotrader.prediction.model import (
     fractional_kelly_stake,
 )
 from autotrader.prediction.shadow import PolymarketShadowLedger, ShadowPosition
+from autotrader.prediction.worker import PolymarketZScoreShadowWorker
 
 
 def test_fair_probability_is_half_at_strike_with_zero_log_drift():
