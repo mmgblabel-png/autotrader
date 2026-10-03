@@ -1592,23 +1592,6 @@ async def _coinbase_zscore_shadow_loop(app: FastAPI) -> None:
         try:
             status = await asyncio.to_thread(app.state.coinbase_zscore_shadow.tick)
             app.state.coinbase_zscore_shadow_error = None
-    app.state.coinbase_live_arm_store = LiveArmIntentStore("/data/coinbase_live_arm_state.json")
-    app.state.coinbase_live_arm_intent = bool(app.state.coinbase_live_arm_store.load().armed)
-    app.state.coinbase_live_arm_auto_resume_eligible = bool(
-        app.state.live_mode and app.state.coinbase_live_arm_store.should_resume()
-    )
-    app.state.coinbase_live_armed = False
-    coinbase_auto_cfg = agent._config.get("coinbase_autonomous_execution", {}) or {}
-    app.state.coinbase_autonomous_enabled = bool(coinbase_auto_cfg.get("enabled", False))
-    app.state.coinbase_autonomous_executor = CoinbaseAutonomousExecutor(coinbase_auto_cfg)
-    try:
-        app.state.coinbase_autonomous_interval_seconds = max(
-            2.0, float(coinbase_auto_cfg.get("interval_seconds", 5.0))
-        )
-    except (TypeError, ValueError):
-        app.state.coinbase_autonomous_interval_seconds = 5.0
-    app.state.coinbase_autonomous_error = None
-    app.state.coinbase_autonomous_status = app.state.coinbase_autonomous_executor.status()
             if first_success:
                 log.info(
                     "Coinbase Z-score shadow active: product=%s durations=%s api_key_required=%s live_orders_sent=%s",
@@ -1751,6 +1734,23 @@ async def _lifespan(app: FastAPI):
     except (TypeError, ValueError):
         app.state.coinbase_zscore_shadow_interval_seconds = 5.0
     app.state.coinbase_zscore_shadow_error = None
+    app.state.coinbase_live_arm_store = LiveArmIntentStore("/data/coinbase_live_arm_state.json")
+    app.state.coinbase_live_arm_intent = bool(app.state.coinbase_live_arm_store.load().armed)
+    app.state.coinbase_live_arm_auto_resume_eligible = bool(
+        app.state.live_mode and app.state.coinbase_live_arm_store.should_resume()
+    )
+    app.state.coinbase_live_armed = False
+    coinbase_auto_cfg = agent._config.get("coinbase_autonomous_execution", {}) or {}
+    app.state.coinbase_autonomous_enabled = bool(coinbase_auto_cfg.get("enabled", False))
+    app.state.coinbase_autonomous_executor = CoinbaseAutonomousExecutor(coinbase_auto_cfg)
+    try:
+        app.state.coinbase_autonomous_interval_seconds = max(
+            2.0, float(coinbase_auto_cfg.get("interval_seconds", 5.0))
+        )
+    except (TypeError, ValueError):
+        app.state.coinbase_autonomous_interval_seconds = 5.0
+    app.state.coinbase_autonomous_error = None
+    app.state.coinbase_autonomous_status = app.state.coinbase_autonomous_executor.status()
     shadow_cfg = agent._config.get("shadow_lab", {}) or {}
     app.state.shadow_strategy_engine = ShadowStrategyEngine(shadow_cfg, learner=agent.adaptive_learning)
     app.state.leverage_martingale_risk_lab = LeverageMartingaleRiskLab(
