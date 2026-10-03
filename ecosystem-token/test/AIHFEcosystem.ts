@@ -158,7 +158,7 @@ describe("AIHF ecosystem contracts", function () {
     const latest = await ethers.provider.getBlock("latest");
     if (!latest) throw new Error("latest block unavailable");
 
-    const start = latest.timestamp;
+    const start = latest.timestamp + 3600; // keep the vesting start safely ahead of deployment/funding blocks
     const duration = 4 * 365 * DAY;
     const cliff = 365 * DAY;
     const allocation = ethers.parseEther("15000000");
@@ -172,7 +172,7 @@ describe("AIHF ecosystem contracts", function () {
     await vesting.waitForDeployment();
     await token.connect(treasury).transfer(await vesting.getAddress(), allocation);
 
-    await networkHelpers.time.increase(cliff - 1);
+    await networkHelpers.time.increaseTo(start + cliff - 1);
     expect(await vesting["releasable(address)"](await token.getAddress())).to.equal(0n);
 
     await networkHelpers.time.increase(1);
