@@ -370,10 +370,10 @@ def test_api_strategy_status_compatibility(api_client):
     }
 
 
-def test_api_start_valid_strategy(api_client):
+def test_api_start_disabled_strategy_stays_disabled(api_client):
     r = api_client.post("/api/strategies/start", json={"name": "market_maker"})
     assert r.status_code == 200
-    assert r.json()["status"] == "started"
+    assert r.json()["status"] == "disabled"
 
 
 def test_api_start_invalid_strategy(api_client):
