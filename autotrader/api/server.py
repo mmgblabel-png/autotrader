@@ -857,7 +857,7 @@ def _apply_strategy_evidence_gate(agent: AutoTrader) -> dict[str, object]:
     cfg = agent._config.get("live_evidence_gate", {}) or {}
     enabled = bool(cfg.get("enabled", True))
     min_exits = max(1, int(cfg.get("min_completed_exits", 4)))
-    min_net = float(cfg.get("minimum_net_pnl_eur", -0.10))
+    min_net = float(cfg.get("minimum_net_pnl_eur", 0.0))
     summary = agent.profit_engine.as_summary().get("by_strategy", {}) or {}
     blocked = []
     evaluated = []
