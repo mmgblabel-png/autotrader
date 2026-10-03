@@ -917,10 +917,14 @@ async def _tick_loop(app: FastAPI, agent: AutoTrader) -> None:
                         log.warning("Bitvavo fee-tier refresh failed safely: %s", type(fee_exc).__name__)
                     try:
                         balance_rows = agent._bitvavo.balance()
-                        app.state.bitvavo_balances = {
-                            str(row.get("symbol", "")).upper(): float(row.get("available") or 0)
+                        app.state.bitvavo_balance_rows = {
+                            str(row.get("symbol", "")).upper(): dict(row)
                             for row in balance_rows
                             if isinstance(row, dict) and row.get("symbol")
+                        }
+                        app.state.bitvavo_balances = {
+                            symbol: float(row.get("available") or 0)
+                            for symbol, row in app.state.bitvavo_balance_rows.items()
                         }
                         app.state.bitvavo_balance_snapshot_ready = True
                         fund_valuation = await asyncio.to_thread(
