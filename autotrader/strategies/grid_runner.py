@@ -35,7 +35,12 @@ class GridRunner(BaseStrategy):
         symbol = str(cfg.get("symbol", "SOL-EUR")).upper()
         exchange = str(cfg.get("exchange", "bitvavo")).lower()
         order_value = float(cfg.get("order_value_eur", 6.0))
-        size = float(cfg.get("order_size", 0.0)) or (order_value / current_price)
+        quote_to_eur = self.quote_to_eur_rate()
+        if order_value > 0 and quote_to_eur <= 0:
+            return
+        size = float(cfg.get("order_size", 0.0)) or (
+            order_value / (current_price * quote_to_eur)
+        )
         entry_offset = max(0.0001, float(cfg.get("entry_offset_pct", 0.6)) / 100)
         exit_markup = max(0.0001, float(cfg.get("exit_markup_pct", 0.8)) / 100)
 
@@ -86,7 +91,7 @@ class GridRunner(BaseStrategy):
                 if protected_size > 0 and (
                     minimum_sell <= 0 or protected_size >= minimum_sell
                 ):
-                    notional = protected_size * current_price
+                    notional = self.quote_notional_to_eur(protected_size * current_price)
                     if self._rm.check_order(
                         self.name,
                         notional,
@@ -103,6 +108,7 @@ class GridRunner(BaseStrategy):
                             time_in_force="IOC",
                             post_only=False,
                             strategy=self.name,
+                        quote_to_eur=quote_to_eur,
                         )
                         self._om.register(order)
                         mark_protection_order_pending(cfg, protection)
@@ -144,7 +150,7 @@ class GridRunner(BaseStrategy):
                     entry_price * (1 + exit_markup),
                     min_profit_exit_price,
                 )
-                notional = sell_size * current_price
+                notional = self.quote_notional_to_eur(sell_size * current_price)
                 if not self._rm.check_order(self.name, notional, symbol=symbol, risk_reducing=True):
                     return
                 self._om.register(Order(
@@ -155,6 +161,7 @@ class GridRunner(BaseStrategy):
                     quantity=sell_size,
                     price=round(price, 8),
                     strategy=self.name,
+                quote_to_eur=quote_to_eur,
                 ))
                 log.info("GRID SELL %s %.8f @ %.8f", symbol, sell_size, price)
                 return
@@ -204,9 +211,16 @@ class GridRunner(BaseStrategy):
             )
             return
         buy_price = current_price * (1 - entry_offset)
-        requested_notional = order_value if order_value > 0 else size * buy_price
+        requested_notional = (
+            order_value
+            if order_value > 0
+            else self.quote_notional_to_eur(size * buy_price)
+        )
         if live_snapshot:
-            requested_notional = min(requested_notional, max(0.0, available_quote))
+            requested_notional = min(
+                requested_notional,
+                self.quote_notional_to_eur(available_quote),
+            )
         notional = self.bounded_entry_notional(
             requested_notional,
             price=buy_price,
@@ -217,10 +231,10 @@ class GridRunner(BaseStrategy):
                 "GRID BUY skipped: no tradable risk/quote headroom for %s (requested %.2f EUR, quote %.2f EUR).",
                 symbol,
                 order_value,
-                available_quote if live_snapshot else -1.0,
+                self.quote_notional_to_eur(available_quote) if live_snapshot else -1.0,
             )
             return
-        buy_size = notional / buy_price
+        buy_size = notional / (buy_price * quote_to_eur)
         if not self._rm.check_order(self.name, notional, symbol=symbol):
             return
         if notional + 1e-9 < order_value:
@@ -238,6 +252,7 @@ class GridRunner(BaseStrategy):
             quantity=buy_size,
             price=round(buy_price, 8),
             strategy=self.name,
+        quote_to_eur=quote_to_eur,
         ))
         log.info("GRID BUY %s %.8f @ %.8f", symbol, buy_size, buy_price)
 
