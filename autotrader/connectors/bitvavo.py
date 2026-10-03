@@ -8,6 +8,7 @@ caller explicitly supplies short-lived credentials for local validation.
 from __future__ import annotations
 
 import hashlib
+from collections import deque
 import hmac
 import json
 import logging
@@ -255,6 +256,56 @@ class BitvavoAdapter:
         if not price.is_finite() or price <= 0:
             raise BitvavoError("Invalid Bitvavo ticker price", category="invalid_response")
         return price
+
+    def quote_to_eur_rate(self, market: str, *, max_hops: int = 3) -> Decimal:
+        """Return a current quote-asset EUR rate using executable Bitvavo books.
+
+        Non-EUR live orders fail closed when no finite bridge to EUR exists.
+        """
+        market = str(market or "").upper().strip()
+        if "-" not in market:
+            raise BitvavoError("market must include base and quote", category="invalid_market")
+        quote = market.rsplit("-", 1)[1]
+        if quote == "EUR":
+            return Decimal("1")
+
+        books = self.ticker_books()
+        graph: dict[str, list[tuple[str, Decimal]]] = {}
+        for symbol, book in books.items():
+            if "-" not in symbol:
+                continue
+            base, q = symbol.rsplit("-", 1)
+            try:
+                bid = Decimal(str(book["bid"]))
+                ask = Decimal(str(book["ask"]))
+            except (KeyError, InvalidOperation, TypeError, ValueError):
+                continue
+            mid = (bid + ask) / Decimal("2")
+            if not mid.is_finite() or mid <= 0:
+                continue
+            graph.setdefault(base, []).append((q, mid))
+            graph.setdefault(q, []).append((base, Decimal("1") / mid))
+
+        queue: deque[tuple[str, Decimal, int]] = deque([(quote, Decimal("1"), 0)])
+        seen = {quote}
+        while queue:
+            node, rate, hops = queue.popleft()
+            if hops >= max(1, int(max_hops)):
+                continue
+            for target, edge in graph.get(node, []):
+                if target in seen:
+                    continue
+                nxt = rate * edge
+                if target == "EUR":
+                    if nxt.is_finite() and nxt > 0:
+                        return nxt
+                    break
+                seen.add(target)
+                queue.append((target, nxt, hops + 1))
+        raise BitvavoError(
+            f"No live EUR conversion path for quote asset {quote}",
+            category="quote_valuation_unavailable",
+        )
 
     def _public_request(self, endpoint: str, query: dict[str, str] | None = None) -> Any:
         """Retry idempotent public reads on transient network/5xx failures."""
@@ -504,7 +555,8 @@ class BitvavoAdapter:
         amount, price = self._validate_order_rules(market, amount, price, order_type, side)
         observed = self.ticker_price(market)
         expected = price or observed
-        notional_eur = amount * expected if side == "buy" else amount * observed
+        quote_to_eur = self.quote_to_eur_rate(market)
+        notional_eur = (amount * expected if side == "buy" else amount * observed) * quote_to_eur
         # Refresh the hard capital-at-risk counter from durable bot state.
         # This releases headroom after confirmed sells/cancels without raising
         # the configured exposure cap.
@@ -522,7 +574,15 @@ class BitvavoAdapter:
             "timeInForce": time_in_force if order_type == "limit" else None,
             "postOnly": bool(post_only) if order_type == "limit" else False,
         }
-        new_intent = self.journal.record_intent(client_order_id=client_order_id, market=market, side=side, order_type=order_type, amount=str(amount), price=str(price) if price else None)
+        new_intent = self.journal.record_intent(
+            client_order_id=client_order_id,
+            market=market,
+            side=side,
+            order_type=order_type,
+            amount=str(amount),
+            price=str(price) if price else None,
+            quote_to_eur=str(quote_to_eur),
+        )
         if not new_intent:
             raise BitvavoError("duplicate client_order_id", category="duplicate_order")
         decision = self.gateway.evaluate(
