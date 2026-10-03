@@ -47,7 +47,10 @@ class LiveArmIntentStore:
         self.release_id = str(
             release_id
             if release_id is not None
-            else os.getenv("RAILWAY_GIT_COMMIT_SHA", os.getenv("AUTOTRADER_RELEASE_ID", ""))
+            else os.getenv(
+                "RAILWAY_DEPLOYMENT_ID",
+                os.getenv("RAILWAY_GIT_COMMIT_SHA", os.getenv("AUTOTRADER_RELEASE_ID", "")),
+            )
         ).strip()
 
     def load(self) -> LiveArmRecord:
