@@ -21,9 +21,12 @@ def test_research_pack_config_uses_80_eur_live_capital_policy():
         if value.get("enabled") and value.get("live_capable")
     }
     assert sum(float(row.get("allocation_eur", 0)) for row in live.values()) == 50
-    assert live["market_maker"]["allocation_eur"] == 17
-    assert live["grid"]["allocation_eur"] == 15
-    assert live["grid_eth"]["allocation_eur"] == 12
+    assert live["market_maker"]["allocation_eur"] == 0
+    assert live["grid"]["allocation_eur"] == 44
+    assert live["grid"]["max_order_eur"] == 12
+    assert live["grid"]["order_value_eur"] == 10.0
+    assert live["grid"]["exit_markup_pct"] == 1.00
+    assert live["grid_eth"]["allocation_eur"] == 0
     assert live["shadow_canary"]["allocation_eur"] == 6
     assert live["shadow_canary"]["max_order_eur"] == 6
     assert cfg["strategies"]["sniper"]["live_capable"] is False
