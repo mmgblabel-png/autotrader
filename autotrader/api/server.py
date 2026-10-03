@@ -82,6 +82,7 @@ from autotrader.connectors.bitvavo import BitvavoAdapter, BitvavoError
 from autotrader.connectors.coinbase_advanced import CoinbaseAdvancedMarketData, CoinbaseMarketDataError
 from autotrader.connectors.bitpanda_fusion import BitpandaFusionAdapter
 from autotrader.api.dashboard_html import dashboard_html
+from autotrader.api.aihf_html import aihf_portal_html
 from autotrader.ml.shadow import walk_forward, lookahead_analysis, recursive_analysis
 
 log = get_logger("api.server")
@@ -1541,6 +1542,12 @@ app.include_router(ecosystem_router)
 def dashboard() -> HTMLResponse:
     """Serve the visual protected dashboard shell; data remains API-authenticated."""
     return HTMLResponse(dashboard_html())
+
+
+@app.get("/aihf", response_class=HTMLResponse, include_in_schema=False)
+def aihf_portal() -> HTMLResponse:
+    """Serve the public AIHF closed-beta wallet/entitlement portal."""
+    return HTMLResponse(aihf_portal_html())
 
 
 def _protected_path(path: str) -> bool:
