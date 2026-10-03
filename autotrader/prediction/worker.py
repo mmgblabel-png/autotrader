@@ -76,6 +76,7 @@ class PolymarketZScoreShadowWorker:
         self.windows: dict[str, WindowState] = {}
         self.last_event_at = 0.0
         self.last_error: str | None = None
+        self.stream_ready_logged = False
 
     def _prune_samples(self, now: float) -> None:
         cutoff = now - self.max_sample_age_seconds
@@ -195,6 +196,9 @@ class PolymarketZScoreShadowWorker:
             return
         self.last_event_at = time.time()
         self.last_error = None
+        if not self.stream_ready_logged:
+            log.info("Chainlink BTC/USD TWAP stream active event_ts=%.3f twap=%.2f", timestamp, value)
+            self.stream_ready_logged = True
         self._settle_expired(timestamp, value)
         self.samples.append((timestamp, value))
         self._prune_samples(timestamp)
