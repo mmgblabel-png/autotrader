@@ -61,6 +61,8 @@ class CoinbaseAdvancedMarketData:
     BOOK_PATH = "/api/v3/brokerage/market/product_book"
     PRODUCTS_PATH = "/api/v3/brokerage/market/products"
     ACCOUNTS_PATH = "/api/v3/brokerage/accounts"
+    INTX_POSITIONS_PATH = "/api/v3/brokerage/intx/positions/{portfolio_uuid}"
+    INTX_BALANCES_PATH = "/api/v3/brokerage/intx/balances/{portfolio_uuid}"
 
     def __init__(self, *, timeout: float = 5.0) -> None:
         self.timeout = timeout
@@ -279,6 +281,137 @@ class CoinbaseAdvancedMarketData:
             "asset_count": len(assets),
             "assets": assets,
         }
+
+    @staticmethod
+    def _safe_portfolio_uuid(value: str) -> str:
+        raw = str(value or "").strip()
+        if not raw:
+            raise CoinbaseAuthenticationError(
+                "Coinbase derivatives portfolio is not configured",
+                category="derivatives_portfolio_missing",
+            )
+        # UUID-like values only; never allow arbitrary path fragments.
+        import uuid
+        try:
+            return str(uuid.UUID(raw))
+        except ValueError as exc:
+            raise CoinbaseAuthenticationError(
+                "Coinbase derivatives portfolio identifier is invalid",
+                category="derivatives_portfolio_invalid",
+            ) from exc
+
+    def perpetual_positions_read_only(self, portfolio_uuid: str) -> dict[str, object]:
+        """Return privacy-safe derivatives position risk fields; never places orders."""
+        pid = self._safe_portfolio_uuid(portfolio_uuid)
+        path = self.INTX_POSITIONS_PATH.format(portfolio_uuid=pid)
+        payload = self._auth_get(path)
+        rows = payload.get("positions") if isinstance(payload, dict) else None
+        if not isinstance(rows, list):
+            raise CoinbaseAuthenticationError(
+                "Coinbase derivatives positions response was not understood",
+                category="unexpected_derivatives_response",
+            )
+        positions = []
+        for row in rows:
+            if not isinstance(row, dict):
+                continue
+            positions.append({
+                "product_id": str(row.get("product_id") or ""),
+                "symbol": str(row.get("symbol") or ""),
+                "position_side": str(row.get("position_side") or ""),
+                "margin_type": str(row.get("margin_type") or ""),
+                "net_size": str(row.get("net_size") or "0"),
+                "leverage": str(row.get("leverage") or "0"),
+                "mark_price": str((row.get("mark_price") or {}).get("value") or "0"),
+                "liquidation_price": str((row.get("liquidation_price") or {}).get("value") or "0"),
+                "position_notional": str((row.get("position_notional") or {}).get("value") or "0"),
+                "unrealized_pnl": str((row.get("unrealized_pnl") or {}).get("value") or "0"),
+                "im_contribution": str(row.get("im_contribution") or "0"),
+            })
+        return {
+            "venue": "coinbase_derivatives",
+            "read_only": True,
+            "position_count": len(positions),
+            "positions": positions,
+        }
+
+    def perpetual_balances_read_only(self, portfolio_uuid: str) -> dict[str, object]:
+        """Return aggregate collateral values without exposing portfolio identifiers."""
+        pid = self._safe_portfolio_uuid(portfolio_uuid)
+        path = self.INTX_BALANCES_PATH.format(portfolio_uuid=pid)
+        payload = self._auth_get(path)
+        rows = payload.get("portfolio_balances") if isinstance(payload, dict) else None
+        if not isinstance(rows, list):
+            raise CoinbaseAuthenticationError(
+                "Coinbase derivatives balances response was not understood",
+                category="unexpected_derivatives_response",
+            )
+        assets = []
+        margin_limit_reached = False
+        for portfolio in rows:
+            if not isinstance(portfolio, dict):
+                continue
+            margin_limit_reached = margin_limit_reached or bool(
+                portfolio.get("is_margin_limit_reached", False)
+            )
+            for row in portfolio.get("balances") or []:
+                if not isinstance(row, dict):
+                    continue
+                asset = row.get("asset") or {}
+                assets.append({
+                    "asset": str(asset.get("asset_id") or asset.get("asset_name") or ""),
+                    "quantity": str(row.get("quantity") or "0"),
+                    "hold": str(row.get("hold") or "0"),
+                    "collateral_value": str(row.get("collateral_value") or "0"),
+                    "collateral_weight": str(row.get("collateral_weight") or ""),
+                    "max_withdraw_amount": str(row.get("max_withdraw_amount") or "0"),
+                })
+        return {
+            "venue": "coinbase_derivatives",
+            "read_only": True,
+            "asset_count": len(assets),
+            "is_margin_limit_reached": margin_limit_reached,
+            "assets": assets,
+        }
+
+    def derivatives_risk_probe(self, portfolio_uuid: str | None = None) -> dict[str, object]:
+        """Probe derivatives access read-only; missing eligibility/portfolio fails closed."""
+        raw = str(
+            portfolio_uuid
+            or os.getenv("COINBASE_INTX_PORTFOLIO_UUID", "")
+        ).strip()
+        if not raw:
+            return {
+                "venue": "coinbase_derivatives",
+                "read_only": True,
+                "configured": False,
+                "authenticated": False,
+                "eligible": None,
+                "error_category": "derivatives_portfolio_missing",
+            }
+        try:
+            positions = self.perpetual_positions_read_only(raw)
+            balances = self.perpetual_balances_read_only(raw)
+            return {
+                "venue": "coinbase_derivatives",
+                "read_only": True,
+                "configured": True,
+                "authenticated": True,
+                "eligible": True,
+                "positions": positions,
+                "balances": balances,
+                "error_category": None,
+            }
+        except CoinbaseAuthenticationError as exc:
+            return {
+                "venue": "coinbase_derivatives",
+                "read_only": True,
+                "configured": True,
+                "authenticated": False,
+                "eligible": None,
+                "error_category": exc.category,
+                "status": exc.status,
+            }
 
     def authenticated_accounts_probe(self) -> dict[str, object]:
         fmt = self._credential_format()

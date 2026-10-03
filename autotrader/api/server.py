@@ -75,9 +75,14 @@ from autotrader.core.profit_optimization import (
 )
 from autotrader.core.autonomous_decision_engine import AutonomousDecisionEngine
 from autotrader.core.risk_lab import LeverageMartingaleRiskLab
+from autotrader.core.derivatives_risk_lab import DerivativesRiskLab
 from autotrader.fund.automation import AutonomousFundScheduler
 from autotrader.connectors.bitvavo import BitvavoAdapter, BitvavoError
-from autotrader.connectors.coinbase_advanced import CoinbaseAdvancedMarketData, CoinbaseMarketDataError
+from autotrader.connectors.coinbase_advanced import (
+    CoinbaseAdvancedMarketData,
+    CoinbaseAuthenticationError,
+    CoinbaseMarketDataError,
+)
 from autotrader.connectors.bitpanda_fusion import BitpandaFusionAdapter
 from autotrader.api.dashboard_html import dashboard_html
 from autotrader.ml.shadow import walk_forward, lookahead_analysis, recursive_analysis
@@ -1368,6 +1373,9 @@ async def _lifespan(app: FastAPI):
     app.state.leverage_martingale_risk_lab = LeverageMartingaleRiskLab(
         agent._config.get("leverage_martingale_risk_lab", {}) or {}
     )
+    app.state.derivatives_risk_lab = DerivativesRiskLab(
+        agent._config.get("derivatives_risk_lab", {}) or {}
+    )
     try:
         app.state.shadow_strategy_interval_seconds = max(
             10.0,
@@ -2405,6 +2413,24 @@ def leverage_martingale_risk_lab_status() -> dict[str, object]:
     return app.state.leverage_martingale_risk_lab.status()
 
 
+@app.get("/api/risk-lab/derivatives", tags=["optimization"])
+def derivatives_risk_lab_status() -> dict[str, object]:
+    agent = get_agent()
+    fund_state = agent.fund.status()
+    fund_risk = fund_state.get("risk", {}) if isinstance(fund_state, dict) else {}
+    nav_eur = (
+        float(fund_risk.get("nav_eur"))
+        if fund_risk.get("nav_verified") and fund_risk.get("nav_eur") is not None
+        else None
+    )
+    account_probe = CoinbaseAdvancedMarketData().derivatives_risk_probe()
+    payload = app.state.derivatives_risk_lab.status(nav_eur=nav_eur)
+    payload["account_probe"] = account_probe
+    payload["live_capable"] = False
+    payload["live_orders_sent"] = False
+    return payload
+
+
 @app.get("/api/goals/portfolio", tags=["goals"])
 def portfolio_goal_status() -> dict[str, object]:
     agent = get_agent()
@@ -2511,6 +2537,7 @@ async def dashboard_snapshot() -> dict[str, object]:
         ("binance_reference", binance_btc_reference, (), {}),
         ("autonomy", autonomy_status, (), {}),
         ("risk_lab", leverage_martingale_risk_lab_status, (), {}),
+        ("derivatives_risk_lab", derivatives_risk_lab_status, (), {}),
         ("three_hour", three_hour_report, (), {}),
         ("fees_live", live_fee_margin_telemetry, (), {}),
         ("universe_summary", full_market_universe_summary, (), {}),
