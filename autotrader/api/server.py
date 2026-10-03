@@ -1845,6 +1845,23 @@ async def _lifespan(app: FastAPI):
                 cb_probe.get("format_compatible"),
                 cb_probe.get("error_category"),
             )
+            if bool(cb_probe.get("authenticated")):
+                try:
+                    cb_preview = CoinbaseAdvancedMarketData().preview_spot_market_order(
+                        product_id="BTC-EUR",
+                        side="SELL",
+                        base_size="0.00002",
+                    )
+                    log.info(
+                        "Coinbase startup trade preview: passed=True commission=%s estimated_price=%s order_sent=False",
+                        cb_preview.get("commission_total"),
+                        cb_preview.get("est_average_filled_price"),
+                    )
+                except Exception as cb_trade_exc:
+                    log.warning(
+                        "Coinbase startup trade preview: passed=False reason=%s order_sent=False",
+                        getattr(cb_trade_exc, "category", type(cb_trade_exc).__name__),
+                    )
         except Exception as cb_exc:
             log.warning("Coinbase startup auth probe failed: %s", type(cb_exc).__name__)
     if app.state.live_mode:
