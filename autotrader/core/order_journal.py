@@ -677,10 +677,12 @@ class OrderJournal:
         friction.
         """
         base, _, quote = market.upper().partition("-")
+        reconciliation = self.latest_inventory_reconciliation(market, strategy)
+        cutoff = float((reconciliation or {}).get("fill_cutoff") or 0.0)
         with self._lock:
             rows = self._db.execute(
                 """
-                SELECT o.side, f.amount, f.price, f.fee, f.raw_json
+                SELECT o.side, f.amount, f.price, f.fee, f.raw_json, f.observed_at
                 FROM fills AS f
                 JOIN orders AS o ON o.client_order_id=f.client_order_id
                 WHERE o.market=? AND o.strategy=?
@@ -699,7 +701,13 @@ class OrderJournal:
         losing_exits = 0
         unpriced_fee_count = 0
 
+        reconciliation_applied = cutoff <= 0
         for row in rows:
+            observed_at = float(row["observed_at"] or 0.0)
+            if not reconciliation_applied and observed_at > cutoff:
+                quantity = Decimal("0")
+                inventory_cost = Decimal("0")
+                reconciliation_applied = True
             amount = abs(Decimal(str(row["amount"] or "0")))
             price = abs(Decimal(str(row["price"] or "0")))
             fee = abs(Decimal(str(row["fee"] or "0")))
@@ -749,6 +757,9 @@ class OrderJournal:
                     quantity = Decimal("0")
                     inventory_cost = Decimal("0")
 
+        if not reconciliation_applied:
+            quantity = Decimal("0")
+            inventory_cost = Decimal("0")
         avg_entry = inventory_cost / quantity if quantity > 0 else Decimal("0")
         mark = max(Decimal("0"), Decimal(str(mark_price or "0")))
         exit_cost_ratio = max(Decimal("0"), Decimal(str(estimated_exit_cost_pct))) / Decimal("100")
