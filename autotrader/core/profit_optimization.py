@@ -386,7 +386,8 @@ class OpportunityRouter:
                     "pair_type": "crypto_fiat" if snap.market.endswith("-EUR") else "crypto_crypto",
                     "quote_to_eur": round(float(snap.quote_to_eur or 0.0), 12),
                     "live_execution_supported_now": (
-                        quote in self.live_quote_assets
+                        (snap.market.rsplit("-", 1)[1] if "-" in snap.market else "")
+                        in self.live_quote_assets
                         and float(snap.quote_to_eur or 0.0) > 0
                     ),
                     "score": round(score, 2),
