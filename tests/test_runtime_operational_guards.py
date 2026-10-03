@@ -6,6 +6,7 @@ from autotrader.api.server import (
     _readiness_log_worthy,
     _router_status_log_worthy,
     _shadow_fee_ranked_candidates,
+    _symbol_scoped_balance_total,
 )
 from autotrader.connectors.bitvavo import BitvavoError
 from autotrader.core.profit_optimization import ExecutionV2Advisor
@@ -398,3 +399,28 @@ def test_shadow_candidate_ranking_prefers_economic_score_without_mutating_live_s
     assert [row["market"] for row in selected] == ["AAA-USDC", "AAA-EUR"]
     assert rows[0]["score"] == 80.0
     assert rows[1]["score"] == 80.0
+
+
+def test_symbol_scoped_balance_total_accepts_explicit_zero_row():
+    assert _symbol_scoped_balance_total(
+        [{"symbol": "RSR", "available": "0", "inOrder": "0"}],
+        "RSR",
+    ) == 0.0
+
+
+def test_symbol_scoped_balance_total_treats_empty_explicit_response_as_zero():
+    assert _symbol_scoped_balance_total([], "RSR") == 0.0
+
+
+def test_symbol_scoped_balance_total_preserves_positive_locked_balance():
+    assert _symbol_scoped_balance_total(
+        [{"symbol": "RSR", "available": "0", "inOrder": "5845.4476"}],
+        "RSR",
+    ) == 5845.4476
+
+
+def test_symbol_scoped_balance_total_fails_closed_on_mismatched_response():
+    assert _symbol_scoped_balance_total(
+        [{"symbol": "BTC", "available": "1", "inOrder": "0"}],
+        "RSR",
+    ) is None
