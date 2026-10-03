@@ -69,6 +69,7 @@ class ExecutionCoordinator:
                         fee_currency=str(fill.get("feeCurrency") or ""),
                         fill_key=key,
                         timestamp=timestamp,
+                        quote_to_eur=max(0.0, float(getattr(order, "quote_to_eur", 1.0) or 0.0)),
                     )
                 )
                 if self.risk_manager is not None:
@@ -77,7 +78,7 @@ class ExecutionCoordinator:
                     elif realized < 0:
                         self.risk_manager.record_loss(order.strategy or "MarketMaker", -realized)
                 gateway = getattr(self.adapter, "gateway", None)
-                if order.symbol.upper().endswith("-EUR") and gateway is not None:
+                if gateway is not None:
                     if hasattr(gateway, "record_pnl_delta"):
                         gateway.record_pnl_delta(Decimal(str(realized)))
                     elif realized < 0:
@@ -103,6 +104,7 @@ class ExecutionCoordinator:
                 order_id=client_order_id,
                 status=OrderStatus.OPEN,
                 strategy=str(record.get("strategy") or "MarketMaker"),
+                quote_to_eur=max(0.0, float(record.get("quote_to_eur") or 1.0)),
             )
             return self.om.register(order)
         except (KeyError, TypeError, ValueError):
@@ -144,12 +146,22 @@ class ExecutionCoordinator:
                             self.om.open_orders(),
                         )
                         sizing_price = Decimal(str(order.price)) if order.price is not None else observed_price
-                        original_notional = Decimal(str(order.quantity)) * sizing_price
+                        quote_to_eur = Decimal(str(getattr(order, "quote_to_eur", 1.0) or 0.0))
+                    if quote_to_eur <= 0:
+                        self.om.update(order.order_id, OrderStatus.FAILED)
+                        results.append({
+                            "client_order_id": order.order_id,
+                            "status": "failed",
+                            "category": "quote_valuation",
+                            "reason": "missing quote-to-EUR valuation",
+                        })
+                        continue
+                    original_notional = Decimal(str(order.quantity)) * sizing_price * quote_to_eur
                         # Keep a tiny margin below the cap so exchange quantity
                         # precision cannot round the resized order back above it.
                         target_notional = permitted * Decimal("0.999")
                         if sizing_price > 0 and target_notional > 0 and target_notional < original_notional:
-                            order.quantity = float(target_notional / sizing_price)
+                            order.quantity = float(target_notional / (sizing_price * quote_to_eur))
                             allocation = self.allocator.evaluate(
                                 order,
                                 self.om.open_orders(),
