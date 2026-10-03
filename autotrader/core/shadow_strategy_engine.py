@@ -101,6 +101,16 @@ class ShadowStrategyEngine:
         self.drift_max_vol_ratio = max(
             1.1, float(self.config.get("drift_max_vol_ratio", 2.5))
         )
+        self.tail_risk_gate_enabled = bool(self.config.get("tail_risk_gate_enabled", True))
+        self.tail_risk_min_samples = max(
+            8, int(self.config.get("tail_risk_min_samples", 12))
+        )
+        self.tail_risk_quantile = max(
+            0.01, min(0.49, float(self.config.get("tail_risk_quantile", 0.10)))
+        )
+        self.tail_risk_max_loss_pct = max(
+            0.1, float(self.config.get("tail_risk_max_loss_pct", 4.0))
+        )
         self._states: dict[str, ShadowStats] = {}
         self._load()
 
@@ -456,6 +466,61 @@ class ShadowStrategyEngine:
             "max_vol_ratio": self.drift_max_vol_ratio,
         }
 
+    @staticmethod
+    def _empirical_quantile(values: list[float], q: float) -> float:
+        if not values:
+            return 0.0
+        ordered = sorted(float(v) for v in values if math.isfinite(float(v)))
+        if not ordered:
+            return 0.0
+        if len(ordered) == 1:
+            return ordered[0]
+        position = max(0.0, min(1.0, q)) * (len(ordered) - 1)
+        lower = int(math.floor(position))
+        upper = int(math.ceil(position))
+        if lower == upper:
+            return ordered[lower]
+        weight = position - lower
+        return ordered[lower] * (1.0 - weight) + ordered[upper] * weight
+
+    def _tail_risk_status(self, state: ShadowStats, capital: float) -> dict[str, Any]:
+        outcomes = [
+            float(value)
+            for value in state.outcomes
+            if math.isfinite(float(value))
+        ]
+        if not self.tail_risk_gate_enabled:
+            return {
+                "enabled": False,
+                "ready": False,
+                "tail_risk_flag": False,
+                "reason": "disabled",
+            }
+        if len(outcomes) < self.tail_risk_min_samples:
+            return {
+                "enabled": True,
+                "ready": False,
+                "tail_risk_flag": False,
+                "reason": "insufficient_samples",
+                "samples": len(outcomes),
+                "required_samples": self.tail_risk_min_samples,
+            }
+        q_value = self._empirical_quantile(outcomes, self.tail_risk_quantile)
+        safe_capital = max(1e-9, float(capital))
+        q_loss_pct = max(0.0, -q_value / safe_capital * 100.0)
+        flag = q_loss_pct > self.tail_risk_max_loss_pct
+        return {
+            "enabled": True,
+            "ready": True,
+            "tail_risk_flag": flag,
+            "reason": "downside_quantile" if flag else "stable",
+            "samples": len(outcomes),
+            "quantile": round(self.tail_risk_quantile, 4),
+            "quantile_net_pnl_eur": round(q_value, 6),
+            "quantile_loss_pct_of_order": round(q_loss_pct, 4),
+            "max_loss_pct_of_order": self.tail_risk_max_loss_pct,
+        }
+
     def status(self, configs: dict[str, dict[str, Any]]) -> dict[str, Any]:
         rows = []
         learning = self.learner.snapshot() if self.learner is not None else {}
@@ -488,6 +553,10 @@ class ShadowStrategyEngine:
             adaptive_change_pending = bool(learned_state.get("pending_change"))
             drift = self._drift_status(state)
             drift_blocked = bool(drift.get("ready") and drift.get("drift_flag"))
+            tail_risk = self._tail_risk_status(state, capital)
+            tail_risk_blocked = bool(
+                tail_risk.get("ready") and tail_risk.get("tail_risk_flag")
+            )
             promotable = (
                 trades >= self.min_completed_trades
                 and state.realized_net_pnl_eur >= self.min_net_pnl_eur
@@ -497,6 +566,7 @@ class ShadowStrategyEngine:
                 and max_dd_pct <= self.max_drawdown_pct
                 and not adaptive_change_pending
                 and not drift_blocked
+                and not tail_risk_blocked
             )
 
             promotion_blockers = []
@@ -516,6 +586,8 @@ class ShadowStrategyEngine:
                 promotion_blockers.append("adaptive_change_pending")
             if drift_blocked:
                 promotion_blockers.append("distribution_drift")
+            if tail_risk_blocked:
+                promotion_blockers.append("tail_risk")
 
             canary_blockers = []
             if trades < self.canary_min_completed_trades:
@@ -534,6 +606,8 @@ class ShadowStrategyEngine:
                 canary_blockers.append("adaptive_change_pending")
             if drift_blocked:
                 canary_blockers.append("distribution_drift")
+            if tail_risk_blocked:
+                canary_blockers.append("tail_risk")
             canary_ready = not canary_blockers
 
             # Transparent 0-100 score for comparing shadow candidates only.
@@ -592,6 +666,7 @@ class ShadowStrategyEngine:
                 "cost_stress_multiplier": round(self.cost_stress_multiplier, 2),
                 "adaptive_change_pending": adaptive_change_pending,
                 "drift": drift,
+                "tail_risk": tail_risk,
                 "score": round(score, 1),
                 "review_status": review_status,
                 "last_signal": state.last_signal,
