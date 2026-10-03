@@ -370,7 +370,7 @@ strategies:
   market_maker:
     enabled: true
     live_capable: true
-    allocation_eur: 17
+    allocation_eur: 0
     max_order_eur: 12
     max_open_orders: 1
     exclusive_symbol: true
@@ -428,16 +428,16 @@ strategies:
   grid:
     enabled: true
     live_capable: true
-    allocation_eur: 15
-    max_order_eur: 9
+    allocation_eur: 44
+    max_order_eur: 12
     max_open_orders: 1
     exclusive_symbol: true
     symbol: SOL-EUR
     exchange: bitvavo
-    order_value_eur: 8.0
+    order_value_eur: 10.0
     order_size: 0.0
     entry_offset_pct: 0.60
-    exit_markup_pct: 0.80
+    exit_markup_pct: 1.00
     cycle_cooldown_seconds: 60
     failure_cooldown_seconds: 15
     allocation_failure_cooldown_seconds: 5
@@ -455,7 +455,7 @@ strategies:
     enabled: true
     live_capable: true
     strategy_name: GridRunnerETH
-    allocation_eur: 12
+    allocation_eur: 0
     max_order_eur: 9
     max_open_orders: 1
     exclusive_symbol: true

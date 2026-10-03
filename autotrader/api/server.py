@@ -1948,10 +1948,20 @@ def pnl_summary():
     for name, state in states.items():
         display_name = _STRATEGY_DISPLAY_NAMES[name]
         stats = by_strategy.get(display_name, {})
+        strategy = agent._strategies.get(name)
+        evidence_blocked = bool(
+            strategy
+            and strategy._config.get("_evidence_entry_blocked", False)
+        )
+        status = (
+            "quarantined"
+            if state["running"] and evidence_blocked
+            else ("running" if state["running"] else "stopped")
+        )
         rows.append(
             {
                 "name": name,
-                "status": "running" if state["running"] else "stopped",
+                "status": status,
                 "cost": 0.0,
                 "pnl24h": stats.get("net_pnl", 0.0),
                 "pnl7d": stats.get("net_pnl", 0.0),
