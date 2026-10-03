@@ -62,6 +62,7 @@ def test_router_scans_full_bitvavo_universe_with_bounded_live_quote_assets():
     assert cfg["shadow_lab"]["dynamic_markets_per_strategy"] >= 10
     assert cfg["shadow_lab"]["promotion_min_completed_trades"] == 24
     assert cfg["shadow_lab"]["promotion_min_profit_factor"] >= 1.10
+    assert cfg["shadow_lab"]["promotion_min_q10_return_pct"] >= -2.50
     assert cfg["shadow_lab"]["promotion_cost_stress_multiplier"] >= 1.25
     assert cfg["shadow_lab"]["canary_min_completed_trades"] >= 12
     assert cfg["shadow_lab"]["drift_gate_enabled"] is True
