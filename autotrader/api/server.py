@@ -3522,13 +3522,14 @@ def bitpanda_fusion_balance_analysis() -> dict[str, object]:
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
-_VALID: Final[set[str]] = {"market_maker", "arbitrage", "grid", "grid_eth", "sniper"}
+_VALID: Final[set[str]] = {"market_maker", "arbitrage", "grid", "grid_eth", "sniper", "shadow_canary"}
 _STRATEGY_DISPLAY_NAMES: Final[dict[str, str]] = {
     "market_maker": "MarketMaker",
     "arbitrage": "ArbitrageHunter",
     "grid": "GridRunner",
     "grid_eth": "GridRunnerETH",
     "sniper": "SniperBot",
+    "shadow_canary": "ShadowCanary",
 }
 
 
