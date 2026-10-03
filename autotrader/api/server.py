@@ -1063,7 +1063,6 @@ async def _tick_loop(app: FastAPI, agent: AutoTrader) -> None:
                             sync_due
                             and strategy.name.startswith("GridRunner")
                             and journal_inventory > 0
-                            and exchange_base_total is not None
                             and bool(getattr(app.state, "bitvavo_balance_snapshot_ready", False))
                             and bool(getattr(app.state, "bitvavo_open_orders_snapshot_ready", False))
                         ):
@@ -1082,7 +1081,12 @@ async def _tick_loop(app: FastAPI, agent: AutoTrader) -> None:
                                 and exchange_open_count == 0
                                 and journal_nonterminal == 0
                             )
-                            if exchange_base_total <= 1e-12 and structurally_clear:
+                            snapshot_absent = base_row is None
+                            snapshot_zero = (
+                                exchange_base_total is not None
+                                and exchange_base_total <= 1e-12
+                            )
+                            if (snapshot_zero or snapshot_absent) and structurally_clear:
                                 confirmations = int(
                                     strategy._config.get(
                                         "_zero_balance_inventory_confirmations", 0
@@ -1092,11 +1096,16 @@ async def _tick_loop(app: FastAPI, agent: AutoTrader) -> None:
                                     "_zero_balance_inventory_confirmations"
                                 ] = confirmations
                                 log.warning(
-                                    "Inventory reconciliation candidate: strategy=%s market=%s journal_qty=%.12f exchange_total=%.12f confirmations=%d/3",
+                                    "Inventory reconciliation candidate: strategy=%s market=%s journal_qty=%.12f exchange_total=%s snapshot=%s confirmations=%d/3",
                                     strategy.name,
                                     symbol,
                                     journal_inventory,
-                                    exchange_base_total,
+                                    (
+                                        f"{exchange_base_total:.12f}"
+                                        if exchange_base_total is not None
+                                        else "missing"
+                                    ),
+                                    "absent" if snapshot_absent else "zero",
                                     confirmations,
                                 )
                                 if confirmations >= 3:
@@ -1112,19 +1121,28 @@ async def _tick_loop(app: FastAPI, agent: AutoTrader) -> None:
                                         ),
                                         None,
                                     )
+                                    explicit_total = None
+                                    explicit_reason = ""
                                     if explicit_row is not None:
                                         explicit_total = max(
                                             0.0,
                                             float(explicit_row.get("available") or 0.0)
                                             + float(explicit_row.get("inOrder") or 0.0),
                                         )
-                                        if explicit_total <= 1e-12:
-                                            recorded = agent._bitvavo.journal.record_inventory_reconciliation(
-                                                symbol,
-                                                strategy.name,
-                                                exchange_total=Decimal(str(explicit_total)),
-                                                reason="verified_exchange_zero_balance",
-                                            )
+                                        explicit_reason = "verified_exchange_zero_balance"
+                                    elif isinstance(explicit_rows, list) and not explicit_rows:
+                                        # A successful symbol-scoped /balance query
+                                        # returning no row means that asset has no
+                                        # balance entry at the exchange.
+                                        explicit_total = 0.0
+                                        explicit_reason = "verified_exchange_absent_balance"
+                                    if explicit_total is not None and explicit_total <= 1e-12:
+                                        recorded = agent._bitvavo.journal.record_inventory_reconciliation(
+                                            symbol,
+                                            strategy.name,
+                                            exchange_total=Decimal(str(explicit_total)),
+                                            reason=explicit_reason,
+                                        )
                                             if recorded:
                                                 inventory = agent._bitvavo.journal.inventory_cost_basis(
                                                     symbol, strategy.name
@@ -1138,7 +1156,7 @@ async def _tick_loop(app: FastAPI, agent: AutoTrader) -> None:
                                                 )
                                                 strategy._config[
                                                     "_inventory_reconciliation_reason"
-                                                ] = "verified_exchange_zero_balance"
+                                                ] = explicit_reason
                                                 strategy._config[
                                                     "_inventory_reconciled_at"
                                                 ] = time.time()
