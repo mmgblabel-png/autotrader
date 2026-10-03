@@ -76,9 +76,11 @@ contract AIHFAccessVault is ReentrancyGuard {
         bytes32 r,
         bytes32 s
     ) external nonReentrant {
-        IERC20Permit(address(token)).permit(
+        // Permit signatures can be submitted by anyone and may be frontrun.
+        // Tolerate an already-consumed permit and rely on the resulting allowance.
+        try IERC20Permit(address(token)).permit(
             msg.sender, address(this), amount, permitDeadline, v, r, s
-        );
+        ) {} catch {}
         _lock(msg.sender, amount);
     }
 
