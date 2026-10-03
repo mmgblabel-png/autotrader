@@ -596,6 +596,8 @@ class ShadowStrategyEngine:
                 "min_winrate_pct": self.min_winrate_pct,
                 "min_net_pnl_eur": self.min_net_pnl_eur,
                 "min_profit_factor": self.min_profit_factor,
+                "min_q10_return_pct": self.min_q10_return_pct,
+                "require_tail_sample_count": self.min_completed_trades,
                 "cost_stress_multiplier": self.cost_stress_multiplier,
                 "require_no_pending_adaptive_change": True,
                 "max_drawdown_pct": self.max_drawdown_pct,
