@@ -21,9 +21,11 @@ def test_research_pack_config_uses_80_eur_live_capital_policy():
         if value.get("enabled") and value.get("live_capable")
     }
     assert sum(float(row.get("allocation_eur", 0)) for row in live.values()) == 50
-    assert live["market_maker"]["allocation_eur"] == 20
+    assert live["market_maker"]["allocation_eur"] == 17
     assert live["grid"]["allocation_eur"] == 15
-    assert live["grid_eth"]["allocation_eur"] == 15
+    assert live["grid_eth"]["allocation_eur"] == 12
+    assert live["shadow_canary"]["allocation_eur"] == 6
+    assert live["shadow_canary"]["max_order_eur"] == 6
     assert cfg["strategies"]["sniper"]["live_capable"] is False
     assert cfg["strategies"]["sniper"]["allocation_eur"] == 0
     assert cfg["live_evidence_gate"]["min_completed_exits"] == 4
@@ -40,6 +42,7 @@ def test_all_live_bots_can_use_broad_safe_market_selection():
     assert strategy_markets["grid"] == ["*"]
     assert strategy_markets["grid_eth"] == ["*"]
     assert strategy_markets["sniper"] == ["*"]
+    assert strategy_markets["shadow_canary"] == ["*"]
     assert cfg["autonomous_execution"]["allow_non_eur_live"] is True
     assert set(cfg["opportunity_router"]["live_quote_assets"]) == {"EUR", "BTC", "ETH", "USDC", "USDT"}
 
@@ -53,6 +56,9 @@ def test_router_scans_full_bitvavo_universe_with_bounded_live_quote_assets():
     assert cfg["shadow_lab"]["promotion_min_completed_trades"] == 24
     assert cfg["shadow_lab"]["promotion_min_profit_factor"] >= 1.10
     assert cfg["shadow_lab"]["promotion_cost_stress_multiplier"] >= 1.25
+    assert cfg["shadow_lab"]["canary_min_completed_trades"] >= 12
+    assert cfg["shadow_lab"]["canary_min_net_pnl_eur"] > 0
+    assert cfg["shadow_lab"]["canary_min_profit_factor"] >= 1.05
     assert cfg["shadow_lab"]["strategies"]["volatility_breakout"]["strategy_version"] == "v3"
     assert cfg["shadow_lab"]["strategies"]["sniper_v2"]["strategy_version"] == "v2"
 
