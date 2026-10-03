@@ -121,8 +121,21 @@ class GridRunner(BaseStrategy):
             return
 
         if bot_inventory > 0:
-            sell_size = min(size, bot_inventory, available_base if live_snapshot else bot_inventory)
+            sellable_inventory = min(
+                bot_inventory,
+                available_base if live_snapshot else bot_inventory,
+            )
             minimum_sell = self.minimum_tradable_base(current_price)
+            sell_size = min(size, sellable_inventory)
+            if (
+                minimum_sell > 0
+                and sellable_inventory >= minimum_sell
+                and 0 < sell_size < minimum_sell
+            ):
+                # Exits are risk-reducing. Raise a too-small configured slice to
+                # the venue minimum rather than incorrectly labelling the whole
+                # bot inventory as dust.
+                sell_size = minimum_sell
             if sell_size > 0 and (minimum_sell <= 0 or sell_size >= minimum_sell):
                 self.clear_dust_inventory()
                 min_profit_exit_price = max(0.0, float(cfg.get("_min_profit_exit_price", 0.0)))
@@ -145,13 +158,15 @@ class GridRunner(BaseStrategy):
                 ))
                 log.info("GRID SELL %s %.8f @ %.8f", symbol, sell_size, price)
                 return
-            self.mark_dust_inventory(bot_inventory, current_price)
+            self.mark_dust_inventory(sellable_inventory, current_price)
             log.info(
-                "GRID dust ignored: %s inventory %.8f below tradable minimum %.8f.",
+                "GRID inventory not currently sellable: %s sellable %.8f from bot inventory %.8f; minimum %.8f.",
                 symbol,
+                sellable_inventory,
                 bot_inventory,
                 minimum_sell,
             )
+            return
         else:
             self.clear_dust_inventory()
 
@@ -189,12 +204,32 @@ class GridRunner(BaseStrategy):
             )
             return
         buy_price = current_price * (1 - entry_offset)
-        buy_size = order_value / buy_price if order_value > 0 else size
-        notional = buy_size * buy_price
-        if live_snapshot and available_quote < notional:
+        requested_notional = order_value if order_value > 0 else size * buy_price
+        if live_snapshot:
+            requested_notional = min(requested_notional, max(0.0, available_quote))
+        notional = self.bounded_entry_notional(
+            requested_notional,
+            price=buy_price,
+            symbol=symbol,
+        )
+        if notional <= 0:
+            log.info(
+                "GRID BUY skipped: no tradable risk/quote headroom for %s (requested %.2f EUR, quote %.2f EUR).",
+                symbol,
+                order_value,
+                available_quote if live_snapshot else -1.0,
+            )
             return
+        buy_size = notional / buy_price
         if not self._rm.check_order(self.name, notional, symbol=symbol):
             return
+        if notional + 1e-9 < order_value:
+            log.info(
+                "GRID BUY resized: %s %.2f -> %.2f EUR to fit quote/risk headroom.",
+                symbol,
+                order_value,
+                notional,
+            )
         self._om.register(Order(
             exchange=exchange,
             symbol=symbol,
