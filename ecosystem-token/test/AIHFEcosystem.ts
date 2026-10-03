@@ -173,17 +173,17 @@ describe("AIHF ecosystem contracts", function () {
     await token.connect(treasury).transfer(await vesting.getAddress(), allocation);
 
     await networkHelpers.time.increase(cliff - 1);
-    expect(await vesting.releasable(await token.getAddress())).to.equal(0n);
+    expect(await vesting["releasable(address)"](await token.getAddress())).to.equal(0n);
 
     await networkHelpers.time.increase(1);
-    const cliffReleasable = await vesting.releasable(await token.getAddress());
+    const cliffReleasable = await vesting["releasable(address)"](await token.getAddress());
     expect(cliffReleasable).to.be.greaterThanOrEqual(allocation / 4n);
 
-    await vesting.connect(user).release(await token.getAddress());
+    await vesting.connect(user)["release(address)"](await token.getAddress());
     expect(await token.balanceOf(user.address)).to.be.greaterThanOrEqual(allocation / 4n);
 
     await networkHelpers.time.increase(3 * 365 * DAY);
-    await vesting.connect(user).release(await token.getAddress());
+    await vesting.connect(user)["release(address)"](await token.getAddress());
     expect(await token.balanceOf(user.address)).to.equal(allocation);
   });
 
