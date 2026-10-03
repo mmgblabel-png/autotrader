@@ -130,6 +130,7 @@ shadow_lab:
   canary_min_winrate_pct: 52.0
   canary_min_net_pnl_eur: 0.10
   canary_min_profit_factor: 1.05
+  canary_min_q10_return_pct: -3.50
   canary_max_drawdown_pct: 5.0
   drift_gate_enabled: true
   drift_min_samples: 80
