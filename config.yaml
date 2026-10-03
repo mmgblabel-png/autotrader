@@ -123,6 +123,11 @@ shadow_lab:
   promotion_min_profit_factor: 1.10
   promotion_cost_stress_multiplier: 1.25
   promotion_max_drawdown_pct: 6.0
+  canary_min_completed_trades: 12
+  canary_min_winrate_pct: 52.0
+  canary_min_net_pnl_eur: 0.10
+  canary_min_profit_factor: 1.05
+  canary_max_drawdown_pct: 5.0
   dynamic_markets_per_strategy: 12
   backfill_candles: 120
   backfill_interval: 1m
@@ -252,6 +257,8 @@ autonomous_execution:
     grid_eth:
       - "*"
     sniper:
+      - "*"
+    shadow_canary:
       - "*"
   market_thresholds:
     PEPE-EUR:
@@ -470,6 +477,26 @@ strategies:
     protection_trailing_drawdown_pct: 1.25
     protection_partial_profit_trigger_pct: 0.75
     protection_partial_profit_fraction: 0.50
+
+  shadow_canary:
+    enabled: true
+    live_capable: true
+    strategy_name: ShadowCanary
+    allocation_eur: 6
+    max_order_eur: 6
+    max_open_orders: 1
+    exclusive_symbol: false
+    symbol: BTC-EUR
+    exchange: bitvavo
+    canary_order_eur: 6.0
+    order_value_eur: 6.0
+    runtime_state_path: /data/shadow_canary_runtime.json
+    estimated_fee_pct: 0.25
+    estimated_slippage_pct: 0.05
+    max_daily_loss: 1.0
+    max_position_size: 12.0
+    max_slippage_pct: 0.5
+    max_consecutive_errors: 3
 
   sniper:
     enabled: true
