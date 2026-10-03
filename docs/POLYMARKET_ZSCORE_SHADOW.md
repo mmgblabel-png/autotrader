@@ -50,7 +50,7 @@ Install the official current Polymarket SDK through the project live extra:
 
 ```bash
 python -m pip install -e '.[live]'
-python -m autotrader.prediction.worker --config config.yaml
+python -m autotrader.prediction.worker --config config.polymarket-shadow.yaml
 ```
 
 Docker:
