@@ -75,6 +75,9 @@ class ShadowStrategyEngine:
         self.max_drawdown_pct = float(self.config.get("promotion_max_drawdown_pct", 8.0))
         self.min_net_pnl_eur = float(self.config.get("promotion_min_net_pnl_eur", 0.50))
         self.min_profit_factor = max(1.0, float(self.config.get("promotion_min_profit_factor", 1.10)))
+        self.min_q10_return_pct = float(
+            self.config.get("promotion_min_q10_return_pct", -2.50)
+        )
         self.cost_stress_multiplier = max(1.0, float(self.config.get("promotion_cost_stress_multiplier", 1.25)))
         self.canary_min_completed_trades = max(
             4, int(self.config.get("canary_min_completed_trades", 12))
@@ -153,6 +156,16 @@ class ShadowStrategyEngine:
             last_signal=f"version_reset_{version}",
         )
         return self._states[name]
+
+    @staticmethod
+    def _percentile(values: list[float], quantile: float) -> float:
+        """Conservative empirical lower-quantile for shadow tail-risk gates."""
+        ordered = sorted(float(value) for value in values if math.isfinite(float(value)))
+        if not ordered:
+            return 0.0
+        q = max(0.0, min(1.0, float(quantile)))
+        index = int(math.floor((len(ordered) - 1) * q))
+        return ordered[index]
 
     @property
     def round_trip_cost_pct(self) -> float:
@@ -473,6 +486,13 @@ class ShadowStrategyEngine:
                 if negative_outcomes > 1e-12
                 else (float("inf") if positive_outcomes > 0 else 0.0)
             )
+            outcome_returns_pct = [
+                (float(value) / capital) * 100.0 for value in state.outcomes
+            ]
+            q10_return_pct = self._percentile(outcome_returns_pct, 0.10)
+            q50_return_pct = self._percentile(outcome_returns_pct, 0.50)
+            q90_return_pct = self._percentile(outcome_returns_pct, 0.90)
+            tail_sample_count = len(outcome_returns_pct)
             extra_stress_cost = (
                 trades
                 * capital
@@ -494,6 +514,8 @@ class ShadowStrategyEngine:
                 and stressed_net_pnl > 0.0
                 and winrate >= self.min_winrate_pct
                 and profit_factor >= self.min_profit_factor
+                and tail_sample_count >= self.min_completed_trades
+                and q10_return_pct >= self.min_q10_return_pct
                 and max_dd_pct <= self.max_drawdown_pct
                 and not adaptive_change_pending
                 and not drift_blocked
@@ -510,6 +532,10 @@ class ShadowStrategyEngine:
                 promotion_blockers.append("winrate")
             if profit_factor < self.min_profit_factor:
                 promotion_blockers.append("profit_factor")
+            if tail_sample_count < self.min_completed_trades:
+                promotion_blockers.append("tail_samples")
+            elif q10_return_pct < self.min_q10_return_pct:
+                promotion_blockers.append("tail_risk_q10")
             if max_dd_pct > self.max_drawdown_pct:
                 promotion_blockers.append("drawdown")
             if adaptive_change_pending:
@@ -588,6 +614,11 @@ class ShadowStrategyEngine:
                 "realized_net_pnl_eur": round(state.realized_net_pnl_eur, 4),
                 "max_drawdown_pct": round(max_dd_pct, 2),
                 "profit_factor": round(profit_factor, 3) if math.isfinite(profit_factor) else None,
+                "tail_sample_count": tail_sample_count,
+                "outcome_q10_return_pct": round(q10_return_pct, 4),
+                "outcome_q50_return_pct": round(q50_return_pct, 4),
+                "outcome_q90_return_pct": round(q90_return_pct, 4),
+                "promotion_min_q10_return_pct": round(self.min_q10_return_pct, 4),
                 "stressed_net_pnl_eur": round(stressed_net_pnl, 4),
                 "cost_stress_multiplier": round(self.cost_stress_multiplier, 2),
                 "adaptive_change_pending": adaptive_change_pending,
@@ -647,6 +678,8 @@ class ShadowStrategyEngine:
                 "min_winrate_pct": self.min_winrate_pct,
                 "min_net_pnl_eur": self.min_net_pnl_eur,
                 "min_profit_factor": self.min_profit_factor,
+                "min_q10_return_pct": self.min_q10_return_pct,
+                "require_tail_sample_count": self.min_completed_trades,
                 "cost_stress_multiplier": self.cost_stress_multiplier,
                 "require_no_pending_adaptive_change": True,
                 "require_no_distribution_drift": self.drift_gate_enabled,
