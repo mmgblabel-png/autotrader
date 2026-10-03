@@ -36,7 +36,7 @@ def test_research_pack_config_uses_80_eur_live_capital_policy():
     assert cfg["strategies"]["sniper"]["live_capable"] is False
     assert cfg["strategies"]["sniper"]["allocation_eur"] == 0
     assert cfg["live_evidence_gate"]["min_completed_exits"] == 4
-    assert cfg["live_evidence_gate"]["minimum_net_pnl_eur"] == -0.10
+    assert cfg["live_evidence_gate"]["minimum_net_pnl_eur"] == 0.0
     assert live["grid"]["symbol"] == "SOL-EUR"
     assert cfg["strategies"]["grid_eth"]["symbol"] == "ETH-EUR"
     assert cfg["strategies"]["grid_eth"]["strategy_name"] == "GridRunnerETH"
