@@ -174,9 +174,15 @@ class AutonomousDecisionEngine:
             candidates = [
                 row for row in router_rows
                 if bool(row.get("eligible"))
+                and bool(
+                    row.get(
+                        "live_execution_supported_now",
+                        str(row.get("market", "")).upper().endswith("-EUR"),
+                    )
+                )
                 and (
-                    self.allow_non_eur_live
-                    or bool(row.get("live_execution_supported_now", str(row.get("market", "")).upper().endswith("-EUR")))
+                    str(row.get("market", "")).upper().endswith("-EUR")
+                    or self.allow_non_eur_live
                 )
                 and (allow_any or str(row.get("market", "")).upper() in allowed)
                 and str(row.get("market", "")).upper() not in reserved_markets
@@ -335,15 +341,13 @@ class AutonomousDecisionEngine:
             current_market_quality_ok = (
                 bool(current_candidate)
                 and bool(current_candidate.get("eligible"))
-                and (
-                    self.allow_non_eur_live
-                    or bool(
-                        current_candidate.get(
-                            "live_execution_supported_now",
-                            current.endswith("-EUR"),
-                        )
+                and bool(
+                    current_candidate.get(
+                        "live_execution_supported_now",
+                        current.endswith("-EUR"),
                     )
                 )
+                and (current.endswith("-EUR") or self.allow_non_eur_live)
                 and current_market_score > current_score_min
                 and current_market_signal >= strategy_min_signal
                 and confidence >= current_conf_min
@@ -426,6 +430,7 @@ class AutonomousDecisionEngine:
                 "strategy": display,
                 "current_market": current,
                 "desired_market": desired,
+                "quote_to_eur": round(float(best.get("quote_to_eur") or (1.0 if desired.endswith("-EUR") else 0.0)), 12) if best else (1.0 if desired.endswith("-EUR") else 0.0),
                 "market_score": round(score, 2),
                 "current_market_score": round(current_market_score, 2),
                 "current_market_signal_strength": round(current_market_signal, 2),
@@ -556,10 +561,13 @@ class AutonomousDecisionEngine:
                     required_type = "limit" if key in {"market_maker", "grid", "grid_eth"} else "market"
                     supported = {str(x).lower() for x in (rules.get("orderTypes") or [])}
                     min_quote = float(rules.get("minOrderInQuoteAsset") or 0.0)
+                    quote_to_eur = max(0.0, float(row.get("quote_to_eur") or (1.0 if desired.endswith("-EUR") else 0.0)))
+                    min_order_eur = min_quote * quote_to_eur
                     if (
                         str(rules.get("status") or "").lower() != "trading"
                         or required_type not in supported
-                        or (order_eur > 0 and min_quote > order_eur)
+                        or quote_to_eur <= 0
+                        or (order_eur > 0 and min_order_eur > order_eur)
                     ):
                         continue
                 except Exception:
@@ -578,10 +586,17 @@ class AutonomousDecisionEngine:
                     cfg["_min_order_quote"] = float(rules.get("minOrderInQuoteAsset") or 0.0)
                     cfg["_quantity_decimals"] = int(rules.get("quantityDecimals") or 18)
                     cfg["_market_rules_symbol"] = desired
+                    cfg["_quote_to_eur"] = quote_to_eur
                 except Exception:
                     cfg["symbol"] = previous
                     continue
                 self._last_switch[strategy.name] = time.time()
+
+            if desired == current:
+                cfg["_quote_to_eur"] = max(
+                    0.0,
+                    float(row.get("quote_to_eur") or (1.0 if current.endswith("-EUR") else 0.0)),
+                )
 
             if (
                 key in {"market_maker", "grid", "grid_eth", "sniper"}
@@ -593,8 +608,8 @@ class AutonomousDecisionEngine:
                     float(cfg.get("max_order_eur", order_eur)),
                 )
                 cfg["order_value_eur"] = min(order_eur, hard_cap)
-            # All live bots can share the broad EUR universe. Non-EUR routes
-            # remain shadow-only until quote-currency accounting is validated.
+            # Live non-EUR routes are permitted only with a validated EUR bridge.
+            # Risk, allocation and PnL remain denominated in EUR.
             changes.append({
                 "strategy": strategy.name,
                 "market": str(cfg.get("symbol", "")).upper(),

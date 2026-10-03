@@ -53,6 +53,24 @@ class BaseStrategy(ABC):
     # Exchange minimum / dust helpers
     # ------------------------------------------------------------------
 
+    def quote_to_eur_rate(self) -> float:
+        symbol = str(self._config.get("symbol", "")).upper()
+        if symbol.endswith("-EUR"):
+            return 1.0
+        try:
+            rate = float(self._config.get("_quote_to_eur", 0.0) or 0.0)
+        except (TypeError, ValueError):
+            return 0.0
+        return rate if rate > 0 else 0.0
+
+    def quote_notional_to_eur(self, amount_quote: float) -> float:
+        rate = self.quote_to_eur_rate()
+        return max(0.0, float(amount_quote or 0.0)) * rate if rate > 0 else 0.0
+
+    def eur_to_quote_notional(self, amount_eur: float) -> float:
+        rate = self.quote_to_eur_rate()
+        return max(0.0, float(amount_eur or 0.0)) / rate if rate > 0 else 0.0
+
     def minimum_tradable_base(self, price: float | None = None) -> float:
         """Return the live minimum base quantity required for a valid order.
 
@@ -79,7 +97,7 @@ class BaseStrategy(ABC):
         return min_base * 1.001 if min_base > 0 else 0.0
 
     def minimum_tradable_notional(self, price: float | None = None) -> float:
-        """Return the exchange minimum quote notional implied by live market rules."""
+        """Return the exchange minimum order value in EUR."""
         px = max(
             0.0,
             float(
@@ -93,7 +111,8 @@ class BaseStrategy(ABC):
             0.0, float(self._config.get("_min_order_quote", 0.0) or 0.0)
         )
         base_minimum = self.minimum_tradable_base(px)
-        return max(explicit_quote, base_minimum * px if px > 0 else 0.0)
+        quote_notional = max(explicit_quote, base_minimum * px if px > 0 else 0.0)
+        return self.quote_notional_to_eur(quote_notional)
 
     def bounded_entry_notional(
         self,
@@ -146,7 +165,7 @@ class BaseStrategy(ABC):
         )
         qty = max(0.0, float(quantity or 0.0))
         self._config["_dust_base_inventory"] = qty
-        self._config["_dust_inventory_eur"] = qty * px
+        self._config["_dust_inventory_eur"] = self.quote_notional_to_eur(qty * px)
         self._config["_dust_inventory_ignored"] = qty > 0
 
     def clear_dust_inventory(self) -> None:
@@ -177,6 +196,7 @@ class BaseStrategy(ABC):
             "_mid_price": 0.0,
             "_available_base": 0.0,
             "_available_quote": 0.0,
+            "_quote_to_eur": 0.0,
             "_bot_base_inventory": 0.0,
             "_bot_average_entry_price": 0.0,
             "_min_profit_exit_price": 0.0,

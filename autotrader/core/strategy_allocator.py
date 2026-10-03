@@ -183,7 +183,10 @@ class StrategyAllocator:
             price = fallback_price
         else:
             return None
-        notional = Decimal(str(order.quantity)) * price
+        quote_to_eur = Decimal(str(getattr(order, "quote_to_eur", 1.0) or 0.0))
+        if not quote_to_eur.is_finite() or quote_to_eur <= 0:
+            return None
+        notional = Decimal(str(order.quantity)) * price * quote_to_eur
         return notional if notional.is_finite() and notional > 0 else None
 
     def allocation_for(self, strategy: str) -> StrategyAllocation | None:

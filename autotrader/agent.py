@@ -191,7 +191,7 @@ class AutoTrader:
                         strategy=strategy.name,
                         symbol=order.symbol,
                         side=order.side.value,
-                        notional_eur=quantity * price,
+                        notional_eur=quantity * price * max(0.0, float(getattr(order, "quote_to_eur", 1.0) or 0.0)),
                         realized_net_pnl_delta_eur=float(realized_net_pnl_delta),
                         fill_id=outcome_key,
                     )
@@ -443,6 +443,7 @@ class AutoTrader:
                     fee=fee,
                     fee_currency=str(raw.get("feeCurrency") or ""),
                     fill_key=str(row.get("fill_key") or ""),
+                    quote_to_eur=max(0.0, float(row.get("quote_to_eur") or (1.0 if symbol.upper().endswith("-EUR") else 0.0))),
                     timestamp=timestamp,
                 )
             )
@@ -450,7 +451,7 @@ class AutoTrader:
                 strategy=strategy,
                 symbol=symbol,
                 side=side,
-                notional_eur=amount * price,
+                notional_eur=amount * price * max(0.0, float(row.get("quote_to_eur") or (1.0 if symbol.upper().endswith("-EUR") else 0.0))),
             )
             fill_utc = time.gmtime(timestamp)
             if (
@@ -458,8 +459,7 @@ class AutoTrader:
                 and fill_utc.tm_yday == now_utc.tm_yday
             ):
                 self._rm.record_pnl_delta(strategy, realized)
-                if str(row.get("market") or "").upper().endswith("-EUR"):
-                    self._bitvavo.gateway.record_pnl_delta(Decimal(str(realized)))
+                self._bitvavo.gateway.record_pnl_delta(Decimal(str(realized)))
 
         restored_nav = max(
             0.01,

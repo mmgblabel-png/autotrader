@@ -40,10 +40,11 @@ def test_all_live_bots_can_use_broad_safe_market_selection():
     assert strategy_markets["grid"] == ["*"]
     assert strategy_markets["grid_eth"] == ["*"]
     assert strategy_markets["sniper"] == ["*"]
-    assert cfg["autonomous_execution"]["allow_non_eur_live"] is False
+    assert cfg["autonomous_execution"]["allow_non_eur_live"] is True
+    assert set(cfg["opportunity_router"]["live_quote_assets"]) == {"EUR", "BTC", "ETH", "USDC", "USDT"}
 
 
-def test_router_scans_full_bitvavo_universe_but_live_non_eur_stays_blocked():
+def test_router_scans_full_bitvavo_universe_with_bounded_live_quote_assets():
     cfg = _config()
     router = cfg["opportunity_router"]
     assert router["auto_discover_all"] is True

@@ -51,6 +51,8 @@ class OrderJournal:
         columns = {row["name"] for row in self._db.execute("PRAGMA table_info(orders)").fetchall()}
         if "strategy" not in columns:
             self._db.execute("ALTER TABLE orders ADD COLUMN strategy TEXT NOT NULL DEFAULT ''")
+        if "quote_to_eur" not in columns:
+            self._db.execute("ALTER TABLE orders ADD COLUMN quote_to_eur TEXT NOT NULL DEFAULT '1'")
         self._db.commit()
         self._repair_fully_filled_error_orders()
 
@@ -110,12 +112,12 @@ class OrderJournal:
         with self._lock:
             self._db.close()
 
-    def record_intent(self, *, client_order_id: str, market: str, side: str, order_type: str, amount: str, price: str | None) -> bool:
+    def record_intent(self, *, client_order_id: str, market: str, side: str, order_type: str, amount: str, price: str | None, quote_to_eur: str = "1") -> bool:
         now = time.time()
         with self._lock:
             cursor = self._db.execute(
-                "INSERT OR IGNORE INTO orders(client_order_id,market,side,order_type,amount,price,status,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?)",
-                (client_order_id, market, side, order_type, amount, price, "intent", now, now),
+                "INSERT OR IGNORE INTO orders(client_order_id,market,side,order_type,amount,price,status,created_at,updated_at,quote_to_eur) VALUES(?,?,?,?,?,?,?,?,?,?)",
+                (client_order_id, market, side, order_type, amount, price, "intent", now, now, str(quote_to_eur)),
             )
             inserted = cursor.rowcount == 1
             if inserted:

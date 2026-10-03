@@ -968,7 +968,24 @@ async def _tick_loop(app: FastAPI, agent: AutoTrader) -> None:
                         strategy._config.pop("_market_data_error", None)
                         strategy._config["_mid_price"] = price
                         strategy._config["_current_price"] = price
-                        agent.profit_engine.mark_to_market(strategy.name, symbol, price)
+                        try:
+                            quote_to_eur = float(agent._bitvavo.quote_to_eur_rate(symbol))
+                        except Exception as quote_exc:
+                            quote_to_eur = 1.0 if symbol.endswith("-EUR") else 0.0
+                            if not symbol.endswith("-EUR"):
+                                strategy._config["_market_data_error"] = "quote_valuation_unavailable"
+                                log.warning(
+                                    "Quote EUR valuation failed safely: market=%s error=%s",
+                                    symbol,
+                                    type(quote_exc).__name__,
+                                )
+                        strategy._config["_quote_to_eur"] = quote_to_eur
+                        agent.profit_engine.mark_to_market(
+                            strategy.name,
+                            symbol,
+                            price,
+                            quote_to_eur=quote_to_eur,
+                        )
                         if str(strategy._config.get("_market_rules_symbol") or "").upper() != symbol:
                             try:
                                 rule_rows = agent._bitvavo.markets(symbol)
