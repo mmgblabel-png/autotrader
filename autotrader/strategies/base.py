@@ -173,6 +173,23 @@ class BaseStrategy(ABC):
         self._config["_dust_inventory_eur"] = 0.0
         self._config["_dust_inventory_ignored"] = False
 
+    def autonomous_entry_decision(self) -> tuple[bool, str]:
+        """Combine independent entry gates without mutating their ownership.
+
+        The autonomous router owns _autonomous_entry_allowed. Historical
+        evidence owns _evidence_entry_blocked. Risk kill-switches may make
+        the autonomous gate false, but the evidence overlay never rewrites it.
+        """
+        if bool(self._config.get("_evidence_entry_blocked", False)):
+            return False, str(
+                self._config.get("_evidence_entry_reason") or "live_evidence_gate"
+            )
+        if not bool(self._config.get("_autonomous_entry_allowed", True)):
+            return False, str(
+                self._config.get("_autonomous_entry_reason") or "entry_not_selected"
+            )
+        return True, ""
+
     # ------------------------------------------------------------------
     # Hooks
     # ------------------------------------------------------------------

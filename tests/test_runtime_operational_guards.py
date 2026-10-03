@@ -327,11 +327,53 @@ def test_live_evidence_gate_blocks_only_proven_weak_entries():
         "NewBot": {"wins": 0, "losses": 1, "net_pnl": -0.20},
     })
     result = _apply_strategy_evidence_gate(agent)
+
     assert [row["strategy"] for row in result["blocked"]] == ["BadBot"]
-    assert agent._strategies["bad"]._config["_autonomous_entry_allowed"] is False
-    assert agent._strategies["bad"]._config["_autonomous_entry_reason"] == "live_evidence_gate"
+    assert agent._strategies["bad"]._config["_evidence_entry_blocked"] is True
+    assert agent._strategies["bad"]._config["_evidence_entry_reason"] == "live_evidence_gate"
+    assert agent._strategies["good"]._config["_evidence_entry_blocked"] is False
+    assert agent._strategies["new"]._config["_evidence_entry_blocked"] is False
+    # Evidence overlay must not mutate the autonomous router decision.
+    assert agent._strategies["bad"]._config["_autonomous_entry_allowed"] is True
+
+
+def test_live_evidence_gate_recovers_without_sticky_block():
+    agent = _EvidenceAgent({
+        "GoodBot": {"wins": 1, "losses": 4, "net_pnl": -0.35},
+        "BadBot": {"wins": 0, "losses": 0, "net_pnl": 0.0},
+        "NewBot": {"wins": 0, "losses": 0, "net_pnl": 0.0},
+    })
+    first = _apply_strategy_evidence_gate(agent)
+    assert first["blocked"][0]["strategy"] == "GoodBot"
+    assert agent._strategies["good"]._config["_evidence_entry_blocked"] is True
+
+    agent.profit_engine = _EvidenceProfitEngine({
+        "GoodBot": {"wins": 5, "losses": 1, "net_pnl": 0.25},
+        "BadBot": {"wins": 0, "losses": 0, "net_pnl": 0.0},
+        "NewBot": {"wins": 0, "losses": 0, "net_pnl": 0.0},
+    })
+    second = _apply_strategy_evidence_gate(agent)
+    assert second["blocked"] == []
+    assert agent._strategies["good"]._config["_evidence_entry_blocked"] is False
+    assert agent._strategies["good"]._config["_evidence_entry_reason"] == ""
     assert agent._strategies["good"]._config["_autonomous_entry_allowed"] is True
-    assert agent._strategies["new"]._config["_autonomous_entry_allowed"] is True
+
+
+def test_good_evidence_does_not_override_router_block():
+    agent = _EvidenceAgent({
+        "GoodBot": {"wins": 5, "losses": 0, "net_pnl": 1.0},
+        "BadBot": {"wins": 0, "losses": 0, "net_pnl": 0.0},
+        "NewBot": {"wins": 0, "losses": 0, "net_pnl": 0.0},
+    })
+    good = agent._strategies["good"]
+    good._config["_autonomous_entry_allowed"] = False
+    good._config["_autonomous_entry_reason"] = "quality_below_threshold"
+
+    result = _apply_strategy_evidence_gate(agent)
+    assert result["blocked"] == []
+    assert good._config["_evidence_entry_blocked"] is False
+    assert good._config["_autonomous_entry_allowed"] is False
+    assert good._config["_autonomous_entry_reason"] == "quality_below_threshold"
 
 
 def test_live_evidence_gate_can_be_disabled():
@@ -340,7 +382,9 @@ def test_live_evidence_gate_can_be_disabled():
         gate={"enabled": False},
     )
     result = _apply_strategy_evidence_gate(agent)
-    assert result == {"enabled": False, "blocked": []}
+    assert result["enabled"] is False
+    assert result["blocked"] == []
+    assert agent._strategies["bad"]._config["_evidence_entry_blocked"] is False
     assert agent._strategies["bad"]._config["_autonomous_entry_allowed"] is True
 
 

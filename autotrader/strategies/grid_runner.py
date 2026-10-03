@@ -185,10 +185,11 @@ class GridRunner(BaseStrategy):
         if cooldown_until > time.time():
             return
 
-        if not bool(cfg.get("_autonomous_entry_allowed", True)):
+        entry_allowed, entry_reason = self.autonomous_entry_decision()
+        if not entry_allowed:
             log.info(
                 "GRID autonomous entry paused: %s",
-                str(cfg.get("_autonomous_entry_reason") or "entry_not_selected"),
+                entry_reason,
             )
             return
 
