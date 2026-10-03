@@ -252,12 +252,18 @@ class BacktestEngine:
         strategy: str,
         interval: str = "1h",
         window_size: int = 180,
+        purge_bars: int = 0,
+        embargo_bars: int = 0,
     ) -> dict[str, Any]:
         rows = self.normalize_candles(candles)
         minimum = self.config.min_history + 2
         size = max(minimum, int(window_size))
+        purge = max(0, int(purge_bars))
+        embargo = max(0, int(embargo_bars))
+        gap = purge + embargo
         windows = []
-        for start in range(0, len(rows) - minimum + 1, size):
+        start = 0
+        while start <= len(rows) - minimum:
             chunk = rows[start : start + size]
             if len(chunk) < minimum:
                 break
@@ -269,6 +275,7 @@ class BacktestEngine:
                     "metrics": result["metrics"],
                 }
             )
+            start += size + gap
         returns = [
             float(window["metrics"]["total_return_pct"])
             for window in windows
@@ -283,6 +290,9 @@ class BacktestEngine:
         ]
         return {
             "window_size": size,
+            "purge_bars": purge,
+            "embargo_bars": embargo,
+            "gap_bars": gap,
             "window_count": len(windows),
             "windows": windows,
             "aggregate": {
