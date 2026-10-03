@@ -109,4 +109,13 @@ def test_shadow_ledger_settlement_and_promotion_gate(tmp_path: Path):
     assert status["promotion_ready"] is False
     reloaded = PolymarketShadowLedger(tmp_path / "shadow.json", bankroll_start=80, promotion_min_trades=20)
     assert reloaded.status()["realized_pnl"] == pytest.approx(3.96)
-\n\ndef test_worker_blocks_promotion_without_confirmed_persistent_state(tmp_path: Path):\n    worker = PolymarketZScoreShadowWorker({\n        "state_path": str(tmp_path / "state.json"),\n        "persistent_state_confirmed": False,\n    })\n    status = worker.status()\n    assert status["promotion_ready"] is False\n    assert status["persistent_state_confirmed"] is False\n    assert status["promotion_blocker"] == "persistent_state_not_confirmed"\n
+
+def test_worker_blocks_promotion_without_confirmed_persistent_state(tmp_path: Path):
+    worker = PolymarketZScoreShadowWorker({
+        "state_path": str(tmp_path / "state.json"),
+        "persistent_state_confirmed": False,
+    })
+    status = worker.status()
+    assert status["promotion_ready"] is False
+    assert status["persistent_state_confirmed"] is False
+    assert status["promotion_blocker"] == "persistent_state_not_confirmed"
