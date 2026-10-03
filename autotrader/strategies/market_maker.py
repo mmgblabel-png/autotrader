@@ -357,9 +357,16 @@ class MarketMaker(BaseStrategy):
         if can_bid:
             bid_notional = self.quote_notional_to_eur(size * bid_price)
             if self._rm.check_order(self.name, bid_notional, symbol=symbol):
-                bid = Order(exchange=exchange, symbol=symbol, side=OrderSide.BUY,
-                            order_type=OrderType.LIMIT, quantity=size, price=bid_price,
-                            strategy=self.name)
+                bid = Order(
+                    exchange=exchange,
+                    symbol=symbol,
+                    side=OrderSide.BUY,
+                    order_type=OrderType.LIMIT,
+                    quantity=size,
+                    price=bid_price,
+                    strategy=self.name,
+                    quote_to_eur=quote_to_eur,
+                )
                 self._om.register(bid)
                 placed = True
                 log.info("BID  %s %.4f @ %.2f  (notional=%.2f)", symbol, size, bid_price, bid_notional)
@@ -367,9 +374,16 @@ class MarketMaker(BaseStrategy):
         if can_ask:
             ask_notional = self.quote_notional_to_eur(size * ask_price)
             if self._rm.check_order(self.name, ask_notional, symbol=symbol, risk_reducing=True):
-                ask = Order(exchange=exchange, symbol=symbol, side=OrderSide.SELL,
-                            order_type=OrderType.LIMIT, quantity=size, price=ask_price,
-                            strategy=self.name)
+                ask = Order(
+                    exchange=exchange,
+                    symbol=symbol,
+                    side=OrderSide.SELL,
+                    order_type=OrderType.LIMIT,
+                    quantity=size,
+                    price=ask_price,
+                    strategy=self.name,
+                    quote_to_eur=quote_to_eur,
+                )
                 self._om.register(ask)
                 placed = True
                 log.info("ASK  %s %.4f @ %.2f  (notional=%.2f)", symbol, size, ask_price, ask_notional)
