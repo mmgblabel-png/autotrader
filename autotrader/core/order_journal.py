@@ -47,6 +47,18 @@ class OrderJournal:
           accepted_at REAL NOT NULL,
           FOREIGN KEY(client_order_id) REFERENCES orders(client_order_id)
         );
+        CREATE TABLE IF NOT EXISTS inventory_reconciliations (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          market TEXT NOT NULL,
+          strategy TEXT NOT NULL,
+          fill_cutoff REAL NOT NULL,
+          journal_quantity TEXT NOT NULL,
+          exchange_total TEXT NOT NULL,
+          reason TEXT NOT NULL,
+          observed_at REAL NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_inventory_reconciliations_market_strategy
+          ON inventory_reconciliations(market, strategy, fill_cutoff);
         """)
         columns = {row["name"] for row in self._db.execute("PRAGMA table_info(orders)").fetchall()}
         if "strategy" not in columns:
@@ -520,6 +532,80 @@ class OrderJournal:
         with self._lock:
             rows = self._db.execute("SELECT * FROM fills WHERE client_order_id=? ORDER BY observed_at", (client_order_id,)).fetchall()
         return [dict(row) for row in rows]
+
+    def latest_inventory_reconciliation(self, market: str, strategy: str) -> dict[str, Any] | None:
+        with self._lock:
+            row = self._db.execute(
+                """
+                SELECT market,strategy,fill_cutoff,journal_quantity,exchange_total,reason,observed_at
+                FROM inventory_reconciliations
+                WHERE market=? AND strategy=?
+                ORDER BY fill_cutoff DESC, id DESC
+                LIMIT 1
+                """,
+                (market.upper(), strategy),
+            ).fetchone()
+        return dict(row) if row else None
+
+    def record_inventory_reconciliation(
+        self,
+        market: str,
+        strategy: str,
+        *,
+        exchange_total: Decimal,
+        reason: str,
+    ) -> bool:
+        """Persist a non-PnL ownership reset after exchange absence is verified.
+
+        Historical fills remain untouched. Future inventory calculations ignore
+        pre-reconciliation fill-derived inventory and resume from later fills.
+        """
+        market = market.upper()
+        with self._lock:
+            latest_fill = self._db.execute(
+                """
+                SELECT MAX(f.observed_at) AS ts
+                FROM fills AS f
+                JOIN orders AS o ON o.client_order_id=f.client_order_id
+                WHERE o.market=? AND o.strategy=?
+                """,
+                (market, strategy),
+            ).fetchone()
+            cutoff = float((latest_fill or {})["ts"] or 0.0)
+            if cutoff <= 0:
+                return False
+            existing = self._db.execute(
+                """
+                SELECT 1 FROM inventory_reconciliations
+                WHERE market=? AND strategy=? AND fill_cutoff>=?
+                LIMIT 1
+                """,
+                (market, strategy, cutoff),
+            ).fetchone()
+            if existing:
+                return False
+            inventory = self.inventory_cost_basis(market, strategy)
+            quantity = max(Decimal("0"), Decimal(str(inventory.get("quantity") or "0")))
+            if quantity <= 0:
+                return False
+            self._db.execute(
+                """
+                INSERT INTO inventory_reconciliations(
+                    market,strategy,fill_cutoff,journal_quantity,exchange_total,reason,observed_at
+                ) VALUES(?,?,?,?,?,?,?)
+                """,
+                (
+                    market,
+                    strategy,
+                    cutoff,
+                    str(quantity),
+                    str(max(Decimal("0"), exchange_total)),
+                    str(reason),
+                    time.time(),
+                ),
+            )
+            self._db.commit()
+            return True
 
     def net_base_inventory(self, market: str, strategy: str) -> Decimal:
         """Return base-asset inventory created by this strategy's recorded fills."""
