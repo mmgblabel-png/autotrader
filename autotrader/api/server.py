@@ -1592,6 +1592,12 @@ async def _coinbase_zscore_shadow_loop(app: FastAPI) -> None:
         try:
             status = await asyncio.to_thread(app.state.coinbase_zscore_shadow.tick)
             app.state.coinbase_zscore_shadow_error = None
+    app.state.coinbase_live_arm_store = LiveArmIntentStore("/data/coinbase_live_arm_state.json")
+    app.state.coinbase_live_arm_intent = bool(app.state.coinbase_live_arm_store.load().armed)
+    app.state.coinbase_live_arm_auto_resume_eligible = bool(
+        app.state.live_mode and app.state.coinbase_live_arm_store.should_resume()
+    )
+    app.state.coinbase_live_armed = False
     coinbase_auto_cfg = agent._config.get("coinbase_autonomous_execution", {}) or {}
     app.state.coinbase_autonomous_enabled = bool(coinbase_auto_cfg.get("enabled", False))
     app.state.coinbase_autonomous_executor = CoinbaseAutonomousExecutor(coinbase_auto_cfg)
@@ -1624,9 +1630,26 @@ async def _coinbase_autonomous_loop(app: FastAPI) -> None:
     while True:
         try:
             shadow_status = app.state.coinbase_zscore_shadow.status()
+            if (
+                not bool(getattr(app.state, "coinbase_live_armed", False))
+                and bool(getattr(app.state, "coinbase_live_arm_auto_resume_eligible", False))
+            ):
+                restore_probe = await asyncio.to_thread(
+                    app.state.coinbase_autonomous_executor.readiness,
+                    armed=True,
+                    shadow_status=shadow_status,
+                )
+                restore_failed = set(restore_probe.get("failed_gates") or [])
+                # Shadow promotion blocks new entries, not safe reserve seeding.
+                if restore_failed.issubset({"shadow_promotion_ready"}):
+                    app.state.coinbase_live_armed = True
+                    log.info(
+                        "Restored Coinbase live arm for same release; new entries remain evidence-gated=%s",
+                        "shadow_promotion_ready" in restore_failed,
+                    )
             status = await asyncio.to_thread(
                 app.state.coinbase_autonomous_executor.tick,
-                armed=bool(getattr(app.state, "live_armed", False)),
+                armed=bool(getattr(app.state, "coinbase_live_armed", False)),
                 shadow_status=shadow_status,
             )
             app.state.coinbase_autonomous_status = status
@@ -3514,7 +3537,7 @@ def coinbase_autonomous_status() -> dict[str, object]:
         }
     try:
         readiness = executor.readiness(
-            armed=bool(getattr(app.state, "live_armed", False)),
+            armed=bool(getattr(app.state, "coinbase_live_armed", False)),
             shadow_status=app.state.coinbase_zscore_shadow.status(),
         )
     except Exception as exc:
@@ -3524,7 +3547,96 @@ def coinbase_autonomous_status() -> dict[str, object]:
         }
     return {
         **executor.status(readiness=readiness),
+        "coinbase_armed": bool(getattr(app.state, "coinbase_live_armed", False)),
+        "arm_persistence": app.state.coinbase_live_arm_store.status(),
         "runtime_error": getattr(app.state, "coinbase_autonomous_error", None),
+    }
+
+
+@app.get("/api/coinbase/live/readiness", tags=["coinbase"])
+def coinbase_live_readiness() -> dict[str, object]:
+    """Read-only Coinbase execution readiness; never places an order."""
+    executor = app.state.coinbase_autonomous_executor
+    shadow = app.state.coinbase_zscore_shadow.status()
+    probe = executor.readiness(armed=True, shadow_status=shadow)
+    failed = set(probe.get("failed_gates") or [])
+    try:
+        # Preview only: proves the Railway CDP key can reach the trading API.
+        preview = CoinbaseAdvancedMarketData().preview_spot_market_order(
+            product_id="BTC-EUR",
+            side="SELL",
+            base_size="0.00002",
+        )
+        trade_preview = {
+            "passed": True,
+            "commission_total": preview.get("commission_total"),
+            "est_average_filled_price": preview.get("est_average_filled_price"),
+        }
+    except Exception as exc:
+        trade_preview = {
+            "passed": False,
+            "reason": getattr(exc, "category", type(exc).__name__),
+        }
+        failed.add("trade_permission_preview")
+    return {
+        **probe,
+        "coinbase_armed": bool(getattr(app.state, "coinbase_live_armed", False)),
+        "trade_permission_preview": trade_preview,
+        "ready_to_arm": failed.issubset({"shadow_promotion_ready"}),
+        "new_entries_evidence_gated": "shadow_promotion_ready" in failed,
+        "failed_gates": sorted(failed),
+        "arm_persistence": app.state.coinbase_live_arm_store.status(),
+    }
+
+
+@app.post("/api/coinbase/live/activate", tags=["coinbase"])
+def activate_coinbase_live(
+    payload: dict = Body(...),
+    _: None = Depends(_require_control_token),
+):
+    if str(payload.get("confirmation", "")) != "I_UNDERSTAND_LIVE_ORDERS":
+        raise HTTPException(status_code=400, detail="Explicit live-order confirmation is required.")
+    check = coinbase_live_readiness()
+    if not bool(check.get("ready_to_arm")):
+        raise HTTPException(
+            status_code=409,
+            detail={"message": "Coinbase live trading is not ready.", "failed_gates": check.get("failed_gates")},
+        )
+    try:
+        app.state.coinbase_live_arm_store.write(True, source="operator_activate")
+    except Exception as exc:
+        app.state.coinbase_live_armed = False
+        app.state.coinbase_live_arm_intent = False
+        app.state.coinbase_live_arm_auto_resume_eligible = False
+        raise HTTPException(status_code=503, detail="Coinbase live intent could not be persisted.") from exc
+    app.state.coinbase_live_arm_intent = True
+    app.state.coinbase_live_arm_auto_resume_eligible = bool(
+        app.state.coinbase_live_arm_store.should_resume()
+    )
+    app.state.coinbase_live_armed = True
+    return {
+        "armed": True,
+        "persistent": True,
+        "new_entries_evidence_gated": bool(check.get("new_entries_evidence_gated")),
+        "message": "Coinbase autonomous SPOT canary armed.",
+    }
+
+
+@app.post("/api/coinbase/live/deactivate", tags=["coinbase"])
+def deactivate_coinbase_live(_: None = Depends(_require_control_token)):
+    app.state.coinbase_live_armed = False
+    app.state.coinbase_live_arm_intent = False
+    app.state.coinbase_live_arm_auto_resume_eligible = False
+    persistence_error = None
+    try:
+        app.state.coinbase_live_arm_store.write(False, source="operator_deactivate")
+    except Exception as exc:
+        persistence_error = type(exc).__name__
+    return {
+        "armed": False,
+        "persistent": persistence_error is None,
+        "persistence_error": persistence_error,
+        "message": "Coinbase autonomous trading disarmed. Existing exchange orders are not canceled automatically.",
     }
 
 
