@@ -2169,6 +2169,11 @@ def live_readiness():
         "journal": journal_state,
         "journals": journal_states,
         "preflight": live_preflight,
+        "live_evidence": getattr(
+            app.state,
+            "live_evidence_gate",
+            {"enabled": True, "blocked": [], "evaluated": []},
+        ),
         "profit_policy": {
             "required_entry_edge_pct": required_entry_edge_pct,
             "target_edges_pct": target_edges,
