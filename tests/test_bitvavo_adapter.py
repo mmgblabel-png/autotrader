@@ -382,3 +382,103 @@ def test_ioc_limit_rejects_post_only_combination(monkeypatch):
             time_in_force="IOC",
             post_only=True,
         )
+
+
+def test_private_get_retries_transient_500(monkeypatch):
+    monkeypatch.setenv("BITVAVO_PRIVATE_READ_ATTEMPTS", "2")
+    adapter = BitvavoAdapter(api_key="key", api_secret="secret")
+    calls = {"count": 0}
+    sleeps = []
+
+    class DummyResponse:
+        def __enter__(self):
+            return self
+        def __exit__(self, *args):
+            return False
+        def read(self):
+            return b'{"balances":[],"fees":{}}'
+
+    def flaky(*args, **kwargs):
+        calls["count"] += 1
+        if calls["count"] == 1:
+            raise urllib.error.HTTPError(
+                url="https://api.bitvavo.com/v2/account",
+                code=500,
+                msg="Internal Server Error",
+                hdrs={},
+                fp=io.BytesIO(b'{"errorCode":500,"error":"temporary"}'),
+            )
+        return DummyResponse()
+
+    monkeypatch.setattr("urllib.request.urlopen", flaky)
+    monkeypatch.setattr("time.sleep", lambda seconds: sleeps.append(seconds))
+
+    result = adapter._private_request("GET", "/account")
+    assert result == {"balances": [], "fees": {}}
+    assert calls["count"] == 2
+    assert sleeps == [0.5]
+
+
+def test_private_get_429_respects_short_reset_header(monkeypatch):
+    monkeypatch.setenv("BITVAVO_PRIVATE_READ_ATTEMPTS", "2")
+    monkeypatch.setenv("BITVAVO_PRIVATE_READ_MAX_WAIT_SECONDS", "5")
+    adapter = BitvavoAdapter(api_key="key", api_secret="secret")
+    calls = {"count": 0}
+    sleeps = []
+    now = 1_000.0
+
+    class DummyResponse:
+        def __enter__(self):
+            return self
+        def __exit__(self, *args):
+            return False
+        def read(self):
+            return b'[]'
+
+    def flaky(*args, **kwargs):
+        calls["count"] += 1
+        if calls["count"] == 1:
+            raise urllib.error.HTTPError(
+                url="https://api.bitvavo.com/v2/ordersOpen",
+                code=429,
+                msg="Too Many Requests",
+                hdrs={"bitvavo-ratelimit-resetat": str(int((now + 0.75) * 1000))},
+                fp=io.BytesIO(b'{"errorCode":105,"error":"rate limit"}'),
+            )
+        return DummyResponse()
+
+    monkeypatch.setattr("urllib.request.urlopen", flaky)
+    monkeypatch.setattr("time.time", lambda: now)
+    monkeypatch.setattr("time.sleep", lambda seconds: sleeps.append(seconds))
+
+    result = adapter._private_request("GET", "/ordersOpen")
+    assert result == []
+    assert calls["count"] == 2
+    assert sleeps == [0.75]
+
+
+def test_private_mutation_is_never_retried_after_5xx(monkeypatch):
+    monkeypatch.setenv("BITVAVO_PRIVATE_READ_ATTEMPTS", "4")
+    adapter = BitvavoAdapter(api_key="key", api_secret="secret")
+    calls = {"count": 0}
+
+    def failing(*args, **kwargs):
+        calls["count"] += 1
+        raise urllib.error.HTTPError(
+            url="https://api.bitvavo.com/v2/order",
+            code=503,
+            msg="Service Unavailable",
+            hdrs={},
+            fp=io.BytesIO(b'{"errorCode":109,"error":"timeout"}'),
+        )
+
+    monkeypatch.setattr("urllib.request.urlopen", failing)
+    monkeypatch.setattr("time.sleep", lambda *_args, **_kwargs: pytest.fail("mutation retry attempted"))
+
+    with pytest.raises(BitvavoError):
+        adapter._private_request(
+            "POST",
+            "/order",
+            {"market": "BTC-EUR", "side": "buy", "orderType": "market", "amount": "0.0001"},
+        )
+    assert calls["count"] == 1
