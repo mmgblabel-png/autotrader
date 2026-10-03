@@ -370,7 +370,7 @@ strategies:
   market_maker:
     enabled: true
     live_capable: true
-    allocation_eur: 20
+    allocation_eur: 17
     max_order_eur: 12
     max_open_orders: 1
     exclusive_symbol: true
@@ -455,7 +455,7 @@ strategies:
     enabled: true
     live_capable: true
     strategy_name: GridRunnerETH
-    allocation_eur: 15
+    allocation_eur: 12
     max_order_eur: 9
     max_open_orders: 1
     exclusive_symbol: true
