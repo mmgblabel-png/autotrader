@@ -120,6 +120,8 @@ class ResearchLab:
             strategy=strategy,
             interval=interval,
             window_size=int(self.config.get("walk_forward_window", 180)),
+            purge_bars=int(self.config.get("walk_forward_purge_bars", 6)),
+            embargo_bars=int(self.config.get("walk_forward_embargo_bars", 2)),
         )
         stress = self.backtester.stress_suite(
             candles,

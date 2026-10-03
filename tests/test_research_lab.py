@@ -63,6 +63,30 @@ def test_walk_forward_and_stress_suite_cover_required_regimes():
     assert "double_costs" in stress["scenarios"]
 
 
+
+
+def test_walk_forward_purge_and_embargo_create_explicit_gaps():
+    engine = BacktestEngine()
+    candles = _trend_candles(520)
+    walk = engine.walk_forward(
+        candles,
+        strategy="multi_factor",
+        interval="1h",
+        window_size=120,
+        purge_bars=6,
+        embargo_bars=2,
+    )
+
+    assert walk["purge_bars"] == 6
+    assert walk["embargo_bars"] == 2
+    assert walk["gap_bars"] == 8
+    assert walk["window_count"] >= 3
+
+    starts = [window["start_timestamp"] for window in walk["windows"]]
+    ends = [window["end_timestamp"] for window in walk["windows"]]
+    for previous_end, current_start in zip(ends, starts[1:]):
+        assert current_start - previous_end >= 9 * 3_600_000
+
 def test_monte_carlo_enforces_at_least_10000_simulations_and_is_reproducible():
     engine = MonteCarloEngine()
     returns = [0.01, -0.006, 0.004, -0.002, 0.008, 0.001] * 10

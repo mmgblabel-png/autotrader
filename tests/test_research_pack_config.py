@@ -36,7 +36,7 @@ def test_research_pack_config_uses_80_eur_live_capital_policy():
     assert cfg["strategies"]["sniper"]["live_capable"] is False
     assert cfg["strategies"]["sniper"]["allocation_eur"] == 0
     assert cfg["live_evidence_gate"]["min_completed_exits"] == 4
-    assert cfg["live_evidence_gate"]["minimum_net_pnl_eur"] == -0.10
+    assert cfg["live_evidence_gate"]["minimum_net_pnl_eur"] == 0.0
     assert live["grid"]["symbol"] == "SOL-EUR"
     assert cfg["strategies"]["grid_eth"]["symbol"] == "ETH-EUR"
     assert cfg["strategies"]["grid_eth"]["strategy_name"] == "GridRunnerETH"
@@ -62,10 +62,17 @@ def test_router_scans_full_bitvavo_universe_with_bounded_live_quote_assets():
     assert cfg["shadow_lab"]["dynamic_markets_per_strategy"] >= 10
     assert cfg["shadow_lab"]["promotion_min_completed_trades"] == 24
     assert cfg["shadow_lab"]["promotion_min_profit_factor"] >= 1.10
+    assert cfg["shadow_lab"]["promotion_min_q10_return_pct"] >= -2.50
     assert cfg["shadow_lab"]["promotion_cost_stress_multiplier"] >= 1.25
     assert cfg["shadow_lab"]["canary_min_completed_trades"] >= 12
+    assert cfg["shadow_lab"]["drift_gate_enabled"] is True
+    assert cfg["shadow_lab"]["drift_baseline_bars"] >= 40
+    assert cfg["shadow_lab"]["drift_recent_bars"] >= 10
+    assert cfg["research_lab"]["walk_forward_purge_bars"] >= 1
+    assert cfg["research_lab"]["walk_forward_embargo_bars"] >= 1
     assert cfg["shadow_lab"]["canary_min_net_pnl_eur"] > 0
     assert cfg["shadow_lab"]["canary_min_profit_factor"] >= 1.05
+    assert cfg["shadow_lab"]["canary_min_q10_return_pct"] >= -3.50
     assert cfg["shadow_lab"]["strategies"]["volatility_breakout"]["strategy_version"] == "v3"
     assert cfg["shadow_lab"]["strategies"]["sniper_v2"]["strategy_version"] == "v2"
 
