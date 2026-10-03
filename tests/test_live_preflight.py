@@ -125,6 +125,25 @@ def test_preflight_rounds_order_value_amount_down():
     assert Decimal(report["strategies"][0]["planned_notional_eur"]) <= Decimal("6")
 
 
+def test_preflight_supports_shadow_canary_limit_orders():
+    strategies = [
+        Strategy("ShadowCanary", {
+            "enabled": True, "live_capable": True, "exchange": "bitvavo",
+            "symbol": "BTC-EUR", "order_value_eur": 6,
+            "allocation_eur": 6, "max_order_eur": 6,
+        })
+    ]
+    adapter = Adapter(
+        prices={"BTC-EUR": "75000"},
+        rules={"BTC-EUR": market_rule(base_min="0.00005", quote_min="5", quantity_decimals=8)},
+    )
+    report = validate_bitvavo_live_strategies(strategies, adapter)
+    assert report["passed"] is True
+    assert report["strategies"][0]["strategy"] == "ShadowCanary"
+    assert report["strategies"][0]["order_type"] == "limit"
+    assert Decimal(report["strategies"][0]["planned_notional_eur"]) <= Decimal("6")
+
+
 def test_preflight_supports_second_named_grid_runner():
     strategies = [
         Strategy("GridRunnerETH", {
