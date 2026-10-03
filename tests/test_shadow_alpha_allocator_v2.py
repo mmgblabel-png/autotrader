@@ -440,6 +440,7 @@ def test_shadow_canary_blocks_bad_q10_tail_risk(tmp_path: Path):
     row = engine.status({"mean_reversion": cfg})["strategies"][0]
 
     assert row["outcome_q10_return_pct"] < -3.50
+    assert row["canary_min_q10_return_pct"] == -3.50
     assert "tail_risk_q10" in row["canary_blockers"]
     assert row["canary_ready"] is False
 
