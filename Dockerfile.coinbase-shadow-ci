@@ -1,0 +1,9 @@
+FROM python:3.12-slim
+WORKDIR /app
+COPY pyproject.toml README.md config.yaml ./
+COPY autotrader ./autotrader
+COPY tests ./tests
+RUN python -m pip install --upgrade pip \
+    && python -m pip install -e ".[dev]" \
+    && python -m pytest -q tests/test_coinbase_advanced.py tests/test_coinbase_zscore_shadow.py
+CMD ["python", "-c", "print('coinbase shadow validation complete')"]
