@@ -35,6 +35,23 @@ class CoinbaseAuthenticationError(RuntimeError):
         self.category = category
 
 
+class CoinbaseTradingError(RuntimeError):
+    """Raised when a Coinbase authenticated trading request fails closed."""
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        status: int | None = None,
+        category: str = "trading_request_failed",
+        error_code: str | None = None,
+    ) -> None:
+        super().__init__(message)
+        self.status = status
+        self.category = category
+        self.error_code = error_code
+
+
 @dataclass(frozen=True)
 class CoinbaseTopOfBook:
     product_id: str
@@ -61,6 +78,10 @@ class CoinbaseAdvancedMarketData:
     BOOK_PATH = "/api/v3/brokerage/market/product_book"
     PRODUCTS_PATH = "/api/v3/brokerage/market/products"
     ACCOUNTS_PATH = "/api/v3/brokerage/accounts"
+    ORDERS_PATH = "/api/v3/brokerage/orders"
+    ORDER_PREVIEW_PATH = "/api/v3/brokerage/orders/preview"
+    ORDER_HISTORY_PATH = "/api/v3/brokerage/orders/historical"
+    CANCEL_ORDERS_PATH = "/api/v3/brokerage/orders/batch_cancel"
 
     def __init__(
         self,
@@ -184,37 +205,203 @@ class CoinbaseAdvancedMarketData:
                 category="private_key_parse_failed",
             ) from exc
 
-    def _auth_get(self, path: str) -> Any:
-        token = self._build_rest_jwt("GET", path)
+    @staticmethod
+    def _safe_coinbase_error(payload: object) -> tuple[str | None, str | None]:
+        if not isinstance(payload, dict):
+            return None, None
+        error_response = payload.get("error_response")
+        if isinstance(error_response, dict):
+            code = str(error_response.get("error") or error_response.get("error_details") or "").strip() or None
+            message = str(error_response.get("message") or "").strip() or None
+            return code, message
+        code = str(payload.get("error") or payload.get("code") or "").strip() or None
+        message = str(payload.get("message") or payload.get("error_details") or "").strip() or None
+        return code, message
+
+    @staticmethod
+    def _trading_error_category(status: int | None, error_code: str | None, message: str | None) -> str:
+        text = " ".join(filter(None, [error_code, message])).lower()
+        if status in {401, 403}:
+            if "permission" in text or "trade" in text:
+                return "trade_permission_missing"
+            return "unauthorized_or_ip_restricted"
+        if status == 429:
+            return "rate_limited"
+        if "insufficient" in text or "fund" in text or "balance" in text:
+            return "insufficient_funds"
+        if "minimum" in text or "size" in text or "increment" in text:
+            return "invalid_order_size"
+        if "post only" in text or "post_only" in text:
+            return "post_only_rejected"
+        if "product" in text and ("disabled" in text or "not found" in text):
+            return "product_unavailable"
+        return "http_error" if status else "network_error"
+
+    def _auth_request(
+        self,
+        method: str,
+        path: str,
+        payload: dict[str, Any] | None = None,
+    ) -> Any:
+        method = method.upper().strip()
+        token = self._build_rest_jwt(method, path)
+        body = None if payload is None else json.dumps(payload, separators=(",", ":")).encode("utf-8")
+        headers = {
+            "Accept": "application/json",
+            "Authorization": f"Bearer {token}",
+            "User-Agent": "autotrader-coinbase-auth/1.0",
+        }
+        if body is not None:
+            headers["Content-Type"] = "application/json"
         request = urllib.request.Request(
             self.BASE_URL + path,
-            method="GET",
-            headers={
-                "Accept": "application/json",
-                "Authorization": f"Bearer {token}",
-                "User-Agent": "autotrader-coinbase-auth/1.0",
-            },
+            data=body,
+            method=method,
+            headers=headers,
         )
         try:
             with urllib.request.urlopen(request, timeout=self.timeout) as response:
-                return json.loads(response.read().decode("utf-8"))
+                raw = response.read().decode("utf-8")
+                return json.loads(raw) if raw else {}
         except urllib.error.HTTPError as exc:
-            if exc.code in {401, 403}:
-                category = "unauthorized_or_ip_restricted"
-            elif exc.code == 429:
-                category = "rate_limited"
-            else:
-                category = "http_error"
-            raise CoinbaseAuthenticationError(
+            raw = b""
+            try:
+                raw = exc.read()
+            except Exception:
+                pass
+            parsed: object = {}
+            if raw:
+                try:
+                    parsed = json.loads(raw.decode("utf-8"))
+                except Exception:
+                    parsed = {}
+            error_code, message = self._safe_coinbase_error(parsed)
+            category = self._trading_error_category(exc.code, error_code, message)
+            exc_type = CoinbaseAuthenticationError if exc.code in {401, 403} else CoinbaseTradingError
+            raise exc_type(
                 "Coinbase authenticated request failed",
                 status=exc.code,
                 category=category,
+                **({"error_code": error_code} if exc_type is CoinbaseTradingError else {}),
             ) from exc
+        except CoinbaseAuthenticationError:
+            raise
         except Exception as exc:
-            raise CoinbaseAuthenticationError(
+            raise CoinbaseTradingError(
                 "Coinbase authenticated request failed",
                 category="network_error",
             ) from exc
+
+    def _auth_get(self, path: str) -> Any:
+        return self._auth_request("GET", path)
+
+    @staticmethod
+    def _spot_market_payload(
+        *,
+        product_id: str,
+        side: str,
+        quote_size: str | None = None,
+        base_size: str | None = None,
+        portfolio_id: str | None = None,
+    ) -> dict[str, Any]:
+        side = side.upper().strip()
+        if side not in {"BUY", "SELL"}:
+            raise ValueError("side must be BUY or SELL")
+        if bool(quote_size) == bool(base_size):
+            raise ValueError("exactly one of quote_size or base_size is required")
+        if side == "BUY" and not quote_size:
+            raise ValueError("spot market BUY requires quote_size")
+        if side == "SELL" and not base_size:
+            raise ValueError("spot market SELL requires base_size")
+        size_cfg: dict[str, str] = {}
+        if quote_size:
+            size_cfg["quote_size"] = str(quote_size)
+        if base_size:
+            size_cfg["base_size"] = str(base_size)
+        payload: dict[str, Any] = {
+            "product_id": CoinbaseAdvancedMarketData.normalize_product_id(product_id),
+            "side": side,
+            "order_configuration": {"market_market_ioc": size_cfg},
+        }
+        if portfolio_id:
+            payload["retail_portfolio_id"] = str(portfolio_id)
+        return payload
+
+    def preview_spot_market_order(
+        self,
+        *,
+        product_id: str,
+        side: str,
+        quote_size: str | None = None,
+        base_size: str | None = None,
+        portfolio_id: str | None = None,
+    ) -> dict[str, Any]:
+        """Preview a SPOT market order. This method never places an order."""
+        payload = self._spot_market_payload(
+            product_id=product_id,
+            side=side,
+            quote_size=quote_size,
+            base_size=base_size,
+            portfolio_id=portfolio_id,
+        )
+        response = self._auth_request("POST", self.ORDER_PREVIEW_PATH, payload)
+        if not isinstance(response, dict):
+            raise CoinbaseTradingError("Unexpected Coinbase order preview response", category="unexpected_response")
+        return response
+
+    def create_spot_market_order(
+        self,
+        *,
+        client_order_id: str,
+        product_id: str,
+        side: str,
+        quote_size: str | None = None,
+        base_size: str | None = None,
+        portfolio_id: str | None = None,
+        preview_id: str | None = None,
+    ) -> dict[str, Any]:
+        """Place one authenticated SPOT market order.
+
+        Callers are responsible for all live-arm, risk, evidence, sizing and
+        idempotency gates before invoking this method.
+        """
+        payload = self._spot_market_payload(
+            product_id=product_id,
+            side=side,
+            quote_size=quote_size,
+            base_size=base_size,
+            portfolio_id=portfolio_id,
+        )
+        payload["client_order_id"] = str(client_order_id)
+        if preview_id:
+            payload["preview_id"] = str(preview_id)
+        response = self._auth_request("POST", self.ORDERS_PATH, payload)
+        if not isinstance(response, dict):
+            raise CoinbaseTradingError("Unexpected Coinbase create-order response", category="unexpected_response")
+        success = bool(response.get("success"))
+        if not success:
+            error_code, message = self._safe_coinbase_error(response)
+            raise CoinbaseTradingError(
+                message or "Coinbase rejected the order",
+                category=self._trading_error_category(None, error_code, message),
+                error_code=error_code,
+            )
+        return response
+
+    def get_order(self, order_id: str) -> dict[str, Any]:
+        response = self._auth_request("GET", f"{self.ORDER_HISTORY_PATH}/{str(order_id).strip()}")
+        if not isinstance(response, dict) or not isinstance(response.get("order"), dict):
+            raise CoinbaseTradingError("Unexpected Coinbase get-order response", category="unexpected_response")
+        return dict(response["order"])
+
+    def cancel_orders(self, order_ids: list[str]) -> dict[str, Any]:
+        ids = [str(value).strip() for value in order_ids if str(value).strip()]
+        if not ids:
+            return {"results": []}
+        response = self._auth_request("POST", self.CANCEL_ORDERS_PATH, {"order_ids": ids})
+        if not isinstance(response, dict):
+            raise CoinbaseTradingError("Unexpected Coinbase cancel response", category="unexpected_response")
+        return response
 
     def account_balances(self) -> dict[str, object]:
         """Return a privacy-safe balance summary from Coinbase Advanced.
