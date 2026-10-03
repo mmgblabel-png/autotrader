@@ -1,5 +1,6 @@
 prediction_market_shadow:
   enabled: true
+  persistent_state_confirmed: false
   durations_seconds: [300, 900]
   shadow_bankroll_usdc: 80.0
   assumed_fee_bps: 100.0
