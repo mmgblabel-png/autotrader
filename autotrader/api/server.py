@@ -820,33 +820,40 @@ def _manage_stale_bot_orders(app: FastAPI, agent: AutoTrader) -> dict[str, objec
 
 
 def _apply_strategy_evidence_gate(agent: AutoTrader) -> dict[str, object]:
-    """Block new entries for statistically weak live strategies; exits remain allowed."""
+    """Overlay historical evidence on entry eligibility without mutating router state."""
     cfg = agent._config.get("live_evidence_gate", {}) or {}
-    if not bool(cfg.get("enabled", True)):
-        return {"enabled": False, "blocked": []}
+    enabled = bool(cfg.get("enabled", True))
     min_exits = max(1, int(cfg.get("min_completed_exits", 4)))
     min_net = float(cfg.get("minimum_net_pnl_eur", -0.10))
     summary = agent.profit_engine.as_summary().get("by_strategy", {}) or {}
     blocked = []
+    evaluated = []
     for strategy in agent._strategies.values():
         row = summary.get(strategy.name, {}) or {}
         exits = int(row.get("wins") or 0) + int(row.get("losses") or 0)
         net = float(row.get("net_pnl") or 0.0)
+        evidence_blocked = bool(enabled and exits >= min_exits and net < min_net)
         strategy._config["_evidence_completed_exits"] = exits
         strategy._config["_evidence_net_pnl_eur"] = net
-        if exits >= min_exits and net < min_net:
-            strategy._config["_autonomous_entry_allowed"] = False
-            strategy._config["_autonomous_entry_reason"] = "live_evidence_gate"
-            blocked.append({
-                "strategy": strategy.name,
-                "completed_exits": exits,
-                "net_pnl_eur": round(net, 4),
-            })
+        strategy._config["_evidence_entry_blocked"] = evidence_blocked
+        strategy._config["_evidence_entry_reason"] = (
+            "live_evidence_gate" if evidence_blocked else ""
+        )
+        status_row = {
+            "strategy": strategy.name,
+            "completed_exits": exits,
+            "net_pnl_eur": round(net, 4),
+            "blocked": evidence_blocked,
+        }
+        evaluated.append(status_row)
+        if evidence_blocked:
+            blocked.append(status_row)
     return {
-        "enabled": True,
+        "enabled": enabled,
         "min_completed_exits": min_exits,
         "minimum_net_pnl_eur": min_net,
         "blocked": blocked,
+        "evaluated": evaluated,
     }
 
 
