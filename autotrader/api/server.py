@@ -40,6 +40,7 @@ import hmac
 import os
 import threading
 import time
+from decimal import Decimal
 from typing import Any, Final
 
 from fastapi import Body, Depends, FastAPI, Header, HTTPException, Query, Request, WebSocket, WebSocketDisconnect
@@ -1058,6 +1059,102 @@ async def _tick_loop(app: FastAPI, agent: AutoTrader) -> None:
                             for row in (getattr(app.state, "bitvavo_open_orders", []) or [])
                             if str(row.get("market") or "").upper() == symbol
                         )
+                        if (
+                            sync_due
+                            and strategy.name.startswith("GridRunner")
+                            and journal_inventory > 0
+                            and exchange_base_total is not None
+                            and bool(getattr(app.state, "bitvavo_balance_snapshot_ready", False))
+                            and bool(getattr(app.state, "bitvavo_open_orders_snapshot_ready", False))
+                        ):
+                            local_open_count = len(agent._om.open_orders(strategy.name))
+                            journal_state = agent._bitvavo.journal.strategy_market_state(
+                                symbol, strategy.name
+                            )
+                            exchange_open_count = int(
+                                strategy._config.get("_exchange_open_order_count", 0) or 0
+                            )
+                            journal_nonterminal = int(
+                                journal_state.get("nonterminal_count", 0) or 0
+                            )
+                            structurally_clear = (
+                                local_open_count == 0
+                                and exchange_open_count == 0
+                                and journal_nonterminal == 0
+                            )
+                            if exchange_base_total <= 1e-12 and structurally_clear:
+                                confirmations = int(
+                                    strategy._config.get(
+                                        "_zero_balance_inventory_confirmations", 0
+                                    ) or 0
+                                ) + 1
+                                strategy._config[
+                                    "_zero_balance_inventory_confirmations"
+                                ] = confirmations
+                                log.warning(
+                                    "Inventory reconciliation candidate: strategy=%s market=%s journal_qty=%.12f exchange_total=%.12f confirmations=%d/3",
+                                    strategy.name,
+                                    symbol,
+                                    journal_inventory,
+                                    exchange_base_total,
+                                    confirmations,
+                                )
+                                if confirmations >= 3:
+                                    explicit_rows = await asyncio.to_thread(
+                                        agent._bitvavo.balance, base
+                                    )
+                                    explicit_row = next(
+                                        (
+                                            row
+                                            for row in explicit_rows
+                                            if isinstance(row, dict)
+                                            and str(row.get("symbol") or "").upper() == base
+                                        ),
+                                        None,
+                                    )
+                                    if explicit_row is not None:
+                                        explicit_total = max(
+                                            0.0,
+                                            float(explicit_row.get("available") or 0.0)
+                                            + float(explicit_row.get("inOrder") or 0.0),
+                                        )
+                                        if explicit_total <= 1e-12:
+                                            recorded = agent._bitvavo.journal.record_inventory_reconciliation(
+                                                symbol,
+                                                strategy.name,
+                                                exchange_total=Decimal(str(explicit_total)),
+                                                reason="verified_exchange_zero_balance",
+                                            )
+                                            if recorded:
+                                                inventory = agent._bitvavo.journal.inventory_cost_basis(
+                                                    symbol, strategy.name
+                                                )
+                                                journal_inventory = max(
+                                                    0.0, float(inventory["quantity"])
+                                                )
+                                                strategy._config["_bot_base_inventory"] = journal_inventory
+                                                strategy._config["_bot_average_entry_price"] = float(
+                                                    inventory["average_entry_price"]
+                                                )
+                                                strategy._config[
+                                                    "_inventory_reconciliation_reason"
+                                                ] = "verified_exchange_zero_balance"
+                                                strategy._config[
+                                                    "_inventory_reconciled_at"
+                                                ] = time.time()
+                                                strategy._config[
+                                                    "_zero_balance_inventory_confirmations"
+                                                ] = 0
+                                                log.warning(
+                                                    "Inventory ownership reconciled: strategy=%s market=%s exchange_total=%.12f; historical fills preserved.",
+                                                    strategy.name,
+                                                    symbol,
+                                                    explicit_total,
+                                                )
+                            else:
+                                strategy._config[
+                                    "_zero_balance_inventory_confirmations"
+                                ] = 0
                 agent.tick_all()
             else:
                 agent.tick_all()
