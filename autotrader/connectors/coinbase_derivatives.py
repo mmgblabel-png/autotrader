@@ -12,6 +12,7 @@ import secrets
 import time
 import urllib.parse
 import urllib.request
+import urllib.error
 from dataclasses import dataclass
 from typing import Any
 
@@ -92,6 +93,7 @@ class CoinbaseDerivativesGateway:
         params: dict[str, Any] | None = None,
         http_method: str = "GET",
         bearer: str | None = None,
+        jsonrpc_base: bool = False,
     ) -> Any:
         params = dict(params or {})
         http_method = http_method.upper()
@@ -102,7 +104,7 @@ class CoinbaseDerivativesGateway:
         if bearer:
             headers["Authorization"] = f"Bearer {bearer}"
         body = None
-        url = self.BASE_URL + path
+        url = self.BASE_URL if jsonrpc_base else self.BASE_URL + path
         if http_method == "GET":
             clean = {k: v for k, v in params.items() if v is not None}
             if clean:
@@ -122,6 +124,16 @@ class CoinbaseDerivativesGateway:
         try:
             with urllib.request.urlopen(req, timeout=self.timeout) as resp:
                 raw = resp.read().decode("utf-8")
+        except urllib.error.HTTPError as exc:
+            raise CoinbaseDerivativesError(
+                "Coinbase derivatives HTTP request failed",
+                category=f"http_{int(exc.code)}",
+            ) from exc
+        except urllib.error.URLError as exc:
+            raise CoinbaseDerivativesError(
+                "Coinbase derivatives transport request failed",
+                category="transport_error",
+            ) from exc
         except Exception as exc:
             raise CoinbaseDerivativesError(
                 f"Coinbase derivatives request failed: {type(exc).__name__}",
@@ -132,6 +144,40 @@ class CoinbaseDerivativesGateway:
         except json.JSONDecodeError as exc:
             raise CoinbaseDerivativesError("Coinbase derivatives response was not JSON", category="unexpected_response") from exc
         return self._json_result(payload)
+
+    def _public_call(
+        self,
+        path: str,
+        *,
+        method_name: str,
+        params: dict[str, Any] | None = None,
+    ) -> Any:
+        """Support both documented HTTP paths and canonical JSON-RPC base POST."""
+        first_error: CoinbaseDerivativesError | None = None
+        try:
+            return self._request(
+                path,
+                method_name=method_name,
+                params=params,
+                http_method="GET",
+            )
+        except CoinbaseDerivativesError as exc:
+            first_error = exc
+        try:
+            return self._request(
+                path,
+                method_name=method_name,
+                params=params,
+                http_method="POST",
+                jsonrpc_base=True,
+            )
+        except CoinbaseDerivativesError as exc:
+            # Return the fallback category: it reflects the canonical JSON-RPC
+            # route and is usually the more useful production diagnosis.
+            raise CoinbaseDerivativesError(
+                "Coinbase derivatives public method failed on REST and JSON-RPC transports",
+                category=exc.category or (first_error.category if first_error else "public_call_failed"),
+            ) from exc
 
     @staticmethod
     def _build_cdp_jwt(method: str, path: str) -> str:
@@ -224,7 +270,7 @@ class CoinbaseDerivativesGateway:
         return probe
 
     def list_futures(self, *, currency: str = "any") -> list[dict[str, Any]]:
-        result = self._request(
+        result = self._public_call(
             "/public/get_instruments",
             method_name="public/get_instruments",
             params={"currency": currency, "kind": "future", "expired": False},
@@ -234,7 +280,7 @@ class CoinbaseDerivativesGateway:
         return [dict(row) for row in result if isinstance(row, dict)]
 
     def ticker(self, instrument_name: str) -> CoinbaseDerivativesTicker:
-        result = self._request(
+        result = self._public_call(
             "/public/ticker",
             method_name="public/ticker",
             params={"instrument_name": str(instrument_name)},
