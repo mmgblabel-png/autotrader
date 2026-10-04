@@ -550,11 +550,13 @@ strategies:
 coinbase_derivatives_shadow:
   enabled: true
   interval_seconds: 60
-  # Coinbase Derivatives Exchange perpetual-style nano futures.
-  product_codes: [BIP, ETP, SLP, XPP]
-  max_abs_basis_bps: 250
-  max_abs_funding: 0.05
+  # Read-only nearest futures for BTC/ETH/SOL/XRP. Used only as a bounded
+  # confirmation overlay for SPOT decisions; no derivatives orders are sent.
+  max_abs_basis_bps: 500
+  max_spread_bps: 100
+  min_open_interest: 10
   top_n: 4
+  score_adjustment_max: 2.0
 
 coinbase_zscore_shadow:
   enabled: true
