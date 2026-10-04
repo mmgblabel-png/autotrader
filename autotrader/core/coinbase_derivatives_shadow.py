@@ -1,7 +1,8 @@
-"""Read-only Coinbase CDE derivatives opportunity scanner.
+"""Read-only Coinbase futures confirmation scanner.
 
-The scanner converts perpetual-style futures funding, basis and margin data
-into an auxiliary market-regime signal. It never places derivatives orders.
+It ranks the nearest BTC/ETH/SOL/XRP futures from Coinbase Advanced public
+market data and turns basis/order-book information into a bounded research
+overlay for the existing SPOT execution engine. It never places futures orders.
 """
 from __future__ import annotations
 
@@ -20,35 +21,32 @@ from autotrader.connectors.coinbase_derivatives import (
 class CoinbaseDerivativesShadowConfig:
     enabled: bool = True
     interval_seconds: float = 60.0
-    product_codes: tuple[str, ...] = ("BIP", "ETP", "SLP", "XPP")
-    max_abs_basis_bps: float = 250.0
-    max_abs_funding: float = 0.05
+    max_abs_basis_bps: float = 500.0
+    max_spread_bps: float = 100.0
+    min_open_interest: float = 10.0
     top_n: int = 4
+    score_adjustment_max: float = 2.0
 
     @classmethod
     def from_mapping(cls, raw: dict[str, Any] | None) -> "CoinbaseDerivativesShadowConfig":
         raw = raw or {}
-        codes = tuple(
-            str(x).upper().strip()
-            for x in (raw.get("product_codes") or ("BIP", "ETP", "SLP", "XPP"))
-            if str(x).strip()
-        )
         return cls(
             enabled=bool(raw.get("enabled", True)),
             interval_seconds=max(15.0, float(raw.get("interval_seconds", 60.0))),
-            product_codes=codes or ("BIP", "ETP", "SLP", "XPP"),
-            max_abs_basis_bps=max(10.0, float(raw.get("max_abs_basis_bps", 250.0))),
-            max_abs_funding=max(0.000001, float(raw.get("max_abs_funding", 0.05))),
+            max_abs_basis_bps=max(25.0, float(raw.get("max_abs_basis_bps", 500.0))),
+            max_spread_bps=max(5.0, float(raw.get("max_spread_bps", 100.0))),
+            min_open_interest=max(0.0, float(raw.get("min_open_interest", 10.0))),
             top_n=max(1, min(10, int(raw.get("top_n", 4)))),
+            score_adjustment_max=max(0.0, min(5.0, float(raw.get("score_adjustment_max", 2.0)))),
         )
 
 
 class CoinbaseDerivativesShadowScanner:
-    PRODUCT_TO_SPOT = {
-        "BIP": "BTC-EUR",
-        "ETP": "ETH-EUR",
-        "SLP": "SOL-EUR",
-        "XPP": "XRP-EUR",
+    SPOT_MARKETS = {
+        "BTC": "BTC-EUR",
+        "ETH": "ETH-EUR",
+        "SOL": "SOL-EUR",
+        "XRP": "XRP-EUR",
     }
 
     def __init__(
@@ -65,117 +63,129 @@ class CoinbaseDerivativesShadowScanner:
         self.client = client or CoinbaseDerivativesGateway(timeout=5.0)
         self._status: dict[str, Any] = {
             "enabled": self.config.enabled,
-            "mode": "shadow_signal",
-            "venue": "coinbase_derivatives_exchange",
+            "mode": "shadow_confirmation",
+            "venue": "coinbase_advanced_futures",
             "live_orders_sent": False,
+            "order_capability_implemented": False,
             "instrument_count": 0,
+            "candidate_count": 0,
             "candidates": [],
-            "auth_probe": self.client.auth_probe(),
             "last_error": None,
             "updated_at": None,
         }
 
     @staticmethod
-    def _score(ticker: CoinbaseDerivativesTicker) -> float:
-        # Research-quality score, not an execution score. Reward usable pricing
-        # and meaningful (but not extreme) carry/basis while penalising high
-        # margin requirements.
-        funding_component = min(18.0, abs(ticker.funding_rate) * 100000.0)
-        basis_component = min(18.0, abs(ticker.basis_bps) * 0.35)
-        price_integrity = 12.0 if ticker.mark_price > 0 and ticker.index_price > 0 else 0.0
-        margin_pct = min(
-            ticker.long_initial_margin_bps if ticker.long_initial_margin_bps > 0 else 10000.0,
-            ticker.short_initial_margin_bps if ticker.short_initial_margin_bps > 0 else 10000.0,
-        ) / 100.0
-        margin_penalty = min(20.0, max(0.0, margin_pct - 10.0) * 0.5)
-        return max(0.0, min(100.0, 50.0 + funding_component + basis_component + price_integrity - margin_penalty))
+    def _direction(ticker: CoinbaseDerivativesTicker) -> tuple[str, str]:
+        # This is deliberately a confirmation signal, not a return forecast.
+        # Futures trend and basis must broadly agree before the direction is
+        # treated as strong.
+        change = ticker.price_change_pct
+        basis = ticker.basis_bps
+        if change > 0.15 and basis >= -15.0:
+            return "LONG_BIAS", "positive_futures_trend"
+        if change < -0.15 and basis <= 15.0:
+            return "SHORT_BIAS", "negative_futures_trend"
+        if basis > 35.0 and change >= 0:
+            return "LONG_BIAS", "positive_basis"
+        if basis < -35.0 and change <= 0:
+            return "SHORT_BIAS", "negative_basis"
+        return "NEUTRAL", "mixed_derivatives_signal"
 
     @staticmethod
-    def _bias(ticker: CoinbaseDerivativesTicker) -> tuple[str, str]:
-        funding = ticker.funding_rate
-        basis = ticker.basis_bps
-        # Positive funding means longs pay shorts. Negative funding means shorts
-        # pay longs. Basis agreement strengthens the carry signal.
-        if funding > 0 and basis >= 0:
-            return "SHORT_BIAS", "positive_funding_and_premium"
-        if funding < 0 and basis <= 0:
-            return "LONG_BIAS", "negative_funding_and_discount"
-        if funding > 0:
-            return "SHORT_BIAS", "positive_funding"
-        if funding < 0:
-            return "LONG_BIAS", "negative_funding"
-        if basis > 5.0:
-            return "SHORT_BIAS", "futures_premium"
-        if basis < -5.0:
-            return "LONG_BIAS", "futures_discount"
-        return "NEUTRAL", "no_material_carry_edge"
+    def _score(ticker: CoinbaseDerivativesTicker) -> float:
+        oi_quality = min(25.0, max(0.0, math.log10(max(1.0, ticker.open_interest)) * 6.0))
+        trend_quality = min(20.0, abs(ticker.price_change_pct) * 6.0)
+        basis_quality = max(0.0, 15.0 - min(15.0, abs(ticker.basis_bps) * 0.06))
+        spread_penalty = min(30.0, ticker.spread_bps * 0.35)
+        margin_rate = max(ticker.long_margin_rate, ticker.short_margin_rate)
+        margin_penalty = min(15.0, max(0.0, margin_rate - 0.10) * 60.0)
+        return max(
+            0.0,
+            min(100.0, 45.0 + oi_quality + trend_quality + basis_quality - spread_penalty - margin_penalty),
+        )
 
     def tick(self) -> dict[str, Any]:
         if not self.config.enabled:
             self._status.update({"enabled": False, "updated_at": time.time()})
             return self.status()
 
-        instruments = self.client.list_futures(product_codes=list(self.config.product_codes))
+        instruments = self.client.nearest_crypto_futures()
         candidates: list[dict[str, Any]] = []
+        skipped: dict[str, str] = {}
         for row in instruments:
-            if not bool(row.get("is_perp", False)):
-                continue
-            if str(row.get("trading_state") or "").upper() != "OPEN":
-                continue
-            symbol = str(row.get("symbol") or "").upper().strip()
-            product_code = str(row.get("product_code") or "").upper().strip()
-            if not symbol or product_code not in self.config.product_codes:
-                continue
+            product_id = str(row.get("product_id") or "").upper().strip()
             try:
-                tick = self.client.ticker_from_instrument(row)
-            except Exception:
+                ticker = self.client.ticker_from_product(row)
+            except Exception as exc:
+                skipped[product_id or "unknown"] = getattr(exc, "category", type(exc).__name__)
                 continue
-            if abs(tick.basis_bps) > self.config.max_abs_basis_bps:
+
+            if not ticker.session_open:
+                skipped[product_id] = "session_closed"
                 continue
-            if abs(tick.funding_rate) > self.config.max_abs_funding:
+            if ticker.open_interest < self.config.min_open_interest:
+                skipped[product_id] = "open_interest_too_low"
                 continue
-            bias, reason = self._bias(tick)
-            score = self._score(tick)
+            if ticker.spread_bps > self.config.max_spread_bps:
+                skipped[product_id] = "spread_too_wide"
+                continue
+            if abs(ticker.basis_bps) > self.config.max_abs_basis_bps:
+                skipped[product_id] = "basis_outlier"
+                continue
+
+            direction, reason = self._direction(ticker)
+            score = self._score(ticker)
+            strength = max(0.0, min(1.0, abs(score - 50.0) / 50.0))
+            max_adjustment = self.config.score_adjustment_max
+            signed_adjustment = (
+                max_adjustment * strength
+                if direction == "LONG_BIAS"
+                else (-max_adjustment * strength if direction == "SHORT_BIAS" else 0.0)
+            )
             candidates.append(
                 {
-                    "instrument": symbol,
-                    "product_code": product_code,
-                    "spot_market": self.PRODUCT_TO_SPOT.get(product_code),
-                    "direction": bias,
+                    "instrument": ticker.instrument_name,
+                    "underlying": ticker.underlying,
+                    "spot_market": self.SPOT_MARKETS.get(ticker.underlying),
+                    "spot_reference_product": ticker.spot_product_id,
+                    "direction": direction,
                     "signal_reason": reason,
                     "score": round(score, 3),
-                    "future_mark_price": round(tick.mark_price, 10),
-                    "spot_mark_price": round(tick.index_price, 10),
-                    "fair_value_price": round(tick.fair_value_price, 10),
-                    "basis_bps": round(tick.basis_bps, 4),
-                    "funding_rate": round(tick.funding_rate, 10),
-                    "contract_size": round(tick.contract_size, 10),
-                    "long_initial_margin_pct": round(tick.long_initial_margin_bps / 100.0, 4),
-                    "short_initial_margin_pct": round(tick.short_initial_margin_bps / 100.0, 4),
-                    "funding_interval_minutes": tick.funding_interval_minutes,
+                    "score_adjustment_hint": round(signed_adjustment, 4),
+                    "future_mid": round(ticker.mid_price, 10),
+                    "spot_mid": round(ticker.index_price, 10),
+                    "basis_bps": round(ticker.basis_bps, 4),
+                    "spread_bps": round(ticker.spread_bps, 4),
+                    "open_interest": round(ticker.open_interest, 8),
+                    "price_change_pct_24h": round(ticker.price_change_pct, 6),
+                    "contract_size": round(ticker.contract_size, 10),
+                    "long_margin_rate": round(ticker.long_margin_rate, 8),
+                    "short_margin_rate": round(ticker.short_margin_rate, 8),
+                    "contract_expiry": ticker.contract_expiry,
                     "shadow_only": True,
                 }
             )
 
         candidates.sort(key=lambda row: float(row.get("score") or 0.0), reverse=True)
-        auth_probe = self.client.auth_probe()
         self._status = {
             "enabled": True,
-            "mode": "shadow_signal",
-            "venue": "coinbase_derivatives_exchange",
-            "api_host": "https://api.exchange.fairx.net",
+            "mode": "shadow_confirmation",
+            "venue": "coinbase_advanced_futures",
             "instrument_count": len(instruments),
             "candidate_count": len(candidates),
             "candidates": candidates[: self.config.top_n],
-            "auth_probe": auth_probe,
+            "skipped": skipped,
+            "auth_probe": self.client.auth_probe(),
             "live_orders_sent": False,
             "order_capability_implemented": False,
-            "signal_usage": "research_overlay_only",
+            "signal_usage": "spot_confirmation_overlay",
+            "score_adjustment_max": self.config.score_adjustment_max,
             "policy": {
                 "live_derivatives_enabled": False,
                 "spot_policy_unchanged": True,
                 "leverage_used": False,
                 "margin_orders_sent": False,
+                "futures_orders_sent": False,
             },
             "last_error": None,
             "updated_at": time.time(),
