@@ -80,6 +80,7 @@ from autotrader.core.risk_lab import LeverageMartingaleRiskLab
 from autotrader.fund.automation import AutonomousFundScheduler
 from autotrader.connectors.bitvavo import BitvavoAdapter, BitvavoError
 from autotrader.connectors.coinbase_advanced import CoinbaseAdvancedMarketData, CoinbaseMarketDataError, CoinbaseAuthenticationError
+from autotrader.core.coinbase_derivatives_shadow import CoinbaseDerivativesShadowScanner
 from autotrader.core.coinbase_zscore_shadow import CoinbaseZScoreShadowEngine
 from autotrader.core.coinbase_autonomous_executor import CoinbaseAutonomousExecutor
 from autotrader.connectors.bitpanda_fusion import BitpandaFusionAdapter
@@ -1585,6 +1586,35 @@ async def _arbitrage_shadow_loop(app: FastAPI) -> None:
         await asyncio.sleep(app.state.arbitrage_shadow_interval_seconds)
 
 
+async def _coinbase_derivatives_shadow_loop(app: FastAPI) -> None:
+    """Continuously rank Coinbase derivatives without submitting orders."""
+    first_success = True
+    while True:
+        try:
+            status = await asyncio.to_thread(app.state.coinbase_derivatives_shadow.tick)
+            app.state.coinbase_derivatives_shadow_status = status
+            app.state.coinbase_derivatives_shadow_error = None
+            if first_success:
+                probe = status.get("auth_probe") or {}
+                log.info(
+                    "Coinbase derivatives shadow active: instruments=%s candidates=%s authenticated=%s risk_profile=%s positions=%s live_orders_sent=%s",
+                    status.get("instrument_count"),
+                    status.get("candidate_count"),
+                    probe.get("authenticated"),
+                    probe.get("risk_profile_readable"),
+                    probe.get("positions_readable"),
+                    status.get("live_orders_sent"),
+                )
+                first_success = False
+        except Exception as exc:
+            app.state.coinbase_derivatives_shadow_error = getattr(exc, "category", type(exc).__name__)
+            log.warning(
+                "Coinbase derivatives shadow refresh failed safely: %s",
+                app.state.coinbase_derivatives_shadow_error,
+            )
+        await asyncio.sleep(app.state.coinbase_derivatives_shadow_interval_seconds)
+
+
 async def _coinbase_zscore_shadow_loop(app: FastAPI) -> None:
     """Run the persistent Coinbase BTC short-horizon shadow engine."""
     first_success = True
@@ -1724,6 +1754,21 @@ async def _lifespan(app: FastAPI):
     app.state.arbitrage_shadow_cache = None
     app.state.arbitrage_shadow_cache_at = 0.0
     app.state.arbitrage_shadow_error = None
+    coinbase_derivatives_cfg = agent._config.get("coinbase_derivatives_shadow", {}) or {}
+    app.state.coinbase_derivatives_shadow_enabled = bool(
+        coinbase_derivatives_cfg.get("enabled", False)
+    )
+    app.state.coinbase_derivatives_shadow = CoinbaseDerivativesShadowScanner(
+        coinbase_derivatives_cfg
+    )
+    try:
+        app.state.coinbase_derivatives_shadow_interval_seconds = max(
+            15.0, float(coinbase_derivatives_cfg.get("interval_seconds", 60.0))
+        )
+    except (TypeError, ValueError):
+        app.state.coinbase_derivatives_shadow_interval_seconds = 60.0
+    app.state.coinbase_derivatives_shadow_error = None
+    app.state.coinbase_derivatives_shadow_status = app.state.coinbase_derivatives_shadow.status()
     coinbase_z_cfg = agent._config.get("coinbase_zscore_shadow", {}) or {}
     app.state.coinbase_zscore_shadow_enabled = bool(coinbase_z_cfg.get("enabled", False))
     app.state.coinbase_zscore_shadow = CoinbaseZScoreShadowEngine(coinbase_z_cfg)
@@ -1883,6 +1928,14 @@ async def _lifespan(app: FastAPI):
     app.state.arbitrage_shadow_task = asyncio.create_task(
         _arbitrage_shadow_loop(app), name="autotrader-arbitrage-shadow-loop"
     )
+    app.state.coinbase_derivatives_shadow_task = (
+        asyncio.create_task(
+            _coinbase_derivatives_shadow_loop(app),
+            name="autotrader-coinbase-derivatives-shadow-loop",
+        )
+        if app.state.coinbase_derivatives_shadow_enabled
+        else None
+    )
     app.state.coinbase_zscore_shadow_task = (
         asyncio.create_task(
             _coinbase_zscore_shadow_loop(app),
@@ -1929,6 +1982,8 @@ async def _lifespan(app: FastAPI):
         log.info("Shutting down AutoTrader paper-mode agent…")
         app.state.tick_task.cancel()
         app.state.arbitrage_shadow_task.cancel()
+        if app.state.coinbase_derivatives_shadow_task is not None:
+            app.state.coinbase_derivatives_shadow_task.cancel()
         if app.state.coinbase_zscore_shadow_task is not None:
             app.state.coinbase_zscore_shadow_task.cancel()
         if app.state.coinbase_autonomous_task is not None:
@@ -1942,6 +1997,9 @@ async def _lifespan(app: FastAPI):
             await app.state.tick_task
         with contextlib.suppress(asyncio.CancelledError):
             await app.state.arbitrage_shadow_task
+        if app.state.coinbase_derivatives_shadow_task is not None:
+            with contextlib.suppress(asyncio.CancelledError):
+                await app.state.coinbase_derivatives_shadow_task
         if app.state.coinbase_zscore_shadow_task is not None:
             with contextlib.suppress(asyncio.CancelledError):
                 await app.state.coinbase_zscore_shadow_task
@@ -3542,6 +3600,28 @@ def bitvavo_live_state() -> dict[str, object]:
         "open_orders": open_orders,
         "open_order_count": len(open_orders),
     }
+
+@app.get("/api/research/coinbase-derivatives", tags=["research"])
+def coinbase_derivatives_shadow_status() -> dict[str, object]:
+    """Return read-only Coinbase derivatives discovery and capability state."""
+    scanner = getattr(app.state, "coinbase_derivatives_shadow", None)
+    if scanner is None:
+        return {
+            "venue": "coinbase_global_derivatives",
+            "mode": "shadow_only",
+            "enabled": False,
+            "live_orders_sent": False,
+            "reason": "scanner_not_initialized",
+        }
+    status = getattr(app.state, "coinbase_derivatives_shadow_status", None)
+    if not isinstance(status, dict):
+        status = scanner.status()
+    return {
+        **status,
+        "enabled": bool(getattr(app.state, "coinbase_derivatives_shadow_enabled", False)),
+        "runtime_error": getattr(app.state, "coinbase_derivatives_shadow_error", None),
+    }
+
 
 @app.get("/api/research/coinbase-zscore", tags=["research"])
 def coinbase_zscore_shadow_status() -> dict[str, object]:
