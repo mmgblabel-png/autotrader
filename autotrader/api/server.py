@@ -3621,7 +3621,7 @@ def coinbase_live_readiness() -> dict[str, object]:
         **probe,
         "coinbase_armed": bool(getattr(app.state, "coinbase_live_armed", False)),
         "trade_permission_preview": trade_preview,
-        "ready_to_arm": not failed,
+        "ready_to_arm": failed.issubset({"shadow_promotion_ready"}),
         "new_entries_evidence_gated": "shadow_promotion_ready" in failed,
         "failed_gates": sorted(failed),
         "arm_persistence": app.state.coinbase_live_arm_store.status(),
