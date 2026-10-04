@@ -1,17 +1,20 @@
-"""Read-only Coinbase Derivatives Exchange (CDE) public REST connector.
+"""Read-only Coinbase derivatives market-data adapter.
 
-The consumer Coinbase derivatives UI exposes CDE perpetual-style nano futures
-(BIP/ETP/SLP/XPP). This connector consumes CDE public instrument and funding
-data only. It intentionally contains no order-entry method.
+The retail Coinbase account exposes derivatives through Coinbase's broker UI.
+Direct CDE participant REST/FIX credentials are separate from the existing CDP
+Advanced Trade key, so AutoTrader uses the Advanced public market-data surface
+for derivative curve/order-book intelligence. This module never submits orders.
 """
 from __future__ import annotations
 
-import json
-import urllib.error
-import urllib.parse
-import urllib.request
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from typing import Any
+
+from autotrader.connectors.coinbase_advanced import (
+    CoinbaseAdvancedMarketData,
+    CoinbaseMarketDataError,
+)
 
 
 class CoinbaseDerivativesError(RuntimeError):
@@ -23,119 +26,64 @@ class CoinbaseDerivativesError(RuntimeError):
 @dataclass(frozen=True)
 class CoinbaseDerivativesTicker:
     instrument_name: str
+    underlying: str
+    spot_product_id: str
     mark_price: float
     index_price: float
-    fair_value_price: float
-    funding_rate: float
+    best_bid_price: float
+    best_ask_price: float
+    open_interest: float
+    price_change_pct: float
     contract_size: float
-    long_initial_margin_bps: float
-    short_initial_margin_bps: float
-    trading_state: str
-    funding_interval_minutes: int
-    is_perp: bool
+    long_margin_rate: float
+    short_margin_rate: float
+    contract_expiry: str
+    session_open: bool
+
+    @property
+    def mid_price(self) -> float:
+        if self.best_bid_price > 0 and self.best_ask_price > 0:
+            return (self.best_bid_price + self.best_ask_price) / 2.0
+        return self.mark_price
+
+    @property
+    def spread_bps(self) -> float:
+        mid = self.mid_price
+        if mid <= 0 or self.best_ask_price <= 0 or self.best_bid_price <= 0:
+            return 0.0
+        return max(0.0, (self.best_ask_price - self.best_bid_price) / mid * 10000.0)
 
     @property
     def basis_bps(self) -> float:
-        if self.index_price <= 0:
+        if self.index_price <= 0 or self.mid_price <= 0:
             return 0.0
-        return (self.mark_price - self.index_price) / self.index_price * 10000.0
+        return (self.mid_price - self.index_price) / self.index_price * 10000.0
 
 
 class CoinbaseDerivativesGateway:
-    """Minimal fail-closed client for CDE public REST research endpoints."""
+    """Read-only futures curve and order-book adapter on Coinbase Advanced."""
 
-    BASE_URL = "https://api.exchange.fairx.net"
-    PERP_PRODUCT_CODES = ("BIP", "ETP", "SLP", "XPP")
+    PRODUCTS_PATH = CoinbaseAdvancedMarketData.PRODUCTS_PATH
+    UNDERLYING_PREFIXES = {
+        "BTC": ("BIT-", "BTC-"),
+        "ETH": ("ET-", "ETH-"),
+        "SOL": ("SOL-",),
+        "XRP": ("XRP-",),
+    }
+    SPOT_PRODUCTS = {
+        "BTC": "BTC-USD",
+        "ETH": "ETH-USD",
+        "SOL": "SOL-USD",
+        "XRP": "XRP-USD",
+    }
 
-    def __init__(self, *, timeout: float = 5.0) -> None:
-        self.timeout = max(1.0, float(timeout))
-
-    def _request(
-        self,
-        method: str,
-        path: str,
-        *,
-        params: dict[str, Any] | None = None,
-        payload: dict[str, Any] | None = None,
-    ) -> Any:
-        method = method.upper().strip()
-        url = self.BASE_URL + path
-        if params:
-            clean = {k: v for k, v in params.items() if v is not None and v != ""}
-            if clean:
-                url += "?" + urllib.parse.urlencode(clean, doseq=True)
-        body = None
-        headers = {
-            "Accept": "application/json",
-            "User-Agent": "autotrader-cde-research/1.0",
-        }
-        if payload is not None:
-            body = json.dumps(payload, separators=(",", ":")).encode("utf-8")
-            headers["Content-Type"] = "application/json"
-        req = urllib.request.Request(url, data=body, method=method, headers=headers)
-        try:
-            with urllib.request.urlopen(req, timeout=self.timeout) as resp:
-                raw = resp.read().decode("utf-8")
-        except urllib.error.HTTPError as exc:
-            raise CoinbaseDerivativesError(
-                "Coinbase CDE public REST request failed",
-                category=f"http_{int(exc.code)}",
-            ) from exc
-        except urllib.error.URLError as exc:
-            raise CoinbaseDerivativesError(
-                "Coinbase CDE public REST transport failed",
-                category="transport_error",
-            ) from exc
-        except Exception as exc:
-            raise CoinbaseDerivativesError(
-                "Coinbase CDE public REST request failed",
-                category=type(exc).__name__,
-            ) from exc
-        try:
-            return json.loads(raw) if raw else None
-        except json.JSONDecodeError as exc:
-            raise CoinbaseDerivativesError(
-                "Coinbase CDE public REST returned invalid JSON",
-                category="unexpected_response",
-            ) from exc
-
-    def list_futures(
+    def __init__(
         self,
         *,
-        product_codes: tuple[str, ...] | list[str] | None = None,
-    ) -> list[dict[str, Any]]:
-        codes = [
-            str(x).upper().strip()
-            for x in (product_codes or self.PERP_PRODUCT_CODES)
-            if str(x).strip()
-        ]
-        result = self._request(
-            "POST",
-            "/rest/instruments",
-            payload={
-                "product_codes": codes,
-                "trading_states": ["OPEN"],
-            },
-        )
-        if not isinstance(result, list):
-            raise CoinbaseDerivativesError(
-                "Unexpected CDE instruments response",
-                category="unexpected_response",
-            )
-        return [dict(row) for row in result if isinstance(row, dict)]
-
-    def funding_history(self, symbol: str) -> list[dict[str, Any]]:
-        result = self._request(
-            "GET",
-            "/rest/funding-rate",
-            params={"symbol": str(symbol).upper().strip()},
-        )
-        if not isinstance(result, list):
-            raise CoinbaseDerivativesError(
-                "Unexpected CDE funding-rate response",
-                category="unexpected_response",
-            )
-        return [dict(row) for row in result if isinstance(row, dict)]
+        timeout: float = 5.0,
+        client: CoinbaseAdvancedMarketData | None = None,
+    ) -> None:
+        self.client = client or CoinbaseAdvancedMarketData(timeout=timeout)
 
     @staticmethod
     def _number(raw: Any, default: float = 0.0) -> float:
@@ -144,47 +92,152 @@ class CoinbaseDerivativesGateway:
         except (TypeError, ValueError):
             return default
 
-    def ticker_from_instrument(self, instrument: dict[str, Any]) -> CoinbaseDerivativesTicker:
-        symbol = str(instrument.get("symbol") or "").upper().strip()
-        if not symbol:
-            raise CoinbaseDerivativesError("CDE instrument has no symbol", category="unexpected_response")
-        funding_rows = self.funding_history(symbol)
-        latest = funding_rows[-1] if funding_rows else {}
-        mark = self._number(latest.get("future_mark_price"))
-        spot = self._number(latest.get("spot_mark_price"))
-        fair = self._number(latest.get("fair_value_price"))
-        if mark <= 0:
-            mark = self._number(instrument.get("price_band_reference_price"))
-        if spot <= 0:
-            spot = fair or mark
-        if fair <= 0:
-            fair = spot or mark
+    def list_futures(self, *, page_size: int = 250, max_pages: int = 10) -> list[dict[str, Any]]:
+        page_size = max(1, min(250, int(page_size)))
+        max_pages = max(1, min(50, int(max_pages)))
+        rows: list[dict[str, Any]] = []
+        seen: set[str] = set()
+        cursor: str | None = None
+        for _ in range(max_pages):
+            params: dict[str, Any] = {
+                "limit": str(page_size),
+                "product_type": "FUTURE",
+            }
+            if cursor:
+                params["cursor"] = cursor
+            try:
+                payload = self.client._get(self.PRODUCTS_PATH, params)
+            except CoinbaseMarketDataError as exc:
+                raise CoinbaseDerivativesError(
+                    "Coinbase futures market-data request failed",
+                    category="market_data_unavailable",
+                ) from exc
+            page = payload.get("products") if isinstance(payload, dict) else None
+            if not isinstance(page, list):
+                raise CoinbaseDerivativesError(
+                    "Unexpected Coinbase futures products response",
+                    category="unexpected_response",
+                )
+            for row in page:
+                if not isinstance(row, dict):
+                    continue
+                product_id = str(row.get("product_id") or "").upper().strip()
+                if not product_id or product_id in seen:
+                    continue
+                seen.add(product_id)
+                rows.append(dict(row))
+            has_next = bool(payload.get("has_next")) if isinstance(payload, dict) else False
+            next_cursor = str(payload.get("cursor") or "") if isinstance(payload, dict) else ""
+            if not has_next or not next_cursor or next_cursor == cursor:
+                break
+            cursor = next_cursor
+        return rows
+
+    @classmethod
+    def _underlying(cls, product_id: str) -> str | None:
+        product_id = str(product_id).upper().strip()
+        for underlying, prefixes in cls.UNDERLYING_PREFIXES.items():
+            if any(product_id.startswith(prefix) for prefix in prefixes):
+                return underlying
+        return None
+
+    @staticmethod
+    def _expiry_timestamp(row: dict[str, Any]) -> float:
+        details = row.get("future_product_details")
+        if not isinstance(details, dict):
+            return float("inf")
+        raw = str(details.get("contract_expiry") or "").strip()
+        if not raw:
+            return float("inf")
+        try:
+            return datetime.fromisoformat(raw.replace("Z", "+00:00")).timestamp()
+        except ValueError:
+            return float("inf")
+
+    def nearest_crypto_futures(self) -> list[dict[str, Any]]:
+        now = datetime.now(tz=timezone.utc).timestamp()
+        grouped: dict[str, list[dict[str, Any]]] = {}
+        for row in self.list_futures():
+            product_id = str(row.get("product_id") or "").upper()
+            underlying = self._underlying(product_id)
+            if underlying is None:
+                continue
+            details = row.get("future_product_details")
+            session = row.get("fcm_trading_session_details")
+            if not isinstance(details, dict):
+                continue
+            expiry = self._expiry_timestamp(row)
+            if expiry <= now:
+                continue
+            if isinstance(session, dict) and not bool(session.get("is_session_open", True)):
+                continue
+            grouped.setdefault(underlying, []).append(row)
+
+        selected: list[dict[str, Any]] = []
+        for underlying in sorted(grouped):
+            candidates = grouped[underlying]
+            candidates.sort(
+                key=lambda row: (
+                    self._expiry_timestamp(row),
+                    -self._number(
+                        (row.get("future_product_details") or {}).get("open_interest")
+                        if isinstance(row.get("future_product_details"), dict) else 0.0
+                    ),
+                )
+            )
+            selected.append(dict(candidates[0]))
+        return selected
+
+    def ticker_from_product(self, row: dict[str, Any]) -> CoinbaseDerivativesTicker:
+        product_id = str(row.get("product_id") or "").upper().strip()
+        underlying = self._underlying(product_id)
+        if not product_id or underlying is None:
+            raise CoinbaseDerivativesError(
+                "Unsupported crypto futures product",
+                category="unsupported_product",
+            )
+        spot_product = self.SPOT_PRODUCTS[underlying]
+        try:
+            future_book = self.client.top_of_book(product_id)
+            spot_book = self.client.top_of_book(spot_product)
+        except CoinbaseMarketDataError as exc:
+            raise CoinbaseDerivativesError(
+                "Coinbase futures or spot order book unavailable",
+                category="market_data_unavailable",
+            ) from exc
+
+        details = row.get("future_product_details")
+        details = details if isinstance(details, dict) else {}
+        session = row.get("fcm_trading_session_details")
+        session = session if isinstance(session, dict) else {}
+        intraday = details.get("intraday_margin_rate")
+        intraday = intraday if isinstance(intraday, dict) else {}
+        future_mid = float(future_book.mid_price)
+        spot_mid = float(spot_book.mid_price)
         return CoinbaseDerivativesTicker(
-            instrument_name=symbol,
-            mark_price=mark,
-            index_price=spot,
-            fair_value_price=fair,
-            funding_rate=self._number(latest.get("funding_rate")),
-            contract_size=self._number(instrument.get("contract_size")),
-            long_initial_margin_bps=self._number(instrument.get("long_initial_margin")),
-            short_initial_margin_bps=self._number(instrument.get("short_initial_margin")),
-            trading_state=str(instrument.get("trading_state") or ""),
-            funding_interval_minutes=max(0, int(self._number(instrument.get("funding_interval_minutes")))),
-            is_perp=bool(instrument.get("is_perp", False)),
+            instrument_name=product_id,
+            underlying=underlying,
+            spot_product_id=spot_product,
+            mark_price=future_mid,
+            index_price=spot_mid,
+            best_bid_price=float(future_book.bid_price),
+            best_ask_price=float(future_book.ask_price),
+            open_interest=self._number(details.get("open_interest")),
+            price_change_pct=self._number(row.get("price_percentage_change_24h")),
+            contract_size=self._number(details.get("contract_size")),
+            long_margin_rate=self._number(intraday.get("long_margin_rate")),
+            short_margin_rate=self._number(intraday.get("short_margin_rate")),
+            contract_expiry=str(details.get("contract_expiry") or ""),
+            session_open=bool(session.get("is_session_open", True)),
         )
 
     def auth_probe(self) -> dict[str, Any]:
-        """Explain the broker boundary without attempting order entry.
-
-        Retail Coinbase UI/CFM access does not imply a direct CDE participant
-        API credential. The existing CDP Advanced Trade key is intentionally
-        not repurposed as a CDE HMAC/FIX key.
-        """
+        """Report execution boundary without attempting a derivative order."""
         return {
             "authenticated": False,
             "risk_profile_readable": False,
             "positions_readable": False,
-            "error_category": "consumer_broker_order_api_not_exposed_by_current_cdp_key",
+            "error_category": "market_data_only_consumer_derivatives_route",
             "order_sent": False,
-            "public_cde_data_available": True,
+            "public_advanced_futures_data_available": True,
         }
