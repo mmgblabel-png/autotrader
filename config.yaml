@@ -546,6 +546,16 @@ strategies:
     protection_partial_profit_fraction: 0.50
 
 
+
+coinbase_derivatives_shadow:
+  enabled: true
+  interval_seconds: 60
+  max_instruments: 24
+  min_volume_usd: 100000
+  max_spread_bps: 40
+  max_abs_funding: 0.01
+  top_n: 10
+
 coinbase_zscore_shadow:
   enabled: true
   product_id: BTC-EUR
