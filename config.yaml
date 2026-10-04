@@ -550,11 +550,11 @@ strategies:
 coinbase_derivatives_shadow:
   enabled: true
   interval_seconds: 60
-  max_instruments: 24
-  min_volume_usd: 100000
-  max_spread_bps: 40
-  max_abs_funding: 0.01
-  top_n: 10
+  # Coinbase Derivatives Exchange perpetual-style nano futures.
+  product_codes: [BIP, ETP, SLP, XPP]
+  max_abs_basis_bps: 250
+  max_abs_funding: 0.05
+  top_n: 4
 
 coinbase_zscore_shadow:
   enabled: true
