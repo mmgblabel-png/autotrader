@@ -174,6 +174,19 @@ class CoinbaseAutonomousExecutor:
         raw = payload.get("state") if isinstance(payload, dict) else None
         if not isinstance(raw, dict):
             return
+        saved_portfolio_id = str(payload.get("portfolio_id") or "").strip()
+        current_portfolio_id = str(self.config.portfolio_id or "").strip()
+        if saved_portfolio_id != current_portfolio_id:
+            # Persistent execution state is portfolio-scoped. Never adopt cash,
+            # positions, pending orders or counters created in another portfolio.
+            self.state.last_error = "state_portfolio_mismatch"
+            self.state.last_action = {
+                "action": "STATE_RESET",
+                "reason": "portfolio_mismatch",
+                "saved_portfolio_configured": bool(saved_portfolio_id),
+                "current_portfolio_configured": bool(current_portfolio_id),
+            }
+            return
         position = raw.get("position")
         pending = raw.get("pending")
         submission_intent = raw.get("submission_intent")
