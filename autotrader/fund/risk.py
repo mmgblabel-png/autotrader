@@ -164,6 +164,44 @@ class FundRiskEngine:
         self._roll_day_if_needed()
         self.state.daily_realized_pnl_eur += value
 
+    def replace_exposure_snapshot(
+        self,
+        exposures: list[tuple[str, str, float]],
+    ) -> dict[str, float]:
+        """Replace fill-derived exposure with a verified current inventory snapshot.
+
+        Callers must only use this at a reconciliation-safe point: verified
+        balances, no open orders and no inflight execution. Invalid rows abort
+        before state mutation so exposure never fails open.
+        """
+        strategy_totals: Dict[str, float] = {}
+        asset_totals: Dict[str, float] = {}
+        for strategy, symbol, notional_eur in exposures:
+            strategy_key = str(strategy).strip()
+            symbol_key = str(symbol).upper().replace("/", "-").strip()
+            value = float(notional_eur)
+            if (
+                not strategy_key
+                or not symbol_key
+                or not math.isfinite(value)
+                or value < 0
+            ):
+                raise ValueError("invalid exposure snapshot row")
+            if value <= 1e-12:
+                continue
+            strategy_totals[strategy_key] = (
+                strategy_totals.get(strategy_key, 0.0) + value
+            )
+            asset_totals[symbol_key] = asset_totals.get(symbol_key, 0.0) + value
+
+        previous = self.gross_exposure_eur
+        self.state.strategy_exposure_eur = strategy_totals
+        self.state.asset_exposure_eur = asset_totals
+        return {
+            "previous_gross_exposure_eur": previous,
+            "gross_exposure_eur": self.gross_exposure_eur,
+        }
+
     def record_fill(
         self,
         *,
