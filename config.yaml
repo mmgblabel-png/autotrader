@@ -577,8 +577,10 @@ coinbase_zscore_shadow:
   max_total_shadow_exposure_pct: 20
   min_notional_eur: 1
   max_notional_eur: 5
-  state_path: /data/coinbase_zscore_shadow.json
-  status_path: /data/coinbase_zscore_status.json
+  # Cost model v2 starts a clean evidence ledger because historical shadow
+  # P&L was calculated with a lower fee assumption and is not promotion-valid.
+  state_path: /data/coinbase_zscore_shadow_cost60_v2.json
+  status_path: /data/coinbase_zscore_status_cost60_v2.json
   # Fast-safe canary evidence: fewer forward samples than the old 300-trade
   # gate, offset by stricter quality and drawdown requirements.
   promotion_min_settled_trades: 50
