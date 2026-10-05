@@ -218,6 +218,13 @@ class HedgeFundEngine:
     def mark_nav_unverified(self, source: str = "unverified") -> None:
         self.risk.mark_nav_unverified(source)
 
+    def reconcile_exposure_snapshot(
+        self,
+        exposures: list[tuple[str, str, float]],
+    ) -> dict[str, float]:
+        """Replace stale fill-derived exposure with verified current inventory."""
+        return self.risk.replace_exposure_snapshot(exposures)
+
     def restore_fill(
         self,
         *,
