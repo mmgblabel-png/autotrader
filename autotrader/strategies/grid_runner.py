@@ -251,11 +251,20 @@ class GridRunner(BaseStrategy):
             symbol=symbol,
         )
         if notional <= 0:
+            risk_cap = (
+                max(0.0, float(self._rm.max_entry_notional(self.name, symbol=symbol)))
+                if hasattr(self._rm, "max_entry_notional")
+                else 0.0
+            )
+            minimum = self.minimum_tradable_notional(buy_price)
             log.info(
-                "GRID BUY skipped: no tradable risk/quote headroom for %s (requested %.2f EUR, quote %.2f EUR).",
+                "GRID BUY skipped: no tradable headroom for %s "
+                "(requested %.2f EUR, quote %.2f EUR, risk_cap %.2f EUR, venue_min %.2f EUR).",
                 symbol,
                 order_value,
                 self.quote_notional_to_eur(available_quote) if live_snapshot else -1.0,
+                risk_cap,
+                minimum,
             )
             return
         buy_size = notional / (buy_price * quote_to_eur)
