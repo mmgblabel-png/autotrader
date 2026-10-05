@@ -464,8 +464,14 @@ class CoinbaseAutonomousExecutor:
         )
         notional = base_size * reference_bid
         fee_bps, slip_bps = self._preview_costs(preview, reference_bid, notional)
-        # Exits and reserve-building sells are risk-reducing, so preview costs
-        # are recorded but do not prevent liquidation when a hard risk gate fires.
+        # Hard exits must remain executable even when liquidity is poor. Seeding,
+        # however, is optional capital setup and must respect the same cost gates
+        # as a new entry.
+        if purpose == "seed":
+            if fee_bps > self.config.max_preview_fee_bps:
+                return {"at": now, "action": "HOLD", "reason": "preview_fee_too_high", "fee_bps": fee_bps}
+            if slip_bps > self.config.max_preview_slippage_bps:
+                return {"at": now, "action": "HOLD", "reason": "preview_slippage_too_high", "slippage_bps": slip_bps}
         client_id = self._new_client_order_id()
         self.state.submission_intent = SubmissionIntent(
             client_order_id=client_id,
@@ -606,6 +612,33 @@ class CoinbaseAutonomousExecutor:
             ask = float(ready["best_ask"])
             nav = float(ready["portfolio_nav_eur"])
             balances = dict(ready["balances"])
+
+            # An isolated Coinbase portfolio is the ownership boundary. On a
+            # pristine state, adopt only the configured managed sleeve from its
+            # available EUR while preserving the mandatory cash reserve.
+            pristine_state = (
+                self.config.portfolio_id
+                and self.state.managed_cash_eur <= 1e-9
+                and self.state.position is None
+                and self.state.pending is None
+                and self.state.submission_intent is None
+                and self.state.live_orders_sent == 0
+                and self.state.settled_trades == 0
+                and abs(self.state.realized_pnl_eur) <= 1e-9
+            )
+            if pristine_state:
+                reserve_target = float(ready["required_cash_reserve_eur"])
+                sleeve_target = float(ready["managed_sleeve_target_eur"])
+                available_eur = float(balances.get("EUR") or 0.0)
+                adopted = max(0.0, min(sleeve_target, available_eur - reserve_target))
+                if adopted > 0:
+                    self.state.managed_cash_eur = adopted
+                    self.state.last_action = {
+                        "at": ts,
+                        "action": "ISOLATED_CASH_BOOTSTRAP",
+                        "managed_cash_eur": round(adopted, 8),
+                    }
+
             managed_equity = self._managed_equity(bid)
             self._roll_day(ts, managed_equity)
             self.state.peak_managed_equity_eur = max(self.state.peak_managed_equity_eur, managed_equity)
