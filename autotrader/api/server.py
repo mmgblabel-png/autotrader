@@ -3771,15 +3771,50 @@ def coinbase_live_readiness() -> dict[str, object]:
     probe = executor.readiness(armed=True, shadow_status=shadow)
     failed = set(probe.get("failed_gates") or [])
     try:
-        # Preview only: proves the Railway CDP key can reach the trading API.
-        preview = CoinbaseAdvancedMarketData().preview_spot_market_order(
-            product_id="BTC-EUR",
-            side="SELL",
-            base_size="0.00002",
-            portfolio_id=executor.config.portfolio_id or None,
-        )
+        # Preview only: proves the configured isolated portfolio can execute the
+        # next allowed direction without placing an order. Prefer BUY when EUR
+        # cash is available; a SELL preview on a cash-only portfolio would fail
+        # with insufficient funds even though live BUY execution is valid.
+        balances = probe.get("balances") or {}
+        eur_available = max(0.0, float(balances.get("EUR") or 0.0))
+        btc_available = max(0.0, float(balances.get("BTC") or 0.0))
+        min_order_eur = max(1.0, float(executor.config.min_order_eur))
+        if eur_available + 1e-9 >= min_order_eur:
+            quote_eur = min(
+                eur_available,
+                float(executor.config.max_order_eur),
+                max(min_order_eur, min(2.0, eur_available)),
+            )
+            preview_side = "BUY"
+            preview = executor.client.preview_spot_market_order(
+                product_id=executor.config.product_id,
+                side="BUY",
+                quote_size=f"{quote_eur:.2f}",
+                portfolio_id=executor.config.portfolio_id or None,
+            )
+        elif (
+            executor.config.allow_existing_btc_seed
+            and btc_available * float(probe.get("best_bid") or 0.0) + 1e-9 >= min_order_eur
+        ):
+            preview_side = "SELL"
+            base_size = min(
+                btc_available,
+                max(min_order_eur, 1.0) / max(float(probe.get("best_bid") or 0.0), 1e-9),
+            )
+            preview = executor.client.preview_spot_market_order(
+                product_id=executor.config.product_id,
+                side="SELL",
+                base_size=f"{base_size:.8f}",
+                portfolio_id=executor.config.portfolio_id or None,
+            )
+        else:
+            raise CoinbaseTradingError(
+                "Configured Coinbase portfolio has no previewable trade funds",
+                category="insufficient_trade_funds",
+            )
         trade_preview = {
             "passed": True,
+            "side": preview_side,
             "commission_total": preview.get("commission_total"),
             "est_average_filled_price": preview.get("est_average_filled_price"),
         }
