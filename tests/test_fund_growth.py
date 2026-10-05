@@ -22,19 +22,19 @@ def test_bootstrap_stage_caps_80_eur_live_account_conservatively():
     status = risk.status()
 
     assert status["growth_stage"]["key"] == "bootstrap"
-    assert status["limits"]["max_single_trade_pct"] == 16.0
+    assert status["limits"]["max_single_trade_pct"] == 20.0
     assert status["limits"]["max_gross_exposure_pct"] == 65.0
     assert status["limits"]["min_cash_reserve_pct"] == 35.0
     assert status["growth_stage"]["label"] == "€80 → €250"
     assert risk.pretrade_check(
         strategy="MarketMaker",
         symbol="BTC-EUR",
-        notional_eur=12.8,
+        notional_eur=16.0,
     ).accepted is True
     assert risk.pretrade_check(
         strategy="MarketMaker",
         symbol="BTC-EUR",
-        notional_eur=12.81,
+        notional_eur=16.01,
     ).accepted is False
 
 
@@ -145,3 +145,20 @@ def test_track_record_requires_capital_time_fills_and_valid_ledger():
         "Accounting",
         "Investors",
     ]
+
+
+def test_bootstrap_uses_full_hard_single_trade_cap_without_exceeding_it():
+    controller = FundGrowthController()
+    limits = controller.effective_limits(
+        nav_eur=30.0,
+        mandate_limits={
+            "max_single_trade_pct": 20.0,
+            "max_gross_exposure_pct": 80.0,
+            "max_strategy_exposure_pct": 40.0,
+            "max_asset_exposure_pct": 20.0,
+            "min_cash_reserve_pct": 20.0,
+        },
+    )
+    assert limits["max_single_trade_pct"] == 20.0
+    assert limits["max_asset_exposure_pct"] == 20.0
+    assert limits["min_cash_reserve_pct"] == 35.0
