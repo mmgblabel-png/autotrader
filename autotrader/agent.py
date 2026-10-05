@@ -279,6 +279,26 @@ class AutoTrader:
         try:
             books = self._bitvavo.ticker_books()
             valuation = self.value_bitvavo_balances_eur(balance_rows, books)
+
+            # Bulk /ticker/book snapshots can occasionally omit an otherwise
+            # healthy market. Do not invalidate the entire account NAV on one
+            # transient omission: retry only the missing direct EUR books.
+            # If a direct executable EUR bid still cannot be obtained, the
+            # existing fail-closed behavior remains unchanged.
+            missing_assets = list(valuation.get("unpriced_assets") or [])
+            if missing_assets:
+                recovered_books = dict(books)
+                for asset in missing_assets:
+                    market = f"{str(asset).upper()}-EUR"
+                    try:
+                        recovered_books[market] = self._bitvavo.ticker_book(market)
+                    except Exception:
+                        continue
+                if recovered_books != books:
+                    valuation = self.value_bitvavo_balances_eur(
+                        balance_rows,
+                        recovered_books,
+                    )
         except Exception as exc:
             self._live_fund_nav_updated_at = 0.0
             self._fund.mark_nav_unverified(
