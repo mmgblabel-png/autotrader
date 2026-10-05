@@ -565,7 +565,10 @@ coinbase_zscore_shadow:
   max_forecast_z: 2.0
   # Conservative planning floor; live execution still uses authenticated
   # preview gating before every order. Spread is modeled by ask entry / bid exit.
-  fee_bps_each_leg: 25
+  # Coinbase account is currently on the 0.50% taker tier. Live execution
+  # uses market orders, so model a conservative 0.60% per leg to avoid
+  # promoting signals that only look profitable under maker-like fees.
+  fee_bps_each_leg: 60
   slippage_bps_each_leg: 5
   safety_margin_bps: 10
   min_after_cost_edge_bps: 15
