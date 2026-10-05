@@ -143,6 +143,7 @@ def test_armed_executor_seeds_bounded_cash_from_existing_btc(tmp_path, monkeypat
     )
     assert status["live_orders_sent"] == 1
     assert fake.created[0]["side"] == "SELL"
+    assert fake.created[0]["client_order_id"].startswith("atcb-")
     assert status["pending_order"]["purpose"] == "seed"
     sold = float(fake.created[0]["base_size"]) * fake.bid
     assert sold <= (0.20 * (fake.btc * fake.bid)) + 0.02
@@ -210,6 +211,7 @@ def test_promoted_signal_can_submit_bounded_buy(tmp_path, monkeypatch):
     )
     assert status["live_orders_sent"] == 1
     assert fake.created[0]["side"] == "BUY"
+    assert fake.created[0]["client_order_id"].startswith("atcb-")
     assert float(fake.created[0]["quote_size"]) <= 3.0
     assert status["pending_order"]["purpose"] == "entry"
 
