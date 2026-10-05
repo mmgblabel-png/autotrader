@@ -1681,6 +1681,16 @@ async def _coinbase_zscore_shadow_loop(app: FastAPI) -> None:
 
 async def _coinbase_autonomous_loop(app: FastAPI) -> None:
     """Run the bounded Coinbase SPOT canary behind the existing operator arm."""
+    if not (
+        os.getenv("COINBASE_API_KEY", "").strip()
+        and os.getenv("COINBASE_API_SECRET", "").strip()
+    ):
+        app.state.coinbase_autonomous_error = "credentials_missing"
+        log.info(
+            "Coinbase autonomous execution inactive on this runtime: credentials_missing "
+            "(public Coinbase market discovery may remain active)"
+        )
+        return
     first_log = True
     while True:
         try:
