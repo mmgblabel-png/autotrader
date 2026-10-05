@@ -215,3 +215,21 @@ def test_dynamic_allocator_scales_strategy_and_order_caps_with_nav():
     assert scaled is not None
     assert scaled.max_order_eur == Decimal("20")
     assert scaled.allocation_eur > start.allocation_eur
+
+
+def test_dynamic_allocator_does_not_double_shrink_small_nav_order_cap():
+    cfg = config()
+    cfg["portfolio"].update({
+        "initial_live_capital_eur": 80,
+        "global_live_budget_eur": 80,
+        "dynamic_with_verified_nav": True,
+        "max_deployable_pct": 80,
+        "min_cash_reserve_pct": 20,
+    })
+    allocator = StrategyAllocator(cfg)
+    assert allocator.set_verified_nav(30) is True
+
+    grid = allocator.allocation_for("GridRunner")
+    assert grid is not None
+    assert grid.allocation_eur == Decimal("4.8")
+    assert grid.max_order_eur == Decimal("4.8")
