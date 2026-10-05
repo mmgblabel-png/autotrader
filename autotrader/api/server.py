@@ -1068,6 +1068,44 @@ async def _tick_loop(app: FastAPI, agent: AutoTrader) -> None:
                             open_orders.extend(agent._bitvavo.open_orders(market))
                         app.state.bitvavo_open_orders = open_orders
                         app.state.bitvavo_open_orders_snapshot_ready = True
+                        if bool(
+                            getattr(app.state, "bitvavo_balance_snapshot_ready", False)
+                        ):
+                            try:
+                                exposure_status = await asyncio.to_thread(
+                                    agent.reconcile_live_fund_exposure_from_balances,
+                                    list(
+                                        getattr(
+                                            app.state,
+                                            "bitvavo_balance_rows",
+                                            {},
+                                        ).values()
+                                    ),
+                                    exchange_open_order_count=len(open_orders),
+                                )
+                                if bool(exposure_status.get("reconciled")):
+                                    previous_gross = float(
+                                        exposure_status.get(
+                                            "previous_gross_exposure_eur", 0.0
+                                        )
+                                        or 0.0
+                                    )
+                                    current_gross = float(
+                                        exposure_status.get("gross_exposure_eur", 0.0)
+                                        or 0.0
+                                    )
+                                    if abs(previous_gross - current_gross) >= 0.01:
+                                        log.info(
+                                            "Fund exposure reconciled from Bitvavo inventory: %.4f -> %.4f EUR entries=%s",
+                                            previous_gross,
+                                            current_gross,
+                                            exposure_status.get("entry_count", 0),
+                                        )
+                            except Exception as exposure_exc:
+                                log.warning(
+                                    "Fund exposure reconciliation skipped safely: %s",
+                                    type(exposure_exc).__name__,
+                                )
                     except Exception as orders_exc:
                         app.state.bitvavo_open_orders_snapshot_ready = False
                         log.warning("Bitvavo open-orders refresh failed: %s", orders_exc)

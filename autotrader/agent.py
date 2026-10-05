@@ -332,6 +332,133 @@ class AutoTrader:
         )
         return valuation
 
+    def reconcile_live_fund_exposure_from_balances(
+        self,
+        balance_rows: list[dict],
+        *,
+        exchange_open_order_count: int = 0,
+    ) -> dict[str, object]:
+        """Rebuild bot risk exposure from verified Bitvavo inventory.
+
+        Historical fills remain immutable for PnL/audit. Exposure is replaced
+        only at a reconciliation-safe point with no local, exchange or journal
+        inflight orders. Journal quantities are capped by authenticated exchange
+        balances so manually sold / reconciled ghost inventory cannot consume
+        entry headroom forever.
+        """
+        local_open_count = len(self._om.open_orders())
+        journal_inflight_count = len(self._bitvavo.journal.inflight())
+        if local_open_count or int(exchange_open_order_count) or journal_inflight_count:
+            return {
+                "reconciled": False,
+                "reason": "orders_inflight",
+                "local_open_order_count": local_open_count,
+                "exchange_open_order_count": int(exchange_open_order_count),
+                "journal_inflight_count": journal_inflight_count,
+            }
+
+        exchange_totals: dict[str, Decimal] = {}
+        for row in balance_rows:
+            if not isinstance(row, dict):
+                continue
+            asset = str(row.get("symbol") or "").upper().strip()
+            if not asset:
+                continue
+            try:
+                available = Decimal(str(row.get("available") or "0"))
+                in_order = Decimal(str(row.get("inOrder") or "0"))
+            except Exception as exc:
+                raise ValueError(f"invalid Bitvavo balance row for {asset}") from exc
+            total = available + in_order
+            if not total.is_finite() or total < 0:
+                raise ValueError(f"invalid Bitvavo balance total for {asset}")
+            exchange_totals[asset] = total
+
+        candidates: list[dict[str, object]] = []
+        journal_totals_by_base: dict[str, Decimal] = {}
+        for strategy in self._strategies.values():
+            active = self._bitvavo.journal.strategy_active_markets(
+                strategy.name,
+                min_inventory_quote_value=Decimal("0"),
+            )
+            for row in active:
+                market = str(row.get("market") or "").upper().strip()
+                if "-" not in market:
+                    continue
+                base, quote = market.split("-", 1)
+                try:
+                    quantity = Decimal(str(row.get("inventory_quantity") or "0"))
+                except Exception as exc:
+                    raise ValueError(f"invalid journal inventory for {market}") from exc
+                if not quantity.is_finite() or quantity < 0:
+                    raise ValueError(f"invalid journal inventory for {market}")
+                if quantity <= 0:
+                    continue
+                candidates.append(
+                    {
+                        "strategy": strategy.name,
+                        "market": market,
+                        "base": base,
+                        "quote": quote,
+                        "quantity": quantity,
+                    }
+                )
+                journal_totals_by_base[base] = (
+                    journal_totals_by_base.get(base, Decimal("0")) + quantity
+                )
+
+        books = self._bitvavo.ticker_books() if candidates else {}
+        exposures: list[tuple[str, str, float]] = []
+        for item in candidates:
+            base = str(item["base"])
+            market = str(item["market"])
+            quote = str(item["quote"])
+            quantity = Decimal(str(item["quantity"]))
+            journal_total = journal_totals_by_base.get(base, Decimal("0"))
+            exchange_total = exchange_totals.get(base, Decimal("0"))
+            if journal_total <= 0 or exchange_total <= 0:
+                continue
+            scale = min(Decimal("1"), exchange_total / journal_total)
+            reconciled_quantity = quantity * scale
+            if reconciled_quantity <= 0:
+                continue
+
+            book = books.get(market)
+            try:
+                bid = Decimal(str((book or {}).get("bid") or "0"))
+            except Exception:
+                bid = Decimal("0")
+            if not bid.is_finite() or bid <= 0:
+                book = self._bitvavo.ticker_book(market)
+                bid = Decimal(str((book or {}).get("bid") or "0"))
+            if not bid.is_finite() or bid <= 0:
+                raise ValueError(f"missing executable bid for {market}")
+
+            if quote == "EUR":
+                quote_to_eur = Decimal("1")
+            else:
+                quote_to_eur = Decimal(str(self._bitvavo.quote_to_eur_rate(market)))
+            if not quote_to_eur.is_finite() or quote_to_eur <= 0:
+                raise ValueError(f"missing quote EUR valuation for {market}")
+
+            exposure_eur = reconciled_quantity * bid * quote_to_eur
+            if not exposure_eur.is_finite() or exposure_eur < 0:
+                raise ValueError(f"invalid exposure valuation for {market}")
+            exposures.append(
+                (str(item["strategy"]), market, float(exposure_eur))
+            )
+
+        result = self._fund.reconcile_exposure_snapshot(exposures)
+        result.update(
+            {
+                "reconciled": True,
+                "reason": "verified_bitvavo_inventory",
+                "entry_count": len(exposures),
+                "journal_candidate_count": len(candidates),
+            }
+        )
+        return result
+
     def refresh_fund_nav(self) -> float:
         """Refresh the risk NAV; live mode requires a fresh exchange-backed snapshot."""
         mode = os.getenv("EXECUTION_MODE", "paper").strip().lower()
