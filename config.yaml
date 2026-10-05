@@ -205,11 +205,13 @@ execution_v2:
   # Preserve maker queue position unless quality or fill probability has
   # materially degraded. Broad-market routing may fluctuate from tick to tick.
   stale_after_seconds: 180
-  buy_stale_after_seconds: 180
+  buy_stale_after_seconds: 300
   buy_max_order_age_seconds: 900
-  buy_refresh_tolerance_bps: 10.0
-  opportunity_switch_score_delta: 5.0
-  opportunity_switch_confirm_seconds: 120
+  buy_refresh_tolerance_bps: 15.0
+  opportunity_switch_score_delta: 6.0
+  opportunity_switch_confirm_seconds: 180
+  post_cancel_entry_cooldown_seconds: 90
+  market_switch_cancel_cooldown_seconds: 30
   # Risk-reducing exits behave like hanging orders: keep them live while their
   # price remains competitive and profitable.
   sell_stale_after_seconds: 600
