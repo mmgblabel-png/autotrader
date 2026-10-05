@@ -2,6 +2,7 @@ from autotrader.api.server import (
     _dashboard_snapshot_section,
     _execution_v2_cancel_decision,
     _execution_v2_retry_seconds,
+    _inventory_reconciliation_kind,
     _apply_strategy_evidence_gate,
     _readiness_log_worthy,
     _router_status_log_worthy,
@@ -10,6 +11,40 @@ from autotrader.api.server import (
 )
 from autotrader.connectors.bitvavo import BitvavoError
 from autotrader.core.profit_optimization import ExecutionV2Advisor
+
+
+def test_inventory_reconciliation_classifies_only_severe_unsellable_dust():
+    assert _inventory_reconciliation_kind(
+        exchange_total=0.0,
+        journal_quantity=52.2,
+        min_order_base=21.7,
+        min_order_quote=5.0,
+        price=0.23,
+    ) == "zero"
+    assert _inventory_reconciliation_kind(
+        exchange_total=0.03344753,
+        journal_quantity=52.20282410,
+        min_order_base=21.7,
+        min_order_quote=5.0,
+        price=0.23,
+    ) == "dust"
+    # A meaningful residual inventory is not erased merely because it is
+    # below the exchange minimum.
+    assert _inventory_reconciliation_kind(
+        exchange_total=10.0,
+        journal_quantity=52.2,
+        min_order_base=21.7,
+        min_order_quote=5.0,
+        price=0.23,
+    ) is None
+    # Small balance drift is preserved when it remains sellable.
+    assert _inventory_reconciliation_kind(
+        exchange_total=4.0,
+        journal_quantity=100.0,
+        min_order_base=1.0,
+        min_order_quote=0.0,
+        price=1.0,
+    ) is None
 
 
 def test_execution_v2_uses_long_backoff_for_signature_errors():
