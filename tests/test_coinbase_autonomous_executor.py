@@ -1,3 +1,4 @@
+import json
 import os
 from decimal import Decimal
 
@@ -307,3 +308,33 @@ def test_revoked_seed_permission_blocks_legacy_seed_retry(tmp_path, monkeypatch)
     assert fake.created == []
     assert executor.state.submission_intent is not None
     assert executor.state.submission_intent.retry_count == 0
+
+
+def test_persistent_state_is_scoped_to_coinbase_portfolio(tmp_path):
+    state_path = tmp_path / "coinbase.json"
+    state_path.write_text(
+        json.dumps({
+            "venue": "coinbase_advanced",
+            "instrument_scope": "spot_only",
+            "state": {
+                "managed_cash_eur": 9.0,
+                "live_orders_sent": 2,
+                "settled_trades": 1,
+            },
+        }),
+        encoding="utf-8",
+    )
+    executor = CoinbaseAutonomousExecutor(
+        CoinbaseAutonomousConfig(
+            state_path=str(state_path),
+            portfolio_id="isolated-agent-portfolio",
+            require_shadow_promotion=False,
+            require_isolated_portfolio=True,
+        ),
+        client=FakeCoinbase(),
+    )
+    assert executor.state.managed_cash_eur == 0.0
+    assert executor.state.live_orders_sent == 0
+    assert executor.state.settled_trades == 0
+    assert executor.state.last_error == "state_portfolio_mismatch"
+    assert executor.state.last_action["action"] == "STATE_RESET"
