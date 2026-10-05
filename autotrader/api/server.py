@@ -1930,31 +1930,18 @@ async def _lifespan(app: FastAPI):
 
     if os.getenv("COINBASE_API_KEY", "").strip() and os.getenv("COINBASE_API_SECRET", "").strip():
         try:
-            cb_probe = CoinbaseAdvancedMarketData().authenticated_accounts_probe()
+            cb_executor = app.state.coinbase_autonomous_executor
+            cb_probe = cb_executor.client.authenticated_accounts_probe(
+                cb_executor.config.portfolio_id or None
+            )
             log.info(
-                "Coinbase startup auth probe: authenticated=%s status=%s format_compatible=%s error_category=%s",
+                "Coinbase startup auth probe: authenticated=%s status=%s format_compatible=%s isolated_portfolio=%s error_category=%s",
                 cb_probe.get("authenticated"),
                 cb_probe.get("status"),
                 cb_probe.get("format_compatible"),
+                bool(cb_executor.config.portfolio_id),
                 cb_probe.get("error_category"),
             )
-            if bool(cb_probe.get("authenticated")):
-                try:
-                    cb_preview = CoinbaseAdvancedMarketData().preview_spot_market_order(
-                        product_id="BTC-EUR",
-                        side="SELL",
-                        base_size="0.00002",
-                    )
-                    log.info(
-                        "Coinbase startup trade preview: passed=True commission=%s estimated_price=%s order_sent=False",
-                        cb_preview.get("commission_total"),
-                        cb_preview.get("est_average_filled_price"),
-                    )
-                except Exception as cb_trade_exc:
-                    log.warning(
-                        "Coinbase startup trade preview: passed=False reason=%s order_sent=False",
-                        getattr(cb_trade_exc, "category", type(cb_trade_exc).__name__),
-                    )
         except Exception as cb_exc:
             log.warning("Coinbase startup auth probe failed: %s", type(cb_exc).__name__)
     if app.state.live_mode:
@@ -3895,15 +3882,30 @@ def deactivate_coinbase_live(_: None = Depends(_require_control_token)):
 
 @app.get("/api/security/coinbase", tags=["security"])
 def coinbase_security_status() -> dict[str, object]:
-    """Verify Coinbase Advanced credentials with a read-only accounts request."""
-    return CoinbaseAdvancedMarketData().authenticated_accounts_probe()
+    """Verify credentials against the same isolated portfolio used for execution."""
+    executor = app.state.coinbase_autonomous_executor
+    report = executor.client.authenticated_accounts_probe(
+        executor.config.portfolio_id or None
+    )
+    return {
+        **report,
+        "portfolio_isolated": bool(executor.config.portfolio_id),
+    }
 
 
 @app.get("/api/coinbase/live-state", tags=["coinbase"])
 def coinbase_live_state() -> dict[str, object]:
-    """Return privacy-safe Coinbase Advanced account balances for the dashboard."""
+    """Return privacy-safe balances for the configured Coinbase execution portfolio."""
+    executor = app.state.coinbase_autonomous_executor
     try:
-        return CoinbaseAdvancedMarketData().account_balances()
+        payload = dict(executor.client.account_balances(executor.config.portfolio_id or None))
+        payload.pop("portfolio_id", None)
+        payload["portfolio_isolated"] = bool(executor.config.portfolio_id)
+        payload["execution_scope"] = {
+            "instrument_scope": "spot_only",
+            "product_id": executor.config.product_id,
+        }
+        return payload
     except CoinbaseAuthenticationError as exc:
         raise HTTPException(
             status_code=exc.status or 503,
