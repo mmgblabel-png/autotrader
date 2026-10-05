@@ -105,4 +105,33 @@ def test_promotion_gate_is_not_automatic(tmp_path):
     status = CoinbaseZScoreShadowEngine(cfg, market_data=FakeCoinbase()).status()
     assert status["promotion_ready"] is False
     assert status["promotion_policy"]["automatic_live_promotion"] is False
-    assert status["promotion_policy"]["min_settled_trades"] == 300
+    assert status["promotion_policy"]["min_settled_trades"] == 50\n    assert status["promotion_policy"]["min_winrate_pct"] == 52.0\n    assert status["promotion_policy"]["min_net_pnl_eur"] == 0.10
+
+
+def test_fast_canary_gate_keeps_quality_requirements(tmp_path):
+    cfg = CoinbaseZScoreConfig(
+        state_path=str(tmp_path / "state.json"),
+        status_path=str(tmp_path / "status.json"),
+        promotion_min_settled_trades=50,
+        promotion_min_winrate_pct=52.0,
+        promotion_min_net_pnl_eur=0.10,
+        promotion_min_profit_factor=1.25,
+        promotion_max_drawdown_pct=5.0,
+    )
+    engine = CoinbaseZScoreShadowEngine(cfg, market_data=FakeCoinbase())
+    engine.state.settled_trades = 50
+    engine.state.wins = 25
+    engine.state.losses = 25
+    engine.state.gross_profit_eur = 2.0
+    engine.state.gross_loss_eur = 1.0
+    engine.state.realized_pnl_eur = 0.50
+    engine.state.peak_equity_eur = 80.50
+    engine.state.max_drawdown_eur = 2.0
+    assert engine.status()["promotion_ready"] is False
+
+    engine.state.wins = 27
+    engine.state.losses = 23
+    assert engine.status()["promotion_ready"] is True
+
+    engine.state.realized_pnl_eur = 0.05
+    assert engine.status()["promotion_ready"] is False
