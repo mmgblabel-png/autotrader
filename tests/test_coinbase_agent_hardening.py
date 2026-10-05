@@ -77,8 +77,9 @@ def test_portfolio_scope_reaches_balance_preview_and_order(tmp_path, monkeypatch
     fake = HardeningFakeCoinbase()
     executor = CoinbaseAutonomousExecutor(CoinbaseAutonomousConfig(state_path=str(tmp_path / "state.json"), require_shadow_promotion=False, portfolio_id="agent-portfolio", allow_existing_btc_seed=True, max_order_eur=2.0), client=fake)
     status = executor.tick(armed=True, shadow_status={"promotion_ready": True, "last_signal": {"decisions": []}})
-    assert status["portfolio_id"] == "agent-portfolio"
+    assert status["portfolio_id_configured"] is True
     assert status["portfolio_isolated"] is True
+    assert "agent-portfolio" not in str(status)
     assert fake.last_portfolio_id == "agent-portfolio"
     assert fake.created[0]["portfolio_id"] == "agent-portfolio"
 
