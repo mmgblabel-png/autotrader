@@ -308,8 +308,8 @@ class CoinbaseAutonomousExecutor:
             return size, price, fees
         return None
 
-    def _recover_submission_intent(self, now: float) -> None:
-        """Resolve an uncertain submit before any new order is allowed."""
+    def _recover_submission_intent(self, now: float, *, allow_retry: bool) -> None:
+        """Resolve an uncertain submit without creating a new order while disarmed."""
         intent = self.state.submission_intent
         if intent is None:
             return
@@ -343,6 +343,19 @@ class CoinbaseAutonomousExecutor:
                 return
         age = max(0.0, now - float(intent.created_at))
         if age < 30.0 or intent.retry_count >= 1:
+            return
+        # Reconciliation may always discover an already accepted exchange order,
+        # but an actual retry is forbidden unless this runtime is still armed.
+        # A legacy seed intent is also never retried after seed permission is revoked.
+        if not allow_retry or (intent.purpose == "seed" and not self.config.allow_existing_btc_seed):
+            self.state.last_action = {
+                "at": now,
+                "action": "SUBMISSION_RETRY_BLOCKED",
+                "client_order_id": intent.client_order_id,
+                "purpose": intent.purpose,
+                "reason": "disarmed_or_policy_changed",
+            }
+            self._save()
             return
         # One retry uses the exact same client_order_id. Coinbase documents
         # client_order_id as the duplicate-order safeguard; never generate a
@@ -573,7 +586,7 @@ class CoinbaseAutonomousExecutor:
         shadow = shadow_status or {}
         try:
             had_uncertain_submission = self.state.submission_intent is not None
-            self._recover_submission_intent(ts)
+            self._recover_submission_intent(ts, allow_retry=bool(armed))
             self._refresh_pending(ts)
             ready = self.readiness(armed=armed, shadow_status=shadow)
             bid = float(ready["best_bid"])
