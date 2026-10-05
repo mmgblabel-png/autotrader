@@ -243,3 +243,68 @@ def test_default_policy_requires_isolated_coinbase_portfolio(tmp_path, monkeypat
     ready = executor.readiness(armed=True, shadow_status={"promotion_ready": True})
     assert ready["gates"]["isolated_portfolio_configured"] is False
     assert ready["ready_for_new_entry"] is False
+
+
+def test_live_submission_is_persisted_in_audit_trail(tmp_path, monkeypatch):
+    _set_live_env(monkeypatch)
+    fake = FakeCoinbase()
+    fake.eur = 20.0
+    fake.btc = 0.00005
+    state_path = tmp_path / "coinbase.json"
+    cfg = CoinbaseAutonomousConfig(
+        state_path=str(state_path),
+        require_shadow_promotion=False,
+        require_isolated_portfolio=False,
+        max_order_eur=3.0,
+    )
+    executor = CoinbaseAutonomousExecutor(cfg, client=fake)
+    executor.state.managed_cash_eur = 3.0
+    status = executor.tick(
+        armed=True,
+        shadow_status={
+            "promotion_ready": True,
+            "last_signal": {
+                "decisions": [{
+                    "decision": "LONG",
+                    "window_key": "BTC-EUR:300:audit",
+                    "duration_seconds": 300,
+                    "seconds_remaining": 120,
+                }]
+            },
+        },
+    )
+    assert status["live_orders_sent"] == 1
+    assert status["audited_submissions"] == 1
+    assert status["unattributed_legacy_live_orders"] == 0
+    row = status["order_audit"][-1]
+    assert row["action"] == "ENTRY_SUBMITTED"
+    assert row["product_id"] == "BTC-EUR"
+    assert row["side"] == "BUY"
+    assert row["order_id"] == "order-1"
+    assert row["client_order_id"]
+
+    restored = CoinbaseAutonomousExecutor(cfg, client=fake)
+    restored_status = restored.status()
+    assert restored_status["live_orders_sent"] == 1
+    assert restored_status["audited_submissions"] == 1
+    assert restored_status["order_audit"][-1]["order_id"] == "order-1"
+
+
+def test_legacy_live_order_counter_is_flagged_when_audit_is_missing(tmp_path, monkeypatch):
+    _set_live_env(monkeypatch)
+    fake = FakeCoinbase()
+    state_path = tmp_path / "coinbase.json"
+    state_path.write_text(
+        '{"state":{"live_orders_sent":2,"seen_windows":[]}}',
+        encoding="utf-8",
+    )
+    cfg = CoinbaseAutonomousConfig(
+        state_path=str(state_path),
+        require_shadow_promotion=False,
+        require_isolated_portfolio=False,
+    )
+    executor = CoinbaseAutonomousExecutor(cfg, client=fake)
+    status = executor.status()
+    assert status["live_orders_sent"] == 2
+    assert status["audited_submissions"] == 0
+    assert status["unattributed_legacy_live_orders"] == 2

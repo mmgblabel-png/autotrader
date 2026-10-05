@@ -1681,6 +1681,18 @@ async def _coinbase_zscore_shadow_loop(app: FastAPI) -> None:
 
 async def _coinbase_autonomous_loop(app: FastAPI) -> None:
     """Run the bounded Coinbase SPOT canary behind the existing operator arm."""
+    # Research/staging runtimes intentionally do not receive Coinbase private
+    # credentials. Do not hammer the authenticated API or spam warnings there.
+    if not (
+        os.getenv("COINBASE_API_KEY", "").strip()
+        and os.getenv("COINBASE_API_SECRET", "").strip()
+    ):
+        app.state.coinbase_autonomous_error = "credentials_missing"
+        log.info(
+            "Coinbase autonomous execution inactive on this runtime: credentials_missing "
+            "(public Coinbase market discovery may remain active)"
+        )
+        return
     first_log = True
     while True:
         try:
@@ -3668,7 +3680,11 @@ def coinbase_live_readiness() -> dict[str, object]:
     """Read-only Coinbase execution readiness; never places an order."""
     executor = app.state.coinbase_autonomous_executor
     shadow = app.state.coinbase_zscore_shadow.status()
+    actual_armed = bool(getattr(app.state, "coinbase_live_armed", False))
+    # Prospective readiness answers "can I arm?" while current readiness answers
+    # "can an order be submitted right now?". Keep both explicit in the API.
     probe = executor.readiness(armed=True, shadow_status=shadow)
+    current_probe = executor.readiness(armed=actual_armed, shadow_status=shadow)
     failed = set(probe.get("failed_gates") or [])
     try:
         # Preview only: proves the Railway CDP key can reach the trading API.
@@ -3691,7 +3707,11 @@ def coinbase_live_readiness() -> dict[str, object]:
         failed.add("trade_permission_preview")
     return {
         **probe,
-        "coinbase_armed": bool(getattr(app.state, "coinbase_live_armed", False)),
+        "coinbase_armed": actual_armed,
+        "execution_ready_now": bool(current_probe.get("ready_for_new_entry")),
+        "execution_failed_gates": list(current_probe.get("failed_gates") or []),
+        "live_execution_scope": [executor.config.product_id],
+        "market_universe_is_discovery_only": True,
         "trade_permission_preview": trade_preview,
         "ready_to_arm": failed.issubset({"shadow_promotion_ready"}),
         "new_entries_evidence_gated": "shadow_promotion_ready" in failed,
