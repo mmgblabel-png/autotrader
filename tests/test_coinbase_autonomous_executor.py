@@ -5,6 +5,7 @@ from autotrader.connectors.coinbase_advanced import CoinbaseTopOfBook
 from autotrader.core.coinbase_autonomous_executor import (
     CoinbaseAutonomousConfig,
     CoinbaseAutonomousExecutor,
+    SubmissionIntent,
 )
 
 
@@ -100,6 +101,12 @@ class FakeCoinbase:
 
     def get_order(self, order_id):
         return dict(self.orders[order_id])
+
+    def find_order_by_client_id(self, client_order_id, *, product_id=None, portfolio_id=None):
+        for row in self.created:
+            if row["client_order_id"] == client_order_id:
+                return {"order_id": row["order_id"], **row}
+        return None
 
 
 def _set_live_env(monkeypatch):
@@ -245,3 +252,58 @@ def test_default_policy_requires_isolated_coinbase_portfolio(tmp_path, monkeypat
     ready = executor.readiness(armed=True, shadow_status={"promotion_ready": True})
     assert ready["gates"]["isolated_portfolio_configured"] is False
     assert ready["ready_for_new_entry"] is False
+
+
+def test_disarmed_uncertain_submission_never_retries(tmp_path, monkeypatch):
+    _set_live_env(monkeypatch)
+    fake = FakeCoinbase()
+    fake.eur = 20.0
+    cfg = CoinbaseAutonomousConfig(
+        state_path=str(tmp_path / "coinbase.json"),
+        require_shadow_promotion=False,
+        require_isolated_portfolio=False,
+    )
+    executor = CoinbaseAutonomousExecutor(cfg, client=fake)
+    executor.state.submission_intent = SubmissionIntent(
+        client_order_id="atcb-uncertain",
+        side="BUY",
+        purpose="entry",
+        created_at=1.0,
+        quote_size="3.00",
+    )
+    status = executor.tick(
+        armed=False,
+        shadow_status={"promotion_ready": True, "last_signal": {"decisions": []}},
+        now=60.0,
+    )
+    assert fake.created == []
+    assert executor.state.submission_intent is not None
+    assert executor.state.submission_intent.retry_count == 0
+    assert status["last_action"]["action"] == "SUBMISSION_RETRY_BLOCKED"
+
+
+def test_revoked_seed_permission_blocks_legacy_seed_retry(tmp_path, monkeypatch):
+    _set_live_env(monkeypatch)
+    fake = FakeCoinbase()
+    cfg = CoinbaseAutonomousConfig(
+        state_path=str(tmp_path / "coinbase.json"),
+        require_shadow_promotion=False,
+        require_isolated_portfolio=False,
+        allow_existing_btc_seed=False,
+    )
+    executor = CoinbaseAutonomousExecutor(cfg, client=fake)
+    executor.state.submission_intent = SubmissionIntent(
+        client_order_id="atcb-legacy-seed",
+        side="SELL",
+        purpose="seed",
+        created_at=1.0,
+        base_size="0.00005",
+    )
+    executor.tick(
+        armed=True,
+        shadow_status={"promotion_ready": True, "last_signal": {"decisions": []}},
+        now=60.0,
+    )
+    assert fake.created == []
+    assert executor.state.submission_intent is not None
+    assert executor.state.submission_intent.retry_count == 0
