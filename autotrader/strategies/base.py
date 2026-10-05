@@ -225,6 +225,11 @@ class BaseStrategy(ABC):
             "_dust_base_inventory": 0.0,
             "_dust_inventory_eur": 0.0,
             "_dust_inventory_ignored": False,
+            "_protection_entry_price": 0.0,
+            "_protection_peak_price": 0.0,
+            "_protection_partial_taken": False,
+            "_protection_pending_action": "",
+            "_protective_exit_requested": False,
             "_live_balance_snapshot_ready": False,
             "_exchange_open_orders_snapshot_ready": False,
         }.items():
