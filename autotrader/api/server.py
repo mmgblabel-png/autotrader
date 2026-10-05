@@ -735,6 +735,23 @@ def _manage_stale_bot_orders(app: FastAPI, agent: AutoTrader) -> dict[str, objec
             local = agent._om.get(client_order_id)
             if local is not None:
                 agent._om.update(client_order_id, OrderStatus.CANCELLED)
+            entry_cooldown_seconds = 0.0
+            if side == "buy" and strategy is not None:
+                cooldown_key = (
+                    "market_switch_cancel_cooldown_seconds"
+                    if cancel_reason == "buy_better_market_confirmed"
+                    else "post_cancel_entry_cooldown_seconds"
+                )
+                entry_cooldown_seconds = max(
+                    0.0,
+                    float(advisor.config.get(cooldown_key, 90.0)),
+                )
+                if entry_cooldown_seconds > 0:
+                    strategy._config["_execution_cancel_cooldown_until"] = max(
+                        float(strategy._config.get("_execution_cancel_cooldown_until", 0.0) or 0.0),
+                        now + entry_cooldown_seconds,
+                    )
+                    strategy._config["_execution_cancel_reason"] = cancel_reason
             canceled.append({
                 "strategy": strategy_name,
                 "market": market,
@@ -745,6 +762,7 @@ def _manage_stale_bot_orders(app: FastAPI, agent: AutoTrader) -> dict[str, objec
                 "score_improvement": decision.get("score_improvement"),
                 "desired_market": decision.get("desired_market"),
                 "desired_stable_seconds": decision.get("desired_stable_seconds"),
+                "entry_cooldown_seconds": round(entry_cooldown_seconds, 1),
             })
             log.info(
                 "Execution v2 canceled degraded bot order: strategy=%s market=%s side=%s age=%.1fs reason=%s lag_bps=%s score_delta=%s desired=%s stable=%.1fs",
