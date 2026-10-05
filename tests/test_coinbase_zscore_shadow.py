@@ -105,7 +105,9 @@ def test_promotion_gate_is_not_automatic(tmp_path):
     status = CoinbaseZScoreShadowEngine(cfg, market_data=FakeCoinbase()).status()
     assert status["promotion_ready"] is False
     assert status["promotion_policy"]["automatic_live_promotion"] is False
-    assert status["promotion_policy"]["min_settled_trades"] == 50\n    assert status["promotion_policy"]["min_winrate_pct"] == 52.0\n    assert status["promotion_policy"]["min_net_pnl_eur"] == 0.10
+    assert status["promotion_policy"]["min_settled_trades"] == 50
+    assert status["promotion_policy"]["min_winrate_pct"] == 52.0
+    assert status["promotion_policy"]["min_net_pnl_eur"] == 0.10
 
 
 def test_fast_canary_gate_keeps_quality_requirements(tmp_path):
