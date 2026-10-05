@@ -123,3 +123,51 @@ def test_account_balance_query_can_be_portfolio_scoped(monkeypatch):
     assert observed["params"]["retail_portfolio_id"] == "portfolio-1"
     assert result["portfolio_scoped"] is True
     assert result["portfolio_id"] == "portfolio-1"
+
+
+def test_isolated_eur_cash_bootstraps_managed_sleeve(tmp_path, monkeypatch):
+    _live(monkeypatch)
+    fake = HardeningFakeCoinbase()
+    fake.eur = 6.0
+    fake.btc = 0.0
+    executor = CoinbaseAutonomousExecutor(
+        CoinbaseAutonomousConfig(
+            state_path=str(tmp_path / "state.json"),
+            portfolio_id="agent-portfolio",
+            require_shadow_promotion=False,
+            allow_existing_btc_seed=False,
+            managed_capital_pct=20.0,
+            cash_reserve_pct=20.0,
+        ),
+        client=fake,
+    )
+    status = executor.tick(
+        armed=False,
+        shadow_status={"promotion_ready": True, "last_signal": {"decisions": []}},
+    )
+    assert status["managed_cash_eur"] == pytest.approx(1.2)
+    assert status["last_action"]["action"] == "ISOLATED_CASH_BOOTSTRAP"
+    assert fake.created == []
+
+
+def test_seed_sell_respects_preview_fee_gate(tmp_path, monkeypatch):
+    _live(monkeypatch)
+    fake = HardeningFakeCoinbase()
+    executor = CoinbaseAutonomousExecutor(
+        CoinbaseAutonomousConfig(
+            state_path=str(tmp_path / "state.json"),
+            require_shadow_promotion=False,
+            require_isolated_portfolio=False,
+            allow_existing_btc_seed=True,
+            max_order_eur=2.0,
+            max_preview_fee_bps=40.0,
+        ),
+        client=fake,
+    )
+    status = executor.tick(
+        armed=True,
+        shadow_status={"promotion_ready": True, "last_signal": {"decisions": []}},
+    )
+    assert fake.created == []
+    assert status["last_action"]["action"] == "HOLD"
+    assert status["last_action"]["reason"] == "preview_fee_too_high"
