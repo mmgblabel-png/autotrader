@@ -170,14 +170,20 @@ class GridRunner(BaseStrategy):
                 log.info("GRID SELL %s %.8f @ %.8f", symbol, sell_size, price)
                 return
             self.mark_dust_inventory(sellable_inventory, current_price)
-            log.info(
-                "[%s] GRID inventory not currently sellable: %s sellable %.8f from bot inventory %.8f; minimum %.8f.",
-                self.name,
-                symbol,
-                sellable_inventory,
-                bot_inventory,
-                minimum_sell,
+            now = time.time()
+            last_dust_log = float(
+                cfg.get("_last_unsellable_inventory_log_at", 0.0) or 0.0
             )
+            if now - last_dust_log >= 60.0:
+                cfg["_last_unsellable_inventory_log_at"] = now
+                log.info(
+                    "[%s] GRID inventory not currently sellable: %s sellable %.8f from bot inventory %.8f; minimum %.8f.",
+                    self.name,
+                    symbol,
+                    sellable_inventory,
+                    bot_inventory,
+                    minimum_sell,
+                )
             return
         else:
             self.clear_dust_inventory()
