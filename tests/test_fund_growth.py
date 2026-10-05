@@ -29,12 +29,12 @@ def test_bootstrap_stage_caps_80_eur_live_account_conservatively():
     assert risk.pretrade_check(
         strategy="MarketMaker",
         symbol="BTC-EUR",
-        notional_eur=12.8,
+        notional_eur=16.0,
     ).accepted is True
     assert risk.pretrade_check(
         strategy="MarketMaker",
         symbol="BTC-EUR",
-        notional_eur=12.81,
+        notional_eur=16.01,
     ).accepted is False
 
 
