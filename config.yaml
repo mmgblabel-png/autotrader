@@ -563,9 +563,9 @@ coinbase_zscore_shadow:
   min_probability_long: 0.62
   max_entry_reference_z: 2.0
   max_forecast_z: 2.0
-  # Conservative placeholder until the authenticated Coinbase fee tier is
-  # verified. Spread is separately modeled by ask entry / bid exit.
-  fee_bps_each_leg: 60
+  # Conservative planning floor; live execution still uses authenticated
+  # preview gating before every order. Spread is modeled by ask entry / bid exit.
+  fee_bps_each_leg: 25
   slippage_bps_each_leg: 5
   safety_margin_bps: 10
   min_after_cost_edge_bps: 15
@@ -576,9 +576,13 @@ coinbase_zscore_shadow:
   max_notional_eur: 5
   state_path: /data/coinbase_zscore_shadow.json
   status_path: /data/coinbase_zscore_status.json
-  promotion_min_settled_trades: 300
-  promotion_min_profit_factor: 1.20
-  promotion_max_drawdown_pct: 8.0
+  # Fast-safe canary evidence: fewer forward samples than the old 300-trade
+  # gate, offset by stricter quality and drawdown requirements.
+  promotion_min_settled_trades: 50
+  promotion_min_winrate_pct: 52.0
+  promotion_min_net_pnl_eur: 0.10
+  promotion_min_profit_factor: 1.25
+  promotion_max_drawdown_pct: 5.0
 
 
 coinbase_autonomous_execution:

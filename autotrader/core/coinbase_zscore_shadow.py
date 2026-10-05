@@ -56,9 +56,11 @@ class CoinbaseZScoreConfig:
     max_total_shadow_exposure_pct: float = 20.0
     min_notional_eur: float = 1.0
     max_notional_eur: float = 5.0
-    promotion_min_settled_trades: int = 300
-    promotion_min_profit_factor: float = 1.20
-    promotion_max_drawdown_pct: float = 8.0
+    promotion_min_settled_trades: int = 50
+    promotion_min_winrate_pct: float = 52.0
+    promotion_min_net_pnl_eur: float = 0.10
+    promotion_min_profit_factor: float = 1.25
+    promotion_max_drawdown_pct: float = 5.0
     state_path: str = "/data/coinbase_zscore_shadow.json"
     status_path: str = "/data/coinbase_zscore_status.json"
 
@@ -93,9 +95,11 @@ class CoinbaseZScoreConfig:
             max_total_shadow_exposure_pct=min(20.0, max(1.0, float(cfg.get("max_total_shadow_exposure_pct", 20.0)))),
             min_notional_eur=max(0.50, float(cfg.get("min_notional_eur", 1.0))),
             max_notional_eur=max(1.0, float(cfg.get("max_notional_eur", 5.0))),
-            promotion_min_settled_trades=max(50, int(cfg.get("promotion_min_settled_trades", 300))),
-            promotion_min_profit_factor=max(1.0, float(cfg.get("promotion_min_profit_factor", 1.20))),
-            promotion_max_drawdown_pct=max(0.1, float(cfg.get("promotion_max_drawdown_pct", 8.0))),
+            promotion_min_settled_trades=max(50, int(cfg.get("promotion_min_settled_trades", 50))),
+            promotion_min_winrate_pct=min(100.0, max(0.0, float(cfg.get("promotion_min_winrate_pct", 52.0)))),
+            promotion_min_net_pnl_eur=max(0.0, float(cfg.get("promotion_min_net_pnl_eur", 0.10))),
+            promotion_min_profit_factor=max(1.0, float(cfg.get("promotion_min_profit_factor", 1.25))),
+            promotion_max_drawdown_pct=max(0.1, float(cfg.get("promotion_max_drawdown_pct", 5.0))),
             state_path=str(cfg.get("state_path", "/data/coinbase_zscore_shadow.json")),
             status_path=str(cfg.get("status_path", "/data/coinbase_zscore_status.json")),
         )
@@ -510,9 +514,11 @@ class CoinbaseZScoreShadowEngine:
         drawdown_pct = (
             self.state.max_drawdown_eur / max(self.state.peak_equity_eur, 1e-9) * 100.0
         )
+        winrate_pct = self.state.wins / trades * 100.0 if trades else 0.0
         promotion_ready = bool(
             trades >= self.config.promotion_min_settled_trades
-            and self.state.realized_pnl_eur > 0
+            and winrate_pct >= self.config.promotion_min_winrate_pct
+            and self.state.realized_pnl_eur >= self.config.promotion_min_net_pnl_eur
             and profit_factor >= self.config.promotion_min_profit_factor
             and drawdown_pct <= self.config.promotion_max_drawdown_pct
         )
@@ -530,7 +536,7 @@ class CoinbaseZScoreShadowEngine:
             "settled_trades": trades,
             "wins": int(self.state.wins),
             "losses": int(self.state.losses),
-            "winrate_pct": round(self.state.wins / trades * 100.0, 4) if trades else 0.0,
+            "winrate_pct": round(winrate_pct, 4),
             "profit_factor": None if profit_factor == float("inf") else round(profit_factor, 6),
             "max_drawdown_pct": round(drawdown_pct, 6),
             "open_notional_eur": round(self.open_notional_eur, 8),
@@ -544,6 +550,8 @@ class CoinbaseZScoreShadowEngine:
             "promotion_ready": promotion_ready,
             "promotion_policy": {
                 "min_settled_trades": self.config.promotion_min_settled_trades,
+                "min_winrate_pct": self.config.promotion_min_winrate_pct,
+                "min_net_pnl_eur": self.config.promotion_min_net_pnl_eur,
                 "positive_realized_pnl_required": True,
                 "min_profit_factor": self.config.promotion_min_profit_factor,
                 "max_drawdown_pct": self.config.promotion_max_drawdown_pct,
