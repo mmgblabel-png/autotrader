@@ -202,6 +202,11 @@ class CoinbaseAutonomousExecutor:
                 setattr(self.state, key, raw[key])
         self.state.seen_windows = [str(x) for x in (self.state.seen_windows or [])][-5000:]
 
+    @staticmethod
+    def _new_client_order_id() -> str:
+        """Return an auditable Coinbase client order id owned by AutoTrader."""
+        return f"atcb-{uuid.uuid4().hex}"
+
     def _save(self) -> None:
         self._atomic_json(
             self.config.state_path,
@@ -435,7 +440,7 @@ class CoinbaseAutonomousExecutor:
         fee_bps, slip_bps = self._preview_costs(preview, reference_bid, notional)
         # Exits and reserve-building sells are risk-reducing, so preview costs
         # are recorded but do not prevent liquidation when a hard risk gate fires.
-        client_id = str(uuid.uuid4())
+        client_id = self._new_client_order_id()
         self.state.submission_intent = SubmissionIntent(
             client_order_id=client_id,
             side="SELL",
@@ -489,7 +494,7 @@ class CoinbaseAutonomousExecutor:
             return {"at": now, "action": "HOLD", "reason": "preview_fee_too_high", "fee_bps": fee_bps}
         if slip_bps > self.config.max_preview_slippage_bps:
             return {"at": now, "action": "HOLD", "reason": "preview_slippage_too_high", "slippage_bps": slip_bps}
-        client_id = str(uuid.uuid4())
+        client_id = self._new_client_order_id()
         window_key = str(decision.get("window_key") or "")
         remaining = max(0.0, float(decision.get("seconds_remaining") or 0.0))
         self.state.submission_intent = SubmissionIntent(
