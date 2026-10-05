@@ -164,7 +164,11 @@ class StrategyAllocator:
 
         allocation = self.global_budget_eur * base.allocation_eur / total_base
         nav = self._verified_nav_eur or self._initial_live_capital_eur
-        scale = max(Decimal("0"), nav / self._initial_live_capital_eur)
+        # FundRiskEngine already applies the hard NAV-relative position cap.
+        # Avoid shrinking the per-order cap a second time when live NAV is
+        # below the configured seed capital; that can push otherwise legal
+        # small-account orders below the venue minimum.
+        scale = max(Decimal("1"), nav / self._initial_live_capital_eur)
         dynamic_max_order = min(allocation, max(Decimal("0"), base.max_order_eur * scale))
         return StrategyAllocation(
             allocation_eur=allocation,
