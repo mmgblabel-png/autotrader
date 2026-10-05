@@ -1813,7 +1813,28 @@ async def _lifespan(app: FastAPI):
     )
     app.state.coinbase_live_armed = False
     coinbase_auto_cfg = agent._config.get("coinbase_autonomous_execution", {}) or {}
-    app.state.coinbase_autonomous_enabled = bool(coinbase_auto_cfg.get("enabled", False))
+    app.state.coinbase_autonomous_config_enabled = bool(coinbase_auto_cfg.get("enabled", False))
+    app.state.coinbase_autonomous_credentials_configured = bool(
+        os.getenv("COINBASE_API_KEY", "").strip()
+        and os.getenv("COINBASE_API_SECRET", "").strip()
+    )
+    app.state.coinbase_autonomous_enabled = bool(
+        app.state.coinbase_autonomous_config_enabled
+        and app.state.coinbase_autonomous_credentials_configured
+    )
+    app.state.coinbase_autonomous_disabled_reason = (
+        None
+        if app.state.coinbase_autonomous_enabled
+        else (
+            "credentials_missing"
+            if app.state.coinbase_autonomous_config_enabled
+            else "config_disabled"
+        )
+    )
+    if app.state.coinbase_autonomous_config_enabled and not app.state.coinbase_autonomous_credentials_configured:
+        log.info(
+            "Coinbase autonomous executor disabled for this runtime: credentials are not configured."
+        )
     app.state.coinbase_autonomous_executor = CoinbaseAutonomousExecutor(coinbase_auto_cfg)
     try:
         app.state.coinbase_autonomous_interval_seconds = max(
@@ -3645,21 +3666,81 @@ def coinbase_autonomous_status() -> dict[str, object]:
             "mode": "autonomous_spot_canary",
             "reason": "executor_not_initialized",
         }
-    try:
-        readiness = executor.readiness(
-            armed=bool(getattr(app.state, "coinbase_live_armed", False)),
-            shadow_status=app.state.coinbase_zscore_shadow.status(),
-        )
-    except Exception as exc:
+    runtime_enabled = bool(getattr(app.state, "coinbase_autonomous_enabled", False))
+    if runtime_enabled:
+        try:
+            readiness = executor.readiness(
+                armed=bool(getattr(app.state, "coinbase_live_armed", False)),
+                shadow_status=app.state.coinbase_zscore_shadow.status(),
+            )
+        except Exception as exc:
+            readiness = {
+                "ready_for_new_entry": False,
+                "failed_gates": [getattr(exc, "category", type(exc).__name__)],
+            }
+    else:
         readiness = {
             "ready_for_new_entry": False,
-            "failed_gates": [getattr(exc, "category", type(exc).__name__)],
+            "failed_gates": [getattr(app.state, "coinbase_autonomous_disabled_reason", "runtime_disabled")],
         }
     return {
         **executor.status(readiness=readiness),
         "coinbase_armed": bool(getattr(app.state, "coinbase_live_armed", False)),
+        "runtime_enabled": runtime_enabled,
+        "runtime_disabled_reason": getattr(app.state, "coinbase_autonomous_disabled_reason", None),
+        "live_execution_scope": {
+            "venue": "coinbase_advanced",
+            "instrument_scope": "spot_only",
+            "products": [executor.config.product_id],
+            "market_count": 1,
+        },
         "arm_persistence": app.state.coinbase_live_arm_store.status(),
         "runtime_error": getattr(app.state, "coinbase_autonomous_error", None),
+    }
+
+
+@app.get("/api/coinbase/orders/audit", tags=["coinbase"])
+def coinbase_order_audit(limit: int = Query(25, ge=1, le=100)) -> dict[str, object]:
+    """Return a privacy-safe read-only audit of recent BTC-EUR Coinbase orders."""
+    executor = app.state.coinbase_autonomous_executor
+    if not bool(getattr(app.state, "coinbase_autonomous_credentials_configured", False)):
+        return {
+            "available": False,
+            "reason": "credentials_missing",
+            "product_id": executor.config.product_id,
+            "managed_client_prefix": "atcb-",
+            "orders": [],
+        }
+    rows = executor.client.list_orders(
+        product_id=executor.config.product_id,
+        portfolio_id=executor.config.portfolio_id or None,
+        limit=limit,
+    )
+    safe_orders = []
+    for row in rows:
+        client_order_id = str(row.get("client_order_id") or "")
+        safe_orders.append({
+            "order_id": row.get("order_id"),
+            "client_order_id": client_order_id,
+            "managed_by_autotrader": client_order_id.startswith("atcb-"),
+            "product_id": row.get("product_id"),
+            "side": row.get("side"),
+            "status": row.get("status"),
+            "order_type": row.get("order_type"),
+            "created_time": row.get("created_time"),
+            "filled_size": row.get("filled_size"),
+            "filled_value": row.get("filled_value"),
+            "average_filled_price": row.get("average_filled_price"),
+            "total_fees": row.get("total_fees"),
+            "settled": row.get("settled"),
+        })
+    return {
+        "available": True,
+        "product_id": executor.config.product_id,
+        "instrument_scope": "spot_only",
+        "managed_client_prefix": "atcb-",
+        "state_live_orders_sent": executor.state.live_orders_sent,
+        "orders": safe_orders,
     }
 
 
@@ -3667,6 +3748,25 @@ def coinbase_autonomous_status() -> dict[str, object]:
 def coinbase_live_readiness() -> dict[str, object]:
     """Read-only Coinbase execution readiness; never places an order."""
     executor = app.state.coinbase_autonomous_executor
+    if not bool(getattr(app.state, "coinbase_autonomous_enabled", False)):
+        reason = getattr(app.state, "coinbase_autonomous_disabled_reason", "runtime_disabled")
+        return {
+            "ready_for_new_entry": False,
+            "coinbase_armed": False,
+            "ready_to_arm": False,
+            "new_entries_evidence_gated": False,
+            "failed_gates": [reason],
+            "runtime_enabled": False,
+            "runtime_disabled_reason": reason,
+            "live_execution_scope": {
+                "venue": "coinbase_advanced",
+                "instrument_scope": "spot_only",
+                "products": [executor.config.product_id],
+                "market_count": 1,
+            },
+            "trade_permission_preview": {"passed": False, "reason": reason},
+            "arm_persistence": app.state.coinbase_live_arm_store.status(),
+        }
     shadow = app.state.coinbase_zscore_shadow.status()
     probe = executor.readiness(armed=True, shadow_status=shadow)
     failed = set(probe.get("failed_gates") or [])
@@ -3696,6 +3796,13 @@ def coinbase_live_readiness() -> dict[str, object]:
         "ready_to_arm": failed.issubset({"shadow_promotion_ready"}),
         "new_entries_evidence_gated": "shadow_promotion_ready" in failed,
         "failed_gates": sorted(failed),
+        "runtime_enabled": True,
+        "live_execution_scope": {
+            "venue": "coinbase_advanced",
+            "instrument_scope": "spot_only",
+            "products": [executor.config.product_id],
+            "market_count": 1,
+        },
         "arm_persistence": app.state.coinbase_live_arm_store.status(),
     }
 
