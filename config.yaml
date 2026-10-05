@@ -565,7 +565,10 @@ coinbase_zscore_shadow:
   max_forecast_z: 2.0
   # Conservative planning floor; live execution still uses authenticated
   # preview gating before every order. Spread is modeled by ask entry / bid exit.
-  fee_bps_each_leg: 25
+  # Coinbase account is currently on the 0.50% taker tier. Live execution
+  # uses market orders, so model a conservative 0.60% per leg to avoid
+  # promoting signals that only look profitable under maker-like fees.
+  fee_bps_each_leg: 60
   slippage_bps_each_leg: 5
   safety_margin_bps: 10
   min_after_cost_edge_bps: 15
@@ -574,8 +577,10 @@ coinbase_zscore_shadow:
   max_total_shadow_exposure_pct: 20
   min_notional_eur: 1
   max_notional_eur: 5
-  state_path: /data/coinbase_zscore_shadow.json
-  status_path: /data/coinbase_zscore_status.json
+  # Cost model v2 starts a clean evidence ledger because historical shadow
+  # P&L was calculated with a lower fee assumption and is not promotion-valid.
+  state_path: /data/coinbase_zscore_shadow_cost60_v2.json
+  status_path: /data/coinbase_zscore_status_cost60_v2.json
   # Fast-safe canary evidence: fewer forward samples than the old 300-trade
   # gate, offset by stricter quality and drawdown requirements.
   promotion_min_settled_trades: 50

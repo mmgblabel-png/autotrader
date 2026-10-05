@@ -1,3 +1,4 @@
+import json
 import os
 from decimal import Decimal
 
@@ -5,6 +6,7 @@ from autotrader.connectors.coinbase_advanced import CoinbaseTopOfBook
 from autotrader.core.coinbase_autonomous_executor import (
     CoinbaseAutonomousConfig,
     CoinbaseAutonomousExecutor,
+    SubmissionIntent,
 )
 
 
@@ -101,6 +103,12 @@ class FakeCoinbase:
     def get_order(self, order_id):
         return dict(self.orders[order_id])
 
+    def find_order_by_client_id(self, client_order_id, *, product_id=None, portfolio_id=None):
+        for row in self.created:
+            if row["client_order_id"] == client_order_id:
+                return {"order_id": row["order_id"], **row}
+        return None
+
 
 def _set_live_env(monkeypatch):
     monkeypatch.setenv("EXECUTION_MODE", "live")
@@ -143,6 +151,7 @@ def test_armed_executor_seeds_bounded_cash_from_existing_btc(tmp_path, monkeypat
     )
     assert status["live_orders_sent"] == 1
     assert fake.created[0]["side"] == "SELL"
+    assert fake.created[0]["client_order_id"].startswith("atcb-")
     assert status["pending_order"]["purpose"] == "seed"
     sold = float(fake.created[0]["base_size"]) * fake.bid
     assert sold <= (0.20 * (fake.btc * fake.bid)) + 0.02
@@ -210,6 +219,7 @@ def test_promoted_signal_can_submit_bounded_buy(tmp_path, monkeypatch):
     )
     assert status["live_orders_sent"] == 1
     assert fake.created[0]["side"] == "BUY"
+    assert fake.created[0]["client_order_id"].startswith("atcb-")
     assert float(fake.created[0]["quote_size"]) <= 3.0
     assert status["pending_order"]["purpose"] == "entry"
 
@@ -243,3 +253,88 @@ def test_default_policy_requires_isolated_coinbase_portfolio(tmp_path, monkeypat
     ready = executor.readiness(armed=True, shadow_status={"promotion_ready": True})
     assert ready["gates"]["isolated_portfolio_configured"] is False
     assert ready["ready_for_new_entry"] is False
+
+
+def test_disarmed_uncertain_submission_never_retries(tmp_path, monkeypatch):
+    _set_live_env(monkeypatch)
+    fake = FakeCoinbase()
+    fake.eur = 20.0
+    cfg = CoinbaseAutonomousConfig(
+        state_path=str(tmp_path / "coinbase.json"),
+        require_shadow_promotion=False,
+        require_isolated_portfolio=False,
+    )
+    executor = CoinbaseAutonomousExecutor(cfg, client=fake)
+    executor.state.submission_intent = SubmissionIntent(
+        client_order_id="atcb-uncertain",
+        side="BUY",
+        purpose="entry",
+        created_at=1.0,
+        quote_size="3.00",
+    )
+    status = executor.tick(
+        armed=False,
+        shadow_status={"promotion_ready": True, "last_signal": {"decisions": []}},
+        now=60.0,
+    )
+    assert fake.created == []
+    assert executor.state.submission_intent is not None
+    assert executor.state.submission_intent.retry_count == 0
+    assert status["last_action"]["action"] == "SUBMISSION_RETRY_BLOCKED"
+
+
+def test_revoked_seed_permission_blocks_legacy_seed_retry(tmp_path, monkeypatch):
+    _set_live_env(monkeypatch)
+    fake = FakeCoinbase()
+    cfg = CoinbaseAutonomousConfig(
+        state_path=str(tmp_path / "coinbase.json"),
+        require_shadow_promotion=False,
+        require_isolated_portfolio=False,
+        allow_existing_btc_seed=False,
+    )
+    executor = CoinbaseAutonomousExecutor(cfg, client=fake)
+    executor.state.submission_intent = SubmissionIntent(
+        client_order_id="atcb-legacy-seed",
+        side="SELL",
+        purpose="seed",
+        created_at=1.0,
+        base_size="0.00005",
+    )
+    executor.tick(
+        armed=True,
+        shadow_status={"promotion_ready": True, "last_signal": {"decisions": []}},
+        now=60.0,
+    )
+    assert fake.created == []
+    assert executor.state.submission_intent is not None
+    assert executor.state.submission_intent.retry_count == 0
+
+
+def test_persistent_state_is_scoped_to_coinbase_portfolio(tmp_path):
+    state_path = tmp_path / "coinbase.json"
+    state_path.write_text(
+        json.dumps({
+            "venue": "coinbase_advanced",
+            "instrument_scope": "spot_only",
+            "state": {
+                "managed_cash_eur": 9.0,
+                "live_orders_sent": 2,
+                "settled_trades": 1,
+            },
+        }),
+        encoding="utf-8",
+    )
+    executor = CoinbaseAutonomousExecutor(
+        CoinbaseAutonomousConfig(
+            state_path=str(state_path),
+            portfolio_id="isolated-agent-portfolio",
+            require_shadow_promotion=False,
+            require_isolated_portfolio=True,
+        ),
+        client=FakeCoinbase(),
+    )
+    assert executor.state.managed_cash_eur == 0.0
+    assert executor.state.live_orders_sent == 0
+    assert executor.state.settled_trades == 0
+    assert executor.state.last_error == "state_portfolio_mismatch"
+    assert executor.state.last_action["action"] == "STATE_RESET"

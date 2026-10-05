@@ -174,6 +174,19 @@ class CoinbaseAutonomousExecutor:
         raw = payload.get("state") if isinstance(payload, dict) else None
         if not isinstance(raw, dict):
             return
+        saved_portfolio_id = str(payload.get("portfolio_id") or "").strip()
+        current_portfolio_id = str(self.config.portfolio_id or "").strip()
+        if saved_portfolio_id != current_portfolio_id:
+            # Persistent execution state is portfolio-scoped. Never adopt cash,
+            # positions, pending orders or counters created in another portfolio.
+            self.state.last_error = "state_portfolio_mismatch"
+            self.state.last_action = {
+                "action": "STATE_RESET",
+                "reason": "portfolio_mismatch",
+                "saved_portfolio_configured": bool(saved_portfolio_id),
+                "current_portfolio_configured": bool(current_portfolio_id),
+            }
+            return
         position = raw.get("position")
         pending = raw.get("pending")
         submission_intent = raw.get("submission_intent")
@@ -201,6 +214,11 @@ class CoinbaseAutonomousExecutor:
             if key in raw:
                 setattr(self.state, key, raw[key])
         self.state.seen_windows = [str(x) for x in (self.state.seen_windows or [])][-5000:]
+
+    @staticmethod
+    def _new_client_order_id() -> str:
+        """Return an auditable Coinbase client order id owned by AutoTrader."""
+        return f"atcb-{uuid.uuid4().hex}"
 
     def _save(self) -> None:
         self._atomic_json(
@@ -303,8 +321,8 @@ class CoinbaseAutonomousExecutor:
             return size, price, fees
         return None
 
-    def _recover_submission_intent(self, now: float) -> None:
-        """Resolve an uncertain submit before any new order is allowed."""
+    def _recover_submission_intent(self, now: float, *, allow_retry: bool) -> None:
+        """Resolve an uncertain submit without creating a new order while disarmed."""
         intent = self.state.submission_intent
         if intent is None:
             return
@@ -338,6 +356,19 @@ class CoinbaseAutonomousExecutor:
                 return
         age = max(0.0, now - float(intent.created_at))
         if age < 30.0 or intent.retry_count >= 1:
+            return
+        # Reconciliation may always discover an already accepted exchange order,
+        # but an actual retry is forbidden unless this runtime is still armed.
+        # A legacy seed intent is also never retried after seed permission is revoked.
+        if not allow_retry or (intent.purpose == "seed" and not self.config.allow_existing_btc_seed):
+            self.state.last_action = {
+                "at": now,
+                "action": "SUBMISSION_RETRY_BLOCKED",
+                "client_order_id": intent.client_order_id,
+                "purpose": intent.purpose,
+                "reason": "disarmed_or_policy_changed",
+            }
+            self._save()
             return
         # One retry uses the exact same client_order_id. Coinbase documents
         # client_order_id as the duplicate-order safeguard; never generate a
@@ -433,9 +464,15 @@ class CoinbaseAutonomousExecutor:
         )
         notional = base_size * reference_bid
         fee_bps, slip_bps = self._preview_costs(preview, reference_bid, notional)
-        # Exits and reserve-building sells are risk-reducing, so preview costs
-        # are recorded but do not prevent liquidation when a hard risk gate fires.
-        client_id = str(uuid.uuid4())
+        # Hard exits must remain executable even when liquidity is poor. Seeding,
+        # however, is optional capital setup and must respect the same cost gates
+        # as a new entry.
+        if purpose == "seed":
+            if fee_bps > self.config.max_preview_fee_bps:
+                return {"at": now, "action": "HOLD", "reason": "preview_fee_too_high", "fee_bps": fee_bps}
+            if slip_bps > self.config.max_preview_slippage_bps:
+                return {"at": now, "action": "HOLD", "reason": "preview_slippage_too_high", "slippage_bps": slip_bps}
+        client_id = self._new_client_order_id()
         self.state.submission_intent = SubmissionIntent(
             client_order_id=client_id,
             side="SELL",
@@ -489,7 +526,7 @@ class CoinbaseAutonomousExecutor:
             return {"at": now, "action": "HOLD", "reason": "preview_fee_too_high", "fee_bps": fee_bps}
         if slip_bps > self.config.max_preview_slippage_bps:
             return {"at": now, "action": "HOLD", "reason": "preview_slippage_too_high", "slippage_bps": slip_bps}
-        client_id = str(uuid.uuid4())
+        client_id = self._new_client_order_id()
         window_key = str(decision.get("window_key") or "")
         remaining = max(0.0, float(decision.get("seconds_remaining") or 0.0))
         self.state.submission_intent = SubmissionIntent(
@@ -548,7 +585,7 @@ class CoinbaseAutonomousExecutor:
             "managed_sleeve_target_eur": round(sleeve, 8),
             "max_single_trade_eur": round(max_trade, 8),
             "managed_cash_eur": round(self.state.managed_cash_eur, 8),
-            "portfolio_id": self.config.portfolio_id or None,
+            "portfolio_id_configured": bool(self.config.portfolio_id),
             "portfolio_isolated": bool(self.config.portfolio_id),
             "isolated_portfolio_required": self.config.require_isolated_portfolio,
             "existing_btc_auto_seed_enabled": self.config.allow_existing_btc_seed,
@@ -568,13 +605,40 @@ class CoinbaseAutonomousExecutor:
         shadow = shadow_status or {}
         try:
             had_uncertain_submission = self.state.submission_intent is not None
-            self._recover_submission_intent(ts)
+            self._recover_submission_intent(ts, allow_retry=bool(armed))
             self._refresh_pending(ts)
             ready = self.readiness(armed=armed, shadow_status=shadow)
             bid = float(ready["best_bid"])
             ask = float(ready["best_ask"])
             nav = float(ready["portfolio_nav_eur"])
             balances = dict(ready["balances"])
+
+            # An isolated Coinbase portfolio is the ownership boundary. On a
+            # pristine state, adopt only the configured managed sleeve from its
+            # available EUR while preserving the mandatory cash reserve.
+            pristine_state = (
+                self.config.portfolio_id
+                and self.state.managed_cash_eur <= 1e-9
+                and self.state.position is None
+                and self.state.pending is None
+                and self.state.submission_intent is None
+                and self.state.live_orders_sent == 0
+                and self.state.settled_trades == 0
+                and abs(self.state.realized_pnl_eur) <= 1e-9
+            )
+            if pristine_state:
+                reserve_target = float(ready["required_cash_reserve_eur"])
+                sleeve_target = float(ready["managed_sleeve_target_eur"])
+                available_eur = float(balances.get("EUR") or 0.0)
+                adopted = max(0.0, min(sleeve_target, available_eur - reserve_target))
+                if adopted > 0:
+                    self.state.managed_cash_eur = adopted
+                    self.state.last_action = {
+                        "at": ts,
+                        "action": "ISOLATED_CASH_BOOTSTRAP",
+                        "managed_cash_eur": round(adopted, 8),
+                    }
+
             managed_equity = self._managed_equity(bid)
             self._roll_day(ts, managed_equity)
             self.state.peak_managed_equity_eur = max(self.state.peak_managed_equity_eur, managed_equity)
@@ -719,7 +783,7 @@ class CoinbaseAutonomousExecutor:
             "managed_position": asdict(self.state.position) if self.state.position else None,
             "pending_order": asdict(self.state.pending) if self.state.pending else None,
             "submission_intent": asdict(self.state.submission_intent) if self.state.submission_intent else None,
-            "portfolio_id": self.config.portfolio_id or None,
+            "portfolio_id_configured": bool(self.config.portfolio_id),
             "portfolio_isolated": bool(self.config.portfolio_id),
             "settled_trades": int(self.state.settled_trades),
             "realized_pnl_eur": round(self.state.realized_pnl_eur, 8),
