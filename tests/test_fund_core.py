@@ -572,3 +572,154 @@ def test_unverified_nav_is_not_restored_as_high_water(tmp_path):
 
     restarted = HedgeFundEngine(config)
     assert restarted.status()["risk"]["peak_nav_eur"] == 100.0
+
+
+def test_verified_exposure_snapshot_replaces_stale_fill_exposure(tmp_path):
+    fund = HedgeFundEngine(_fund_config(tmp_path, initial_nav_eur=80.0))
+    fund.refresh_nav(80.0, source="test", verified=True)
+    fund.restore_fill(
+        strategy="GridRunner",
+        symbol="MANA-EUR",
+        side="BUY",
+        notional_eur=12.0,
+    )
+    assert fund.risk.gross_exposure_eur == 12.0
+
+    result = fund.reconcile_exposure_snapshot(
+        [("GridRunner", "MANA-EUR", 5.0)]
+    )
+    assert result["previous_gross_exposure_eur"] == 12.0
+    assert result["gross_exposure_eur"] == 5.0
+    assert fund.risk.state.strategy_exposure_eur["GridRunner"] == 5.0
+    assert fund.risk.state.asset_exposure_eur["MANA-EUR"] == 5.0
+
+    result = fund.reconcile_exposure_snapshot([])
+    assert result["gross_exposure_eur"] == 0.0
+    assert fund.risk.state.strategy_exposure_eur == {}
+    assert fund.risk.state.asset_exposure_eur == {}
+
+
+def test_bitvavo_exposure_reconciliation_clears_exchange_absent_ghost_inventory(tmp_path):
+    class DummyOrderManager:
+        def open_orders(self):
+            return []
+
+    class DummyJournal:
+        def inflight(self):
+            return []
+
+        def strategy_active_markets(self, strategy, *, min_inventory_quote_value):
+            assert strategy == "GridRunner"
+            return [
+                {
+                    "market": "MANA-EUR",
+                    "inventory_quantity": "100",
+                    "inventory_quote_value": "10",
+                    "average_entry_price": "0.10",
+                    "open_orders": 0,
+                }
+            ]
+
+    class DummyBitvavo:
+        def __init__(self):
+            self.journal = DummyJournal()
+
+        def ticker_books(self):
+            return {"MANA-EUR": {"market": "MANA-EUR", "bid": "0.10"}}
+
+        def ticker_book(self, market):
+            return {"market": market, "bid": "0.10"}
+
+        def quote_to_eur_rate(self, _market):
+            return 1.0
+
+    class DummyStrategy:
+        name = "GridRunner"
+
+    fund = HedgeFundEngine(_fund_config(tmp_path, initial_nav_eur=80.0))
+    fund.refresh_nav(80.0, source="test", verified=True)
+    fund.restore_fill(
+        strategy="GridRunner",
+        symbol="MANA-EUR",
+        side="BUY",
+        notional_eur=12.0,
+    )
+    assert fund.risk.gross_exposure_eur == 12.0
+
+    agent = object.__new__(AutoTrader)
+    agent._fund = fund
+    agent._om = DummyOrderManager()
+    agent._bitvavo = DummyBitvavo()
+    agent._strategies = {"grid": DummyStrategy()}
+
+    status = agent.reconcile_live_fund_exposure_from_balances(
+        [{"symbol": "EUR", "available": "20.45", "inOrder": "0"}],
+        exchange_open_order_count=0,
+    )
+
+    assert status["reconciled"] is True
+    assert status["journal_candidate_count"] == 1
+    assert status["entry_count"] == 0
+    assert fund.risk.gross_exposure_eur == 0.0
+    assert fund.max_entry_notional_eur(
+        strategy="GridRunner",
+        symbol="MANA-EUR",
+        require_verified_nav=True,
+    ) > 0.0
+
+
+def test_bitvavo_exposure_reconciliation_caps_journal_inventory_to_exchange_balance(tmp_path):
+    class DummyOrderManager:
+        def open_orders(self):
+            return []
+
+    class DummyJournal:
+        def inflight(self):
+            return []
+
+        def strategy_active_markets(self, strategy, *, min_inventory_quote_value):
+            return [
+                {
+                    "market": "MANA-EUR",
+                    "inventory_quantity": "100",
+                    "inventory_quote_value": "10",
+                    "average_entry_price": "0.10",
+                    "open_orders": 0,
+                }
+            ]
+
+    class DummyBitvavo:
+        def __init__(self):
+            self.journal = DummyJournal()
+
+        def ticker_books(self):
+            return {"MANA-EUR": {"market": "MANA-EUR", "bid": "0.10"}}
+
+        def ticker_book(self, market):
+            return {"market": market, "bid": "0.10"}
+
+        def quote_to_eur_rate(self, _market):
+            return 1.0
+
+    class DummyStrategy:
+        name = "GridRunner"
+
+    fund = HedgeFundEngine(_fund_config(tmp_path, initial_nav_eur=80.0))
+    fund.refresh_nav(80.0, source="test", verified=True)
+    agent = object.__new__(AutoTrader)
+    agent._fund = fund
+    agent._om = DummyOrderManager()
+    agent._bitvavo = DummyBitvavo()
+    agent._strategies = {"grid": DummyStrategy()}
+
+    status = agent.reconcile_live_fund_exposure_from_balances(
+        [
+            {"symbol": "EUR", "available": "20.45", "inOrder": "0"},
+            {"symbol": "MANA", "available": "50", "inOrder": "0"},
+        ],
+        exchange_open_order_count=0,
+    )
+
+    assert status["reconciled"] is True
+    assert status["entry_count"] == 1
+    assert fund.risk.gross_exposure_eur == 5.0
