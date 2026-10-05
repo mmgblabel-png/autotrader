@@ -870,6 +870,39 @@ def _symbol_scoped_balance_total(
     return 0.0 if not rows else None
 
 
+def _inventory_reconciliation_kind(
+    *,
+    exchange_total: float | None,
+    journal_quantity: float,
+    min_order_base: float,
+    min_order_quote: float,
+    price: float,
+) -> str | None:
+    """Classify a verified exchange balance that can safely clear ghost ownership.
+
+    A non-zero balance is considered dust only when it is not sellable at the
+    exchange minimum AND it is at most 5% of the journal-owned quantity. This
+    prevents small balance drift from erasing legitimate bot inventory.
+    """
+    if exchange_total is None:
+        return None
+    total = max(0.0, float(exchange_total))
+    journal_qty = max(0.0, float(journal_quantity))
+    if total <= 1e-12:
+        return "zero"
+    if journal_qty <= 0:
+        return None
+    effective_min_base = max(0.0, float(min_order_base or 0.0))
+    px = max(0.0, float(price or 0.0))
+    min_quote = max(0.0, float(min_order_quote or 0.0))
+    if px > 0 and min_quote > 0:
+        effective_min_base = max(effective_min_base, min_quote / px)
+    severe_mismatch = total <= journal_qty * 0.05
+    if effective_min_base > 0 and total < effective_min_base and severe_mismatch:
+        return "dust"
+    return None
+
+
 def _apply_strategy_evidence_gate(agent: AutoTrader) -> dict[str, object]:
     """Overlay historical evidence on entry eligibility without mutating router state."""
     cfg = agent._config.get("live_evidence_gate", {}) or {}
@@ -1168,11 +1201,22 @@ async def _tick_loop(app: FastAPI, agent: AutoTrader) -> None:
                                 and journal_nonterminal == 0
                             )
                             snapshot_absent = base_row is None
-                            snapshot_zero = (
-                                exchange_base_total is not None
-                                and exchange_base_total <= 1e-12
+                            snapshot_kind = (
+                                "absent"
+                                if snapshot_absent
+                                else _inventory_reconciliation_kind(
+                                    exchange_total=exchange_base_total,
+                                    journal_quantity=journal_inventory,
+                                    min_order_base=float(
+                                        strategy._config.get("_min_order_base", 0.0) or 0.0
+                                    ),
+                                    min_order_quote=float(
+                                        strategy._config.get("_min_order_quote", 0.0) or 0.0
+                                    ),
+                                    price=price,
+                                )
                             )
-                            if (snapshot_zero or snapshot_absent) and structurally_clear:
+                            if snapshot_kind and structurally_clear:
                                 confirmations = int(
                                     strategy._config.get(
                                         "_zero_balance_inventory_confirmations", 0
@@ -1191,35 +1235,44 @@ async def _tick_loop(app: FastAPI, agent: AutoTrader) -> None:
                                         if exchange_base_total is not None
                                         else "missing"
                                     ),
-                                    "absent" if snapshot_absent else "zero",
+                                    snapshot_kind,
                                     confirmations,
                                 )
                                 if confirmations >= 3:
                                     explicit_rows = await asyncio.to_thread(
                                         agent._bitvavo.balance, base
                                     )
-                                    explicit_row = next(
-                                        (
-                                            row
-                                            for row in explicit_rows
-                                            if isinstance(row, dict)
-                                            and str(row.get("symbol") or "").upper() == base
-                                        ),
-                                        None,
-                                    )
                                     explicit_total = _symbol_scoped_balance_total(
                                         explicit_rows, base
                                     )
-                                    explicit_reason = (
-                                        "verified_exchange_absent_balance"
-                                        if isinstance(explicit_rows, list) and not explicit_rows
-                                        else "verified_exchange_zero_balance"
+                                    explicit_absent = (
+                                        isinstance(explicit_rows, list) and not explicit_rows
                                     )
-                                    if explicit_total is not None and explicit_total <= 1e-12:
+                                    explicit_kind = (
+                                        "absent"
+                                        if explicit_absent
+                                        else _inventory_reconciliation_kind(
+                                            exchange_total=explicit_total,
+                                            journal_quantity=journal_inventory,
+                                            min_order_base=float(
+                                                strategy._config.get("_min_order_base", 0.0) or 0.0
+                                            ),
+                                            min_order_quote=float(
+                                                strategy._config.get("_min_order_quote", 0.0) or 0.0
+                                            ),
+                                            price=price,
+                                        )
+                                    )
+                                    if explicit_kind:
+                                        explicit_reason = {
+                                            "absent": "verified_exchange_absent_balance",
+                                            "zero": "verified_exchange_zero_balance",
+                                            "dust": "verified_exchange_dust_balance",
+                                        }[explicit_kind]
                                         recorded = agent._bitvavo.journal.record_inventory_reconciliation(
                                             symbol,
                                             strategy.name,
-                                            exchange_total=Decimal(str(explicit_total)),
+                                            exchange_total=Decimal(str(explicit_total or 0.0)),
                                             reason=explicit_reason,
                                         )
                                         if recorded:
@@ -1243,10 +1296,11 @@ async def _tick_loop(app: FastAPI, agent: AutoTrader) -> None:
                                                 "_zero_balance_inventory_confirmations"
                                             ] = 0
                                             log.warning(
-                                                "Inventory ownership reconciled: strategy=%s market=%s exchange_total=%.12f; historical fills preserved.",
+                                                "Inventory ownership reconciled: strategy=%s market=%s exchange_total=%.12f reason=%s; historical fills preserved.",
                                                 strategy.name,
                                                 symbol,
-                                                explicit_total,
+                                                float(explicit_total or 0.0),
+                                                explicit_reason,
                                             )
                             else:
                                 strategy._config[
