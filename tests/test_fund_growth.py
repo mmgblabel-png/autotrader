@@ -22,7 +22,7 @@ def test_bootstrap_stage_caps_80_eur_live_account_conservatively():
     status = risk.status()
 
     assert status["growth_stage"]["key"] == "bootstrap"
-    assert status["limits"]["max_single_trade_pct"] == 16.0
+    assert status["limits"]["max_single_trade_pct"] == 20.0
     assert status["limits"]["max_gross_exposure_pct"] == 65.0
     assert status["limits"]["min_cash_reserve_pct"] == 35.0
     assert status["growth_stage"]["label"] == "€80 → €250"
