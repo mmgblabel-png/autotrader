@@ -3884,6 +3884,14 @@ def deactivate_coinbase_live(_: None = Depends(_require_control_token)):
 def coinbase_security_status() -> dict[str, object]:
     """Verify credentials against the same isolated portfolio used for execution."""
     executor = app.state.coinbase_autonomous_executor
+    if not bool(getattr(app.state, "coinbase_autonomous_credentials_configured", False)):
+        return {
+            "authenticated": False,
+            "format_compatible": False,
+            "status": None,
+            "error_category": "credentials_missing",
+            "portfolio_isolated": bool(executor.config.portfolio_id),
+        }
     report = executor.client.authenticated_accounts_probe(
         executor.config.portfolio_id or None
     )
@@ -3897,6 +3905,18 @@ def coinbase_security_status() -> dict[str, object]:
 def coinbase_live_state() -> dict[str, object]:
     """Return privacy-safe balances for the configured Coinbase execution portfolio."""
     executor = app.state.coinbase_autonomous_executor
+    if not bool(getattr(app.state, "coinbase_autonomous_credentials_configured", False)):
+        return {
+            "authenticated": False,
+            "available": False,
+            "reason": "credentials_missing",
+            "portfolio_isolated": bool(executor.config.portfolio_id),
+            "assets": [],
+            "execution_scope": {
+                "instrument_scope": "spot_only",
+                "product_id": executor.config.product_id,
+            },
+        }
     try:
         payload = dict(executor.client.account_balances(executor.config.portfolio_id or None))
         payload.pop("portfolio_id", None)
