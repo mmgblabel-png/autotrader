@@ -128,12 +128,15 @@ class CoinbaseAutonomousState:
     peak_managed_equity_eur: float = 0.0
     max_drawdown_pct: float = 0.0
     seen_windows: list[str] = None
+    order_audit: list[dict[str, Any]] = None
     last_action: dict[str, Any] | None = None
     last_error: str | None = None
 
     def __post_init__(self) -> None:
         if self.seen_windows is None:
             self.seen_windows = []
+        if self.order_audit is None:
+            self.order_audit = []
 
 
 class CoinbaseAutonomousExecutor:
@@ -196,11 +199,22 @@ class CoinbaseAutonomousExecutor:
             "managed_cash_eur", "live_orders_sent", "settled_trades",
             "realized_pnl_eur", "day_key", "day_start_managed_equity_eur",
             "day_pnl_eur", "peak_managed_equity_eur", "max_drawdown_pct",
-            "seen_windows", "last_action", "last_error",
+            "seen_windows", "order_audit", "last_action", "last_error",
         ):
             if key in raw:
                 setattr(self.state, key, raw[key])
         self.state.seen_windows = [str(x) for x in (self.state.seen_windows or [])][-5000:]
+        self.state.order_audit = [
+            dict(x) for x in (self.state.order_audit or []) if isinstance(x, dict)
+        ][-200:]
+
+    def _audit(self, event: dict[str, Any]) -> None:
+        self.state.order_audit.append({
+            "venue": "coinbase_advanced",
+            "product_id": self.config.product_id,
+            **event,
+        })
+        self.state.order_audit = self.state.order_audit[-200:]
 
     def _save(self) -> None:
         self._atomic_json(
@@ -332,8 +346,10 @@ class CoinbaseAutonomousExecutor:
                     "action": "SUBMISSION_RECONCILED",
                     "order_id": order_id,
                     "client_order_id": intent.client_order_id,
+                    "side": intent.side,
                     "purpose": intent.purpose,
                 }
+                self._audit(dict(self.state.last_action))
                 self._save()
                 return
         age = max(0.0, now - float(intent.created_at))
@@ -364,6 +380,14 @@ class CoinbaseAutonomousExecutor:
         )
         self.state.submission_intent = None
         self.state.live_orders_sent += 1
+        self._audit({
+            "at": now,
+            "action": "SUBMISSION_RETRY_ACCEPTED",
+            "order_id": order_id,
+            "client_order_id": intent.client_order_id,
+            "side": intent.side,
+            "purpose": intent.purpose,
+        })
         self._save()
 
     def _refresh_pending(self, now: float) -> None:
@@ -410,6 +434,14 @@ class CoinbaseAutonomousExecutor:
                 "at": now, "action": "EXIT_FILLED", "base_size": size,
                 "price": price, "fees_eur": fees, "realized_pnl_eur": pnl,
             }
+        if self.state.last_action is not None:
+            self._audit({
+                **self.state.last_action,
+                "order_id": pending.order_id,
+                "client_order_id": pending.client_order_id,
+                "side": pending.side,
+                "purpose": pending.purpose,
+            })
         self.state.pending = None
 
     @staticmethod
@@ -459,14 +491,16 @@ class CoinbaseAutonomousExecutor:
             client_order_id=client_id, submitted_at=now,
         )
         self.state.submission_intent = None
-        self._save()
         action = {
             "at": now, "action": f"{purpose.upper()}_SUBMITTED",
-            "order_id": order_id, "base_size": base_size,
+            "order_id": order_id, "client_order_id": client_id,
+            "side": "SELL", "purpose": purpose, "base_size": base_size,
             "preview_fee_bps": round(fee_bps, 4),
             "preview_slippage_bps": round(slip_bps, 4),
         }
         self.state.last_action = action
+        self._audit(dict(action))
+        self._save()
         return action
 
     def _submit_buy(
@@ -518,16 +552,18 @@ class CoinbaseAutonomousExecutor:
             window_key=window_key, window_end=now + remaining,
         )
         self.state.submission_intent = None
-        self._save()
         self.state.seen_windows.append(window_key)
         self.state.seen_windows = self.state.seen_windows[-5000:]
         action = {
             "at": now, "action": "ENTRY_SUBMITTED", "order_id": order_id,
+            "client_order_id": client_id, "side": "BUY", "purpose": "entry",
             "quote_eur": quote_eur, "window_key": window_key,
             "preview_fee_bps": round(fee_bps, 4),
             "preview_slippage_bps": round(slip_bps, 4),
         }
         self.state.last_action = action
+        self._audit(dict(action))
+        self._save()
         return action
 
     def readiness(self, *, armed: bool, shadow_status: dict[str, Any]) -> dict[str, Any]:
@@ -715,6 +751,20 @@ class CoinbaseAutonomousExecutor:
             "enabled": self.config.enabled,
             "product_id": self.config.product_id,
             "live_orders_sent": int(self.state.live_orders_sent),
+            "order_audit": list(self.state.order_audit[-50:]),
+            "audited_submissions": sum(
+                1 for row in self.state.order_audit
+                if str(row.get("action") or "").endswith("_SUBMITTED")
+                or str(row.get("action") or "") in {"SUBMISSION_RECONCILED", "SUBMISSION_RETRY_ACCEPTED"}
+            ),
+            "unattributed_legacy_live_orders": max(
+                0,
+                int(self.state.live_orders_sent) - sum(
+                    1 for row in self.state.order_audit
+                    if str(row.get("action") or "").endswith("_SUBMITTED")
+                    or str(row.get("action") or "") in {"SUBMISSION_RECONCILED", "SUBMISSION_RETRY_ACCEPTED"}
+                ),
+            ),
             "managed_cash_eur": round(self.state.managed_cash_eur, 8),
             "managed_position": asdict(self.state.position) if self.state.position else None,
             "pending_order": asdict(self.state.pending) if self.state.pending else None,
