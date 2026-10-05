@@ -423,6 +423,119 @@ def test_bitvavo_account_nav_fails_closed_for_unpriced_positive_asset():
     assert valuation["unpriced_assets"] == ["UNKNOWN"]
 
 
+
+def test_live_bitvavo_nav_recovers_missing_bulk_book_with_targeted_retry(tmp_path):
+    class DummyGateway:
+        def __init__(self):
+            self.last_limits = None
+
+        def set_verified_nav_limits(self, **kwargs):
+            self.last_limits = kwargs
+
+    class DummyBitvavo:
+        def __init__(self):
+            self.gateway = DummyGateway()
+            self.requested = []
+
+        def ticker_books(self):
+            return {
+                "BTC-EUR": {
+                    "market": "BTC-EUR",
+                    "bid": "50000",
+                    "ask": "50100",
+                    "bid_size": "1",
+                    "ask_size": "1",
+                }
+            }
+
+        def ticker_book(self, market):
+            self.requested.append(market)
+            if market == "ETH-EUR":
+                return {
+                    "market": "ETH-EUR",
+                    "bid": "2000",
+                    "ask": "2010",
+                    "bid_size": "10",
+                    "ask_size": "10",
+                }
+            raise RuntimeError("missing market")
+
+    class DummyAllocator:
+        def __init__(self):
+            self.nav = None
+
+        def set_verified_nav(self, nav):
+            self.nav = nav
+
+    agent = object.__new__(AutoTrader)
+    agent._bitvavo = DummyBitvavo()
+    agent._allocator = DummyAllocator()
+    agent._fund = HedgeFundEngine(_fund_config(tmp_path))
+    agent._live_fund_nav_eur = None
+    agent._live_fund_nav_updated_at = 0.0
+    agent._live_fund_nav_unpriced_assets = []
+
+    valuation = agent.refresh_live_fund_nav_from_balances(
+        [
+            {"symbol": "EUR", "available": "50", "inOrder": "0"},
+            {"symbol": "ETH", "available": "0.01", "inOrder": "0"},
+        ]
+    )
+
+    assert valuation["verified"] is True
+    assert valuation["unpriced_assets"] == []
+    assert valuation["nav_eur"] == 70.0
+    assert agent._bitvavo.requested == ["ETH-EUR"]
+    assert agent._allocator.nav == 70.0
+    assert agent._fund.status()["risk"]["nav_verified"] is True
+
+
+def test_live_bitvavo_nav_still_fails_closed_when_targeted_retry_cannot_price_asset(tmp_path):
+    class DummyGateway:
+        def set_verified_nav_limits(self, **_kwargs):
+            raise AssertionError("must not set verified NAV limits")
+
+    class DummyBitvavo:
+        gateway = DummyGateway()
+
+        def ticker_books(self):
+            return {
+                "BTC-EUR": {
+                    "market": "BTC-EUR",
+                    "bid": "50000",
+                    "ask": "50100",
+                    "bid_size": "1",
+                    "ask_size": "1",
+                }
+            }
+
+        def ticker_book(self, _market):
+            raise RuntimeError("still unavailable")
+
+    class DummyAllocator:
+        def set_verified_nav(self, _nav):
+            raise AssertionError("must not accept unverified NAV")
+
+    agent = object.__new__(AutoTrader)
+    agent._bitvavo = DummyBitvavo()
+    agent._allocator = DummyAllocator()
+    agent._fund = HedgeFundEngine(_fund_config(tmp_path))
+    agent._live_fund_nav_eur = None
+    agent._live_fund_nav_updated_at = 0.0
+    agent._live_fund_nav_unpriced_assets = []
+
+    valuation = agent.refresh_live_fund_nav_from_balances(
+        [
+            {"symbol": "EUR", "available": "50", "inOrder": "0"},
+            {"symbol": "UNKNOWN", "available": "2", "inOrder": "0"},
+        ]
+    )
+
+    assert valuation["verified"] is False
+    assert valuation["unpriced_assets"] == ["UNKNOWN"]
+    assert agent._fund.status()["risk"]["nav_verified"] is False
+
+
 def test_verified_high_water_survives_restart_and_preserves_drawdown_gate(tmp_path):
     config = _fund_config(
         tmp_path,
