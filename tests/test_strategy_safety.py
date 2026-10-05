@@ -1,3 +1,5 @@
+import time
+
 from autotrader.core.order_manager import OrderManager, OrderSide, OrderStatus, OrderType, Order
 from autotrader.core.profit_engine import ProfitEngine
 from autotrader.core.risk_manager import RiskManager
@@ -88,6 +90,96 @@ def test_grid_buys_when_it_has_no_bot_inventory(tmp_path):
     orders = om.open_orders("GridRunner")
     assert len(orders) == 1
     assert orders[0].side is OrderSide.BUY
+
+
+def test_grid_pauses_buy_during_execution_cancel_cooldown(tmp_path):
+    om = OrderManager()
+    strategy = GridRunner(
+        om,
+        RiskManager(),
+        ProfitEngine(export_dir=str(tmp_path)),
+        {
+            "enabled": True,
+            "symbol": "SOL-EUR",
+            "exchange": "bitvavo",
+            "order_value_eur": 6.0,
+            "entry_offset_pct": 0.6,
+            "exit_markup_pct": 0.8,
+            "_current_price": 100.0,
+            "_live_balance_snapshot_ready": True,
+            "_available_quote": 50.0,
+            "_available_base": 0.0,
+            "_bot_base_inventory": 0.0,
+            "_bot_average_entry_price": 0.0,
+            "_exchange_open_orders_snapshot_ready": True,
+            "_exchange_open_order_count": 0,
+            "_execution_cancel_cooldown_until": time.time() + 90.0,
+        },
+    )
+    strategy.start()
+    strategy.tick()
+    assert om.open_orders("GridRunner") == []
+
+
+def test_grid_clears_stale_protection_before_flat_reentry(tmp_path):
+    om = OrderManager()
+    strategy = GridRunner(
+        om,
+        RiskManager(),
+        ProfitEngine(export_dir=str(tmp_path)),
+        {
+            "enabled": True,
+            "symbol": "ADA-EUR",
+            "exchange": "bitvavo",
+            "order_value_eur": 6.0,
+            "entry_offset_pct": 0.6,
+            "exit_markup_pct": 0.8,
+            "_current_price": 100.0,
+            "_live_balance_snapshot_ready": True,
+            "_available_quote": 50.0,
+            "_available_base": 0.0,
+            "_bot_base_inventory": 0.0,
+            "_bot_average_entry_price": 0.0,
+            "_exchange_open_orders_snapshot_ready": True,
+            "_exchange_open_order_count": 0,
+            "_protective_exit_requested": True,
+            "_protection_pending_action": "stop_loss",
+            "_protection_entry_price": 220.0,
+            "_protection_peak_price": 225.0,
+        },
+    )
+    strategy.start()
+    strategy.tick()
+    orders = om.open_orders("GridRunner")
+    assert len(orders) == 1
+    assert orders[0].side is OrderSide.BUY
+    assert strategy._config["_protective_exit_requested"] is False
+    assert strategy._config["_protection_pending_action"] == ""
+    assert strategy._config["_protection_entry_price"] == 0.0
+
+
+def test_market_switch_resets_market_specific_protection_state(tmp_path):
+    strategy = GridRunner(
+        OrderManager(),
+        RiskManager(),
+        ProfitEngine(export_dir=str(tmp_path)),
+        {
+            "enabled": True,
+            "symbol": "QNT-EUR",
+            "_bot_base_inventory": 0.0,
+            "_protective_exit_requested": True,
+            "_protection_pending_action": "trailing_protection",
+            "_protection_entry_price": 220.0,
+            "_protection_peak_price": 230.0,
+            "_protection_partial_taken": True,
+        },
+    )
+    strategy.on_market_switch("QNT-EUR", "ADA-EUR")
+    assert strategy._config["_protective_exit_requested"] is False
+    assert strategy._config["_protection_pending_action"] == ""
+    assert strategy._config["_protection_entry_price"] == 0.0
+    assert strategy._config["_protection_peak_price"] == 0.0
+    assert strategy._config["_protection_partial_taken"] is False
 
 
 def test_grid_sells_only_bot_owned_inventory(tmp_path):

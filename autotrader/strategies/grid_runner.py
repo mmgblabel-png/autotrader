@@ -10,6 +10,7 @@ from autotrader.core.spot_protection import (
     mark_protection_order_failed,
     mark_protection_order_pending,
     mark_protection_sell_fill,
+    reset_protection_state,
 )
 from autotrader.strategies.base import BaseStrategy
 
@@ -28,6 +29,9 @@ class GridRunner(BaseStrategy):
         cfg = self._config
         entry_killed = self._rm.is_killed(self.name)
         cooldown_until = float(cfg.get("_failure_cooldown_until", 0.0))
+        execution_cancel_cooldown_until = float(
+            cfg.get("_execution_cancel_cooldown_until", 0.0)
+        )
         current_price = float(cfg.get("_current_price", 0.0))
         if current_price <= 0:
             return
@@ -166,24 +170,40 @@ class GridRunner(BaseStrategy):
                 log.info("GRID SELL %s %.8f @ %.8f", symbol, sell_size, price)
                 return
             self.mark_dust_inventory(sellable_inventory, current_price)
-            log.info(
-                "[%s] GRID inventory not currently sellable: %s sellable %.8f from bot inventory %.8f; minimum %.8f.",
-                self.name,
-                symbol,
-                sellable_inventory,
-                bot_inventory,
-                minimum_sell,
+            now = time.time()
+            last_dust_log = float(
+                cfg.get("_last_unsellable_inventory_log_at", 0.0) or 0.0
             )
+            if now - last_dust_log >= 60.0:
+                cfg["_last_unsellable_inventory_log_at"] = now
+                log.info(
+                    "[%s] GRID inventory not currently sellable: %s sellable %.8f from bot inventory %.8f; minimum %.8f.",
+                    self.name,
+                    symbol,
+                    sellable_inventory,
+                    bot_inventory,
+                    minimum_sell,
+                )
             return
         else:
             self.clear_dust_inventory()
+            # Protection state belongs to the previous owned position/market.
+            # Once inventory is verified flat and there is no local/exchange
+            # order (guarded above), a stale protective latch must never cancel
+            # the next market's fresh BUY.
+            if (
+                cfg.get("_protective_exit_requested", False)
+                or cfg.get("_protection_pending_action")
+                or float(cfg.get("_protection_entry_price", 0.0) or 0.0) > 0
+            ):
+                reset_protection_state(cfg)
 
         if entry_killed:
             cfg["_autonomous_entry_allowed"] = False
             cfg["_autonomous_entry_reason"] = "risk_kill_switch"
             return
 
-        if cooldown_until > time.time():
+        if max(cooldown_until, execution_cancel_cooldown_until) > time.time():
             return
 
         entry_allowed, entry_reason = self.autonomous_entry_decision()
