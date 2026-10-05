@@ -10,6 +10,7 @@ from autotrader.core.spot_protection import (
     mark_protection_order_failed,
     mark_protection_order_pending,
     mark_protection_sell_fill,
+    reset_protection_state,
 )
 from autotrader.strategies.base import BaseStrategy
 
@@ -180,6 +181,16 @@ class GridRunner(BaseStrategy):
             return
         else:
             self.clear_dust_inventory()
+            # Protection state belongs to the previous owned position/market.
+            # Once inventory is verified flat and there is no local/exchange
+            # order (guarded above), a stale protective latch must never cancel
+            # the next market's fresh BUY.
+            if (
+                cfg.get("_protective_exit_requested", False)
+                or cfg.get("_protection_pending_action")
+                or float(cfg.get("_protection_entry_price", 0.0) or 0.0) > 0
+            ):
+                reset_protection_state(cfg)
 
         if entry_killed:
             cfg["_autonomous_entry_allowed"] = False
