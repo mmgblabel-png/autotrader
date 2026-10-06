@@ -36,7 +36,13 @@ class LiveArmIntentStore:
     - a new code release therefore always requires a fresh operator arm
     """
 
-    def __init__(self, path: str | Path | None = None, *, release_id: str | None = None) -> None:
+    def __init__(
+        self,
+        path: str | Path | None = None,
+        *,
+        release_id: str | None = None,
+        allow_cross_release_resume: bool = False,
+    ) -> None:
         self.path = Path(
             path
             or os.getenv(
@@ -52,6 +58,7 @@ class LiveArmIntentStore:
                 os.getenv("RAILWAY_GIT_COMMIT_SHA", os.getenv("AUTOTRADER_RELEASE_ID", "")),
             )
         ).strip()
+        self.allow_cross_release_resume = bool(allow_cross_release_resume)
 
     def load(self) -> LiveArmRecord:
         try:
@@ -80,6 +87,8 @@ class LiveArmIntentStore:
         record = self.load()
         if not record.armed:
             return False
+        if self.allow_cross_release_resume:
+            return True
         if not self.release_id:
             return False
         return bool(record.release_id and record.release_id == self.release_id)
@@ -134,7 +143,10 @@ class LiveArmIntentStore:
             "path": str(self.path),
             "persisted_armed": bool(record.armed),
             "release_match": release_match,
-            "auto_resume_eligible": bool(record.armed and release_match),
+            "auto_resume_eligible": bool(
+                record.armed and (release_match or self.allow_cross_release_resume)
+            ),
+            "cross_release_resume_enabled": self.allow_cross_release_resume,
             "updated_at": float(record.updated_at),
             "source": record.source,
         }
