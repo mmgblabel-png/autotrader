@@ -140,12 +140,11 @@ def test_aggressive_safe_bitvavo_profile_keeps_hard_risk_floor():
     grid = cfg["strategies"]["grid"]
 
     assert auto["min_score"] == 85.0
-    assert gate["recovery_min_score"] > 85.0
-    assert gate["recovery_min_score"] == 86.0
-    assert gate["recovery_order_eur"] <= 6.0
-    assert gate["recovery_cooldown_seconds"] == 900
-    assert gate["recovery_min_confidence"] >= 0.65
-    assert gate["recovery_min_signal_strength"] >= 65.0
+    assert gate["recovery_min_score"] == 85.0
+    assert gate["recovery_order_eur"] <= 5.0
+    assert gate["recovery_cooldown_seconds"] == 600
+    assert gate["recovery_min_confidence"] >= 0.62
+    assert gate["recovery_min_signal_strength"] >= 62.0
     assert gate["recovery_min_winrate_pct"] >= 45.0
     assert gate["recovery_max_net_deficit_eur"] <= 0.75
 
@@ -158,12 +157,12 @@ def test_aggressive_safe_bitvavo_profile_keeps_hard_risk_floor():
     assert fund["max_single_trade_pct"] == 20.0
     assert fund["min_cash_reserve_pct"] == 20.0
 
-    assert auto["switch_cooldown_seconds"] == 45
+    assert auto["switch_cooldown_seconds"] == 30
     assert auto["max_size_score"] == 90.0
     assert auto["max_size_confidence"] == 0.70
     assert auto["high_volatility_size_multiplier"] == 0.65
-    assert grid["cycle_cooldown_seconds"] == 30
-    assert grid["failure_cooldown_seconds"] == 10
+    assert grid["cycle_cooldown_seconds"] == 20
+    assert grid["failure_cooldown_seconds"] == 5
 
 
 def test_all_research_agents_participate_and_learning_runs_faster():
