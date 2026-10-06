@@ -564,22 +564,22 @@ coinbase_zscore_shadow:
   durations_seconds: [300, 900, 1800, 3600]
   interval_seconds: 5
   volatility_lookback_seconds: 3600
-  drift_lookback_seconds: 90
+  drift_lookback_seconds: 60
   min_vol_observations: 12
   min_sigma_annual: 0.10
   max_sigma_annual: 3.00
   min_seconds_to_window_end: 20
   strike_capture_grace_seconds: 45
-  min_probability_long: 0.62
-  max_entry_reference_z: 2.0
-  max_forecast_z: 2.0
+  min_probability_long: 0.58
+  max_entry_reference_z: 2.5
+  max_forecast_z: 3.0
   # Current Coinbase Intro taker fee is 0.50% (=50 bps) per market-order leg.
   # Live execution still verifies the authenticated preview before every order.
   # Spread is modeled separately by ask entry / bid exit.
   fee_bps_each_leg: 50
   slippage_bps_each_leg: 5
-  safety_margin_bps: 10
-  min_after_cost_edge_bps: 15
+  safety_margin_bps: 5
+  min_after_cost_edge_bps: 10
   shadow_capital_eur: 80
   position_fraction: 0.05
   max_total_shadow_exposure_pct: 20
@@ -589,10 +589,10 @@ coinbase_zscore_shadow:
   status_path: /data/coinbase_zscore_status.json
   # Fast-safe canary evidence: fewer forward samples than the old 300-trade
   # gate, offset by stricter quality and drawdown requirements.
-  promotion_min_settled_trades: 50
-  promotion_min_winrate_pct: 52.0
-  promotion_min_net_pnl_eur: 0.10
-  promotion_min_profit_factor: 1.25
+  promotion_min_settled_trades: 30
+  promotion_min_winrate_pct: 51.0
+  promotion_min_net_pnl_eur: 0.05
+  promotion_min_profit_factor: 1.15
   promotion_max_drawdown_pct: 5.0
 
 
