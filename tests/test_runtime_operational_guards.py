@@ -501,7 +501,7 @@ def test_live_evidence_gate_allows_only_bounded_high_quality_recovery():
     bad._config.update(
         {
             "_autonomous_entry_allowed": True,
-            "_autonomous_score": 94.0,
+            "_autonomous_market_score": 94.0,
             "_autonomous_confidence": 0.82,
             "_autonomous_signal_strength": 86.0,
         }
@@ -541,7 +541,7 @@ def test_live_evidence_recovery_never_overrides_router_or_quality():
     bad._config.update(
         {
             "_autonomous_entry_allowed": False,
-            "_autonomous_score": 99.0,
+            "_autonomous_market_score": 99.0,
             "_autonomous_confidence": 0.99,
             "_autonomous_signal_strength": 99.0,
         }
@@ -552,7 +552,7 @@ def test_live_evidence_recovery_never_overrides_router_or_quality():
     bad._config.update(
         {
             "_autonomous_entry_allowed": True,
-            "_autonomous_score": 90.0,
+            "_autonomous_market_score": 90.0,
             "_autonomous_confidence": 0.99,
             "_autonomous_signal_strength": 99.0,
         }
@@ -585,7 +585,7 @@ def test_live_evidence_recovery_cooldown_prevents_repeat_canary():
     bad._config.update(
         {
             "_autonomous_entry_allowed": True,
-            "_autonomous_score": 95.0,
+            "_autonomous_market_score": 95.0,
             "_autonomous_confidence": 0.85,
             "_autonomous_signal_strength": 90.0,
             "_evidence_recovery_last_attempt_at": time.time(),
