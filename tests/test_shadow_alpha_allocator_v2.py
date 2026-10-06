@@ -215,15 +215,17 @@ def test_dashboard_contains_shadow_lab_and_allocator():
     assert "Gezamenlijk botdoel" in html
     assert "€25K TARGET" in html
     assert "section('portfolio_goal')" in html
-    assert "section('binance_reference')" in html
     assert 'id="goalbar"' in html
-    assert 'id="binanceprice"' in html
     assert "Autonomous Control Loop" in html
     assert "SET → EXECUTE → LEARN → REPEAT" in html
     assert "section('autonomy')" in html
     assert 'id="autonomyrows"' in html
-    assert "Full Market Opportunity Router" in html
+    assert "Bitvavo Opportunity Router" in html
     assert 'id="routerconfigured"' in html
+    assert "Bitvavo Market Universe" in html
+    assert "Bitvavo Scanner Health" in html
+    assert "Coinbase" not in html
+    assert "Binance" not in html
     assert 'id="routerscanned"' in html
     assert "section('risk_lab')" in html
     assert "Leverage + Capped Martingale Lab" in html
