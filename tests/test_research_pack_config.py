@@ -190,3 +190,44 @@ def test_all_research_agents_participate_and_learning_runs_faster():
     assert cfg["adaptive_learning"]["change_cooldown"] <= 3
     assert cfg["shadow_lab"]["enabled"] is True
     assert cfg["shadow_lab"]["dynamic_markets_per_strategy"] >= 16
+
+
+def test_bitvavo_aggressive_canary_profile_preserves_hard_risk():
+    import yaml
+    from pathlib import Path
+
+    cfg = yaml.safe_load(Path("config.yaml").read_text())
+
+    fund = cfg["fund"]
+    assert fund["max_portfolio_drawdown_pct"] == 10.0
+    assert fund["max_daily_loss_pct"] == 3.0
+    assert fund["max_single_trade_pct"] == 20.0
+    assert fund["min_cash_reserve_pct"] == 20.0
+
+    auto = cfg["autonomous_execution"]
+    assert auto["min_score"] >= 85.0
+    assert auto["allow_margin"] is False
+    assert auto["allow_futures"] is False
+    assert auto["allow_borrowing"] is False
+    assert auto["allow_leverage"] is False
+    assert auto["allow_martingale"] is False
+
+    strategies = cfg["strategies"]
+    for key in ("market_maker", "grid", "grid_eth", "shadow_canary", "sniper"):
+        assert strategies[key]["enabled"] is True
+        assert strategies[key]["live_capable"] is True
+
+    assert strategies["market_maker"]["max_order_eur"] <= 5
+    assert strategies["grid_eth"]["max_order_eur"] <= 5
+    assert strategies["sniper"]["max_order_eur"] <= 5
+    assert strategies["arbitrage"]["enabled"] is True
+    assert strategies["arbitrage"]["live_capable"] is False
+
+    gate = cfg["live_evidence_gate"]
+    assert gate["recovery_order_eur"] <= 5.0
+    assert gate["recovery_min_score"] >= 85.0
+    assert gate["recovery_min_confidence"] >= 0.62
+    assert gate["recovery_min_signal_strength"] >= 62.0
+
+    assert strategies["grid"]["protection_stop_loss_pct"] <= 1.25
+    assert strategies["grid_eth"]["protection_stop_loss_pct"] <= 1.25
