@@ -60,12 +60,16 @@ def test_coinbase_balance_summary_aggregates_without_ids(monkeypatch):
     assert "secret-account-id" not in str(result)
 
 
-def test_dashboard_contains_coinbase_balance_view():
+def test_dashboard_is_bitvavo_only():
     from autotrader.api.dashboard_html import dashboard_html
 
     html = dashboard_html()
-    assert "Exchange connectivity & balances" in html
+    lower = html.lower()
+    assert "Bitvavo Connectivity & Safety" in html
+    assert "Bitvavo Market Universe" in html
+    assert "Bitvavo Scanner Health" in html
     assert "/api/dashboard/snapshot" in html
-    assert "section('coinbase_live_state')" in html
-    assert "coinbaseassets" in html
-    assert "Coinbase ↔ Bitvavo arbitrage" in html
+    assert "section('bitvavo_live_state')" in html
+    assert "section('bitvavo_security')" in html
+    assert "coinbase" not in lower
+    assert "binance" not in lower
