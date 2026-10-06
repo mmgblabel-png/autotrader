@@ -180,11 +180,22 @@ class BaseStrategy(ABC):
         evidence owns _evidence_entry_blocked. Risk kill-switches may make
         the autonomous gate false, but the evidence overlay never rewrites it.
         """
-        if bool(self._config.get("_evidence_entry_blocked", False)):
+        evidence_blocked = bool(
+            self._config.get("_evidence_entry_blocked", False)
+        )
+        router_allowed = bool(
+            self._config.get("_autonomous_entry_allowed", True)
+        )
+        recovery_allowed = bool(
+            self._config.get("_evidence_recovery_allowed", False)
+        )
+        if evidence_blocked:
+            if recovery_allowed and router_allowed:
+                return True, "live_evidence_recovery_canary"
             return False, str(
                 self._config.get("_evidence_entry_reason") or "live_evidence_gate"
             )
-        if not bool(self._config.get("_autonomous_entry_allowed", True)):
+        if not router_allowed:
             return False, str(
                 self._config.get("_autonomous_entry_reason") or "entry_not_selected"
             )

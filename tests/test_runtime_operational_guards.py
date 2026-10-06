@@ -1,3 +1,5 @@
+import time
+
 from autotrader.api.server import (
     _dashboard_snapshot_section,
     _execution_v2_cancel_decision,
@@ -471,3 +473,126 @@ def test_symbol_scoped_balance_total_fails_closed_on_mismatched_response():
         [{"symbol": "BTC", "available": "1", "inOrder": "0"}],
         "RSR",
     ) is None
+
+
+def test_live_evidence_gate_allows_only_bounded_high_quality_recovery():
+    agent = _EvidenceAgent(
+        {
+            "GoodBot": {"wins": 0, "losses": 0, "net_pnl": 0.0, "winrate_pct": 0.0},
+            "BadBot": {"wins": 3, "losses": 1, "net_pnl": -0.20, "winrate_pct": 75.0},
+            "NewBot": {"wins": 0, "losses": 0, "net_pnl": 0.0, "winrate_pct": 0.0},
+        },
+        gate={
+            "enabled": True,
+            "min_completed_exits": 4,
+            "minimum_net_pnl_eur": 0.0,
+            "recovery_enabled": True,
+            "recovery_strategies": ["BadBot"],
+            "recovery_order_eur": 5.5,
+            "recovery_cooldown_seconds": 1800,
+            "recovery_min_score": 92.0,
+            "recovery_min_confidence": 0.75,
+            "recovery_min_signal_strength": 80.0,
+            "recovery_min_winrate_pct": 50.0,
+            "recovery_max_net_deficit_eur": 0.50,
+        },
+    )
+    bad = agent._strategies["bad"]
+    bad._config.update(
+        {
+            "_autonomous_entry_allowed": True,
+            "_autonomous_score": 94.0,
+            "_autonomous_confidence": 0.82,
+            "_autonomous_signal_strength": 86.0,
+        }
+    )
+
+    result = _apply_strategy_evidence_gate(agent)
+    row = next(row for row in result["blocked"] if row["strategy"] == "BadBot")
+
+    assert row["blocked"] is True
+    assert row["recovery_allowed"] is True
+    assert row["recovery_order_eur"] == 5.5
+    assert bad._config["_evidence_entry_blocked"] is True
+    assert bad._config["_evidence_recovery_allowed"] is True
+
+
+def test_live_evidence_recovery_never_overrides_router_or_quality():
+    agent = _EvidenceAgent(
+        {
+            "BadBot": {"wins": 3, "losses": 1, "net_pnl": -0.20, "winrate_pct": 75.0},
+        },
+        gate={
+            "enabled": True,
+            "min_completed_exits": 4,
+            "minimum_net_pnl_eur": 0.0,
+            "recovery_enabled": True,
+            "recovery_strategies": ["BadBot"],
+            "recovery_order_eur": 5.5,
+            "recovery_cooldown_seconds": 1800,
+            "recovery_min_score": 92.0,
+            "recovery_min_confidence": 0.75,
+            "recovery_min_signal_strength": 80.0,
+            "recovery_min_winrate_pct": 50.0,
+            "recovery_max_net_deficit_eur": 0.50,
+        },
+    )
+    bad = agent._strategies["bad"]
+    bad._config.update(
+        {
+            "_autonomous_entry_allowed": False,
+            "_autonomous_score": 99.0,
+            "_autonomous_confidence": 0.99,
+            "_autonomous_signal_strength": 99.0,
+        }
+    )
+    _apply_strategy_evidence_gate(agent)
+    assert bad._config["_evidence_recovery_allowed"] is False
+
+    bad._config.update(
+        {
+            "_autonomous_entry_allowed": True,
+            "_autonomous_score": 90.0,
+            "_autonomous_confidence": 0.99,
+            "_autonomous_signal_strength": 99.0,
+        }
+    )
+    _apply_strategy_evidence_gate(agent)
+    assert bad._config["_evidence_recovery_allowed"] is False
+
+
+def test_live_evidence_recovery_cooldown_prevents_repeat_canary():
+    agent = _EvidenceAgent(
+        {
+            "BadBot": {"wins": 3, "losses": 1, "net_pnl": -0.20, "winrate_pct": 75.0},
+        },
+        gate={
+            "enabled": True,
+            "min_completed_exits": 4,
+            "minimum_net_pnl_eur": 0.0,
+            "recovery_enabled": True,
+            "recovery_strategies": ["BadBot"],
+            "recovery_order_eur": 5.5,
+            "recovery_cooldown_seconds": 1800,
+            "recovery_min_score": 92.0,
+            "recovery_min_confidence": 0.75,
+            "recovery_min_signal_strength": 80.0,
+            "recovery_min_winrate_pct": 50.0,
+            "recovery_max_net_deficit_eur": 0.50,
+        },
+    )
+    bad = agent._strategies["bad"]
+    bad._config.update(
+        {
+            "_autonomous_entry_allowed": True,
+            "_autonomous_score": 95.0,
+            "_autonomous_confidence": 0.85,
+            "_autonomous_signal_strength": 90.0,
+            "_evidence_recovery_last_attempt_at": time.time(),
+        }
+    )
+
+    result = _apply_strategy_evidence_gate(agent)
+    row = next(row for row in result["blocked"] if row["strategy"] == "BadBot")
+    assert row["recovery_allowed"] is False
+    assert row["recovery_cooldown_remaining_seconds"] > 1700

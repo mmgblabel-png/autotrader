@@ -229,6 +229,16 @@ live_evidence_gate:
   enabled: true
   min_completed_exits: 4
   minimum_net_pnl_eur: 0.00
+  recovery_enabled: true
+  recovery_strategies:
+    - GridRunner
+  recovery_order_eur: 5.50
+  recovery_cooldown_seconds: 1800
+  recovery_min_score: 92.0
+  recovery_min_confidence: 0.75
+  recovery_min_signal_strength: 80.0
+  recovery_min_winrate_pct: 50.0
+  recovery_max_net_deficit_eur: 0.50
 
 calculated_risk:
   enabled: true
@@ -457,9 +467,9 @@ strategies:
     max_position_size: 300.0
     max_slippage_pct: 0.5
     max_consecutive_errors: 5
-    protection_stop_loss_pct: 2.0
+    protection_stop_loss_pct: 1.25
     protection_trailing_activation_pct: 0.90
-    protection_trailing_drawdown_pct: 1.25
+    protection_trailing_drawdown_pct: 0.75
     protection_partial_profit_trigger_pct: 0.75
     protection_partial_profit_fraction: 0.50
 
