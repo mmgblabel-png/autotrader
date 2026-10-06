@@ -28,7 +28,7 @@ button,.btn{border:0;border-radius:10px;padding:11px 15px;font-weight:850;cursor
 <div id="login" class="login">
   <div class="eyebrow">Coinbase dedicated control room</div>
   <h1>Coinbase Agent</h1>
-  <p class="sub">Volledig gescheiden van het Bitvavo-dashboard. Alleen Coinbase Agent-data en Coinbase-controls.</p>
+  <p class="sub">Alleen Coinbase Agent-data, Coinbase execution en Coinbase-controls.</p>
   <div class="field"><label>Gebruikersnaam</label><input id="username" value="admin" autocomplete="username"></div>
   <div class="field"><label>Wachtwoord</label><input id="password" type="password" autocomplete="current-password"></div>
   <div class="field"><label>Of API-key</label><input id="apikey" type="password" placeholder="X-API-Key (optioneel)" autocomplete="off"></div>
@@ -114,7 +114,7 @@ button,.btn{border:0;border-radius:10px;padding:11px 15px;font-weight:850;cursor
   <div class="table-wrap"><table class="table"><thead><tr><th>Tijd</th><th>Actie</th><th>Product</th><th>Side</th><th>Notional / size</th><th>Status / reason</th></tr></thead><tbody id="auditrows"><tr><td colspan="6" class="sub">Audit laden…</td></tr></tbody></table></div>
 </section>
 
-<div class="foot"><span>Coinbase-only dashboard · geen Bitvavo-data of Bitvavo-controls</span><span id="updated">—</span></div>
+<div class="foot"><span>Dedicated Coinbase Agent dashboard</span><span id="updated">—</span></div>
 </div></div>
 
 <script>
@@ -186,10 +186,22 @@ async function refresh(){
   }catch(e){document.getElementById("notice").textContent="Dashboard update mislukt: "+e.message;document.getElementById("notice").className="notice warn"}
 }
 async function activateLive(){
-  try{await api("/api/coinbase/live/activate",{method:"POST",body:JSON.stringify({confirmation:"I_UNDERSTAND_COINBASE_LIVE_ORDERS"})});await refresh()}catch(e){alert("Coinbase Live niet geactiveerd: "+e.message)}
+  try{
+    const ctl=prompt("Vul je AUTOTRADER_CONTROL_TOKEN in. Dit wordt niet opgeslagen.");
+    if(!ctl)return;
+    const phrase=prompt("Bevestig door exact I_UNDERSTAND_COINBASE_LIVE_ORDERS in te vullen.");
+    if(phrase!=="I_UNDERSTAND_COINBASE_LIVE_ORDERS")return;
+    await api("/api/coinbase/live/activate",{method:"POST",headers:{"X-Autotrader-Token":ctl},body:JSON.stringify({confirmation:phrase})});
+    await refresh();
+  }catch(e){alert("Coinbase Live niet geactiveerd: "+e.message)}
 }
 async function deactivateLive(){
-  try{await api("/api/coinbase/live/deactivate",{method:"POST",body:"{}"});await refresh()}catch(e){alert("Coinbase Live niet gestopt: "+e.message)}
+  try{
+    const ctl=prompt("Vul je AUTOTRADER_CONTROL_TOKEN in. Dit wordt niet opgeslagen.");
+    if(!ctl)return;
+    await api("/api/coinbase/live/deactivate",{method:"POST",headers:{"X-Autotrader-Token":ctl},body:"{}"});
+    await refresh();
+  }catch(e){alert("Coinbase Live niet gestopt: "+e.message)}
 }
 </script>
 </body></html>'''
