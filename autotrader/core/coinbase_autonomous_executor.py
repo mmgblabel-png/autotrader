@@ -554,18 +554,29 @@ class CoinbaseAutonomousExecutor:
         slip_bps = abs(avg - reference) / reference * 10_000.0 if avg > 0 and reference > 0 else math.inf
         return fee_bps, slip_bps
 
-    def _submit_sell(self, *, base_size: float, purpose: str, now: float, reference_bid: float) -> dict[str, Any]:
+    def _submit_sell(
+        self,
+        *,
+        base_size: float,
+        purpose: str,
+        now: float,
+        reference_bid: float,
+        product_id: str | None = None,
+        quote_currency: str | None = None,
+        quote_to_eur: float | None = None,
+    ) -> dict[str, Any]:
+        product = str(product_id or self.config.product_id).upper()
+        quote = str(quote_currency or product.rsplit("-", 1)[-1]).upper()
+        rate = float(quote_to_eur or (1.0 if quote == "EUR" else self._usdc_to_eur()))
         size_text = f"{base_size:.8f}".rstrip("0").rstrip(".")
         preview = self.client.preview_spot_market_order(
-            product_id=self.config.product_id,
+            product_id=product,
             side="SELL",
             base_size=size_text,
             portfolio_id=self.config.portfolio_id or None,
         )
-        notional = base_size * reference_bid
-        fee_bps, slip_bps = self._preview_costs(preview, reference_bid, notional)
-        # Exits and reserve-building sells are risk-reducing, so preview costs
-        # are recorded but do not prevent liquidation when a hard risk gate fires.
+        notional_quote = base_size * reference_bid
+        fee_bps, slip_bps = self._preview_costs(preview, reference_bid, notional_quote)
         client_id = str(uuid.uuid4())
         self.state.submission_intent = SubmissionIntent(
             client_order_id=client_id,
@@ -573,11 +584,14 @@ class CoinbaseAutonomousExecutor:
             purpose=purpose,
             created_at=now,
             base_size=size_text,
+            product_id=product,
+            quote_currency=quote,
+            quote_to_eur=rate,
         )
         self._save()
         response = self.client.create_spot_market_order(
             client_order_id=client_id,
-            product_id=self.config.product_id,
+            product_id=product,
             side="SELL",
             base_size=size_text,
             portfolio_id=self.config.portfolio_id or None,
@@ -586,14 +600,27 @@ class CoinbaseAutonomousExecutor:
         order_id = self._order_id(response)
         self.state.live_orders_sent += 1
         self.state.pending = PendingOrder(
-            order_id=order_id, side="SELL", purpose=purpose,
-            client_order_id=client_id, submitted_at=now,
+            order_id=order_id,
+            side="SELL",
+            purpose=purpose,
+            client_order_id=client_id,
+            submitted_at=now,
+            product_id=product,
+            quote_currency=quote,
+            quote_to_eur=rate,
         )
         self.state.submission_intent = None
         action = {
-            "at": now, "action": f"{purpose.upper()}_SUBMITTED",
-            "order_id": order_id, "client_order_id": client_id,
-            "side": "SELL", "purpose": purpose, "base_size": base_size,
+            "at": now,
+            "action": f"{purpose.upper()}_SUBMITTED",
+            "order_id": order_id,
+            "client_order_id": client_id,
+            "product_id": product,
+            "quote_currency": quote,
+            "side": "SELL",
+            "purpose": purpose,
+            "base_size": base_size,
+            "notional_eur": round(notional_quote * rate, 8),
             "preview_fee_bps": round(fee_bps, 4),
             "preview_slippage_bps": round(slip_bps, 4),
         }
@@ -602,26 +629,111 @@ class CoinbaseAutonomousExecutor:
         self._save()
         return action
 
+    def _best_entry_route(
+        self,
+        *,
+        decision: dict[str, Any],
+        balances: dict[str, float],
+        spendable_eur: float,
+        max_trade_eur: float,
+    ) -> dict[str, Any] | None:
+        forecast_move_bps = max(0.0, float(decision.get("forecast_move_bps") or 0.0))
+        probability_up = float(decision.get("probability_up") or 0.0)
+        reference_z = abs(float(decision.get("reference_z") or 0.0))
+        if forecast_move_bps <= 0:
+            return None
+
+        best: dict[str, Any] | None = None
+        for product in self.config.supported_products:
+            product = str(product).upper()
+            if "-" not in product:
+                continue
+            quote = product.rsplit("-", 1)[-1]
+            if quote not in {"EUR", "USDC"}:
+                continue
+
+            quote_to_eur = 1.0 if quote == "EUR" else max(
+                0.0, float(balances.get("_USDC_TO_EUR") or 0.0)
+            )
+            if quote_to_eur <= 0:
+                continue
+            quote_balance = max(0.0, float(balances.get(quote) or 0.0))
+            route_available_eur = quote_balance * quote_to_eur
+            target_eur = min(route_available_eur, spendable_eur, max_trade_eur)
+            if target_eur + 1e-9 < self.config.min_order_eur:
+                continue
+
+            quote_size = target_eur / quote_to_eur
+            book = self.client.top_of_book(product)
+            bid = float(book.bid_price)
+            ask = float(book.ask_price)
+            if bid <= 0 or ask <= 0 or ask < bid:
+                continue
+            mid = (bid + ask) / 2.0
+            spread_bps = (ask - bid) / mid * 10_000.0 if mid > 0 else math.inf
+            if spread_bps > self.config.max_spread_bps:
+                continue
+
+            quote_text = f"{quote_size:.6f}".rstrip("0").rstrip(".")
+            preview = self.client.preview_spot_market_order(
+                product_id=product,
+                side="BUY",
+                quote_size=quote_text,
+                portfolio_id=self.config.portfolio_id or None,
+            )
+            fee_bps, slip_bps = self._preview_costs(preview, ask, quote_size)
+            if fee_bps > self.config.max_preview_fee_bps:
+                continue
+            if slip_bps > self.config.max_preview_slippage_bps:
+                continue
+
+            after_cost_edge_bps = (
+                forecast_move_bps
+                - fee_bps
+                - slip_bps
+                - self.config.assumed_exit_fee_bps
+                - spread_bps
+            )
+            if after_cost_edge_bps < self.config.min_live_net_edge_bps:
+                continue
+
+            score = (
+                after_cost_edge_bps
+                + max(0.0, probability_up - 0.5) * 25.0
+                - reference_z * 2.0
+            )
+            candidate = {
+                "product_id": product,
+                "quote_currency": quote,
+                "quote_to_eur": quote_to_eur,
+                "quote_size": quote_size,
+                "quote_text": quote_text,
+                "notional_eur": target_eur,
+                "reference_bid": bid,
+                "reference_ask": ask,
+                "spread_bps": spread_bps,
+                "preview_fee_bps": fee_bps,
+                "preview_slippage_bps": slip_bps,
+                "after_cost_edge_bps": after_cost_edge_bps,
+                "score": score,
+                "preview": preview,
+            }
+            if best is None or float(candidate["score"]) > float(best["score"]):
+                best = candidate
+        return best
+
     def _submit_buy(
         self,
         *,
-        quote_eur: float,
+        route: dict[str, Any],
         decision: dict[str, Any],
         now: float,
-        reference_ask: float,
     ) -> dict[str, Any]:
-        quote_text = f"{quote_eur:.2f}"
-        preview = self.client.preview_spot_market_order(
-            product_id=self.config.product_id,
-            side="BUY",
-            quote_size=quote_text,
-            portfolio_id=self.config.portfolio_id or None,
-        )
-        fee_bps, slip_bps = self._preview_costs(preview, reference_ask, quote_eur)
-        if fee_bps > self.config.max_preview_fee_bps:
-            return {"at": now, "action": "HOLD", "reason": "preview_fee_too_high", "fee_bps": fee_bps}
-        if slip_bps > self.config.max_preview_slippage_bps:
-            return {"at": now, "action": "HOLD", "reason": "preview_slippage_too_high", "slippage_bps": slip_bps}
+        product = str(route["product_id"])
+        quote = str(route["quote_currency"])
+        quote_to_eur = float(route["quote_to_eur"])
+        quote_text = str(route["quote_text"])
+        preview = dict(route["preview"])
         client_id = str(uuid.uuid4())
         window_key = str(decision.get("window_key") or "")
         remaining = max(0.0, float(decision.get("seconds_remaining") or 0.0))
@@ -633,11 +745,14 @@ class CoinbaseAutonomousExecutor:
             quote_size=quote_text,
             window_key=window_key,
             window_end=now + remaining,
+            product_id=product,
+            quote_currency=quote,
+            quote_to_eur=quote_to_eur,
         )
         self._save()
         response = self.client.create_spot_market_order(
             client_order_id=client_id,
-            product_id=self.config.product_id,
+            product_id=product,
             side="BUY",
             quote_size=quote_text,
             portfolio_id=self.config.portfolio_id or None,
@@ -646,24 +761,44 @@ class CoinbaseAutonomousExecutor:
         order_id = self._order_id(response)
         self.state.live_orders_sent += 1
         self.state.pending = PendingOrder(
-            order_id=order_id, side="BUY", purpose="entry",
-            client_order_id=client_id, submitted_at=now,
-            window_key=window_key, window_end=now + remaining,
+            order_id=order_id,
+            side="BUY",
+            purpose="entry",
+            client_order_id=client_id,
+            submitted_at=now,
+            window_key=window_key,
+            window_end=now + remaining,
+            product_id=product,
+            quote_currency=quote,
+            quote_to_eur=quote_to_eur,
         )
         self.state.submission_intent = None
         self.state.seen_windows.append(window_key)
         self.state.seen_windows = self.state.seen_windows[-5000:]
         action = {
-            "at": now, "action": "ENTRY_SUBMITTED", "order_id": order_id,
-            "client_order_id": client_id, "side": "BUY", "purpose": "entry",
-            "quote_eur": quote_eur, "window_key": window_key,
-            "preview_fee_bps": round(fee_bps, 4),
-            "preview_slippage_bps": round(slip_bps, 4),
+            "at": now,
+            "action": "ENTRY_SUBMITTED",
+            "order_id": order_id,
+            "client_order_id": client_id,
+            "product_id": product,
+            "quote_currency": quote,
+            "side": "BUY",
+            "purpose": "entry",
+            "quote_amount": float(route["quote_size"]),
+            "notional_eur": round(float(route["notional_eur"]), 8),
+            "window_key": window_key,
+            "forecast_move_bps": round(float(decision.get("forecast_move_bps") or 0.0), 4),
+            "probability_up": round(float(decision.get("probability_up") or 0.0), 6),
+            "after_cost_edge_bps": round(float(route["after_cost_edge_bps"]), 4),
+            "spread_bps": round(float(route["spread_bps"]), 4),
+            "preview_fee_bps": round(float(route["preview_fee_bps"]), 4),
+            "preview_slippage_bps": round(float(route["preview_slippage_bps"]), 4),
         }
         self.state.last_action = action
         self._audit(dict(action))
         self._save()
         return action
+
 
     def readiness(self, *, armed: bool, shadow_status: dict[str, Any]) -> dict[str, Any]:
         book = self.client.top_of_book(self.config.product_id)
