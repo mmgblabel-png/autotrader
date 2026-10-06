@@ -208,12 +208,19 @@ class GridRunner(BaseStrategy):
 
         entry_allowed, entry_reason = self.autonomous_entry_decision()
         if not entry_allowed:
-            log.info(
-                "[%s] GRID autonomous entry paused: %s market=%s",
-                self.name,
-                entry_reason,
-                symbol,
-            )
+            now = time.time()
+            pause_key = f"{entry_reason}:{symbol}"
+            last_key = str(cfg.get("_last_entry_pause_key", "") or "")
+            last_log = float(cfg.get("_last_entry_pause_log_at", 0.0) or 0.0)
+            if pause_key != last_key or now - last_log >= 60.0:
+                cfg["_last_entry_pause_key"] = pause_key
+                cfg["_last_entry_pause_log_at"] = now
+                log.info(
+                    "[%s] GRID autonomous entry paused: %s market=%s",
+                    self.name,
+                    entry_reason,
+                    symbol,
+                )
             return
 
         last_sell_fill = max(0.0, float(cfg.get("_last_bot_sell_fill_at", 0.0) or 0.0))
@@ -240,6 +247,13 @@ class GridRunner(BaseStrategy):
             if order_value > 0
             else self.quote_notional_to_eur(size * buy_price)
         )
+        recovery_canary = bool(cfg.get("_evidence_recovery_allowed", False))
+        recovery_order_eur = max(
+            0.0,
+            float(cfg.get("_evidence_recovery_order_eur", 0.0) or 0.0),
+        )
+        if recovery_canary and recovery_order_eur > 0:
+            requested_notional = min(requested_notional, recovery_order_eur)
         if live_snapshot:
             requested_notional = min(
                 requested_notional,
@@ -287,6 +301,17 @@ class GridRunner(BaseStrategy):
             strategy=self.name,
             quote_to_eur=quote_to_eur,
         ))
+        if recovery_canary:
+            cfg["_evidence_recovery_last_attempt_at"] = time.time()
+            cfg["_evidence_recovery_allowed"] = False
+            log.warning(
+                "GRID RECOVERY CANARY %s notional=%.2f EUR score=%.1f confidence=%.3f signal=%.1f",
+                symbol,
+                notional,
+                float(cfg.get("_autonomous_score", 0.0) or 0.0),
+                float(cfg.get("_autonomous_confidence", 0.0) or 0.0),
+                float(cfg.get("_autonomous_signal_strength", 0.0) or 0.0),
+            )
         log.info("GRID BUY %s %.8f @ %.8f", symbol, buy_size, buy_price)
 
     def on_order_failure(self, order: Order, category: str, reason: str) -> None:
