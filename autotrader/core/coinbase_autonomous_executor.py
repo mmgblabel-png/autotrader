@@ -645,6 +645,7 @@ class CoinbaseAutonomousExecutor:
             nav = float(ready["portfolio_nav_eur"])
             balances = dict(ready["balances"])
             self._reconcile_isolated_cash(balances, ts)
+            ready["managed_cash_eur"] = round(self.state.managed_cash_eur, 8)
             managed_equity = self._managed_equity(bid)
             self._roll_day(ts, managed_equity)
             self.state.peak_managed_equity_eur = max(self.state.peak_managed_equity_eur, managed_equity)
@@ -816,6 +817,7 @@ class CoinbaseAutonomousExecutor:
             "readiness": readiness,
             "hard_rules": {
                 "spot_only": True,
+                "max_managed_capital_pct": self.config.managed_capital_pct,
                 "managed_portfolio_scope_pct": self.config.managed_capital_pct,
                 "max_single_trade_pct": self.config.max_single_trade_pct,
                 "min_cash_reserve_pct": self.config.cash_reserve_pct,
