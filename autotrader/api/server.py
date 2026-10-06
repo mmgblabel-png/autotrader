@@ -1791,7 +1791,7 @@ async def _coinbase_autonomous_loop(app: FastAPI) -> None:
                 if restore_failed.issubset({"shadow_promotion_ready"}):
                     app.state.coinbase_live_armed = True
                     log.info(
-                        "Restored Coinbase live arm for same release; new entries remain evidence-gated=%s",
+                        "Restored Coinbase live arm from persistent operator intent; new entries remain evidence-gated=%s",
                         "shadow_promotion_ready" in restore_failed,
                     )
             status = await asyncio.to_thread(
@@ -1898,7 +1898,10 @@ async def _lifespan(app: FastAPI):
     except (TypeError, ValueError):
         app.state.coinbase_zscore_shadow_interval_seconds = 5.0
     app.state.coinbase_zscore_shadow_error = None
-    app.state.coinbase_live_arm_store = LiveArmIntentStore("/data/coinbase_live_arm_state.json")
+    app.state.coinbase_live_arm_store = LiveArmIntentStore(
+        "/data/coinbase_live_arm_state.json",
+        allow_cross_release_resume=True,
+    )
     app.state.coinbase_live_arm_intent = bool(app.state.coinbase_live_arm_store.load().armed)
     app.state.coinbase_live_arm_auto_resume_eligible = bool(
         app.state.live_mode and app.state.coinbase_live_arm_store.should_resume()
