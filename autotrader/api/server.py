@@ -1923,6 +1923,18 @@ async def _coinbase_autonomous_loop(app: FastAPI) -> None:
         await asyncio.sleep(app.state.coinbase_autonomous_interval_seconds)
 
 
+def _start_enabled_strategy_runtimes(agent: AutoTrader) -> list[str]:
+    """Start every configured runtime; allocator/live-arm gates still control real orders."""
+    state = agent.list_strategies()
+    started: list[str] = []
+    for name, item in state.items():
+        if not item.get("enabled"):
+            continue
+        agent.start(name)
+        started.append(name)
+    return started
+
+
 @contextlib.asynccontextmanager
 async def _lifespan(app: FastAPI):
     """Initialise the agent, run its tick task, then stop it cleanly."""
@@ -1961,14 +1973,9 @@ async def _lifespan(app: FastAPI):
     app.state.live_armed = False
     if app.state.live_mode:
         agent.live_reconcile()
-        state = agent.list_strategies()
-        auto_started = []
-        for name, item in state.items():
-            if item.get("enabled") and item.get("live_capable"):
-                agent.start(name)
-                auto_started.append(name)
+        auto_started = _start_enabled_strategy_runtimes(agent)
         log.info(
-            "Auto-started approved live-capable runtimes while armed=False: %s",
+            "Auto-started all enabled runtimes while armed=False; live_capable remains execution-gated: %s",
             auto_started,
         )
     app.state.tick_count = 0
