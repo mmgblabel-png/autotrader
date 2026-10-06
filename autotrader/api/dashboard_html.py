@@ -7,7 +7,7 @@ DASHBOARD_HTML = r'''<!doctype html>
 <html lang="nl">
 <head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>AutoTrader | Portfolio Control Room</title>
+<title>AutoTrader | Bitvavo Control Room</title>
 <style>
 :root{--bg:#07111f;--panel:#101e31;--panel2:#14263d;--line:#243954;--text:#e8f0fa;--muted:#8ea4bd;--green:#35d49a;--amber:#f5bd4f;--red:#ff6b7a;--blue:#61a7ff}
 *{box-sizing:border-box}body{margin:0;background:radial-gradient(circle at 85% 0,#17345d 0,#07111f 42%);font-family:Inter,Segoe UI,Arial,sans-serif;color:var(--text);min-height:100vh}
@@ -25,10 +25,9 @@ DASHBOARD_HTML = r'''<!doctype html>
 @media(max-width:900px){.grid{grid-template-columns:repeat(2,1fr)}.two,.exchange-grid,.hero-strip{grid-template-columns:1fr}}@media(max-width:560px){.wrap{padding:16px}.grid{grid-template-columns:1fr}.top{align-items:flex-start;flex-direction:column}}
 </style></head><body>
 <div id="login" class="login"><div class="eyebrow">Private control room</div><h1>AutoTrader dashboard</h1><p class="sub">Meld aan om portfolio- en positiedata te bekijken. Er worden geen orders vanuit dit dashboard geplaatst.</p><div class="field"><label>Gebruikersnaam</label><input id="username" autocomplete="username" value="admin"></div><div class="field"><label>Wachtwoord</label><input id="password" type="password" autocomplete="current-password"></div><div class="field"><label>Of API-key</label><input id="apikey" type="password" autocomplete="off" placeholder="X-API-Key (optioneel)"></div><button onclick="login()">Dashboard openen</button><div id="loginerr" class="err"></div></div>
-<div id="app" class="hidden"><div class="wrap"><header class="top"><div class="brand"><div class="logo">AT</div><div><div class="eyebrow">Portfolio control room</div><div class="title">AutoTrader</div><div class="sub">Bitvavo monitoring · live updates · beveiligde sessie</div></div></div><div class="top-actions"><span class="pill">Mode: <b id="mode">paper</b></span><button class="secondary" onclick="refresh()">Vernieuwen</button><button id="livebtn" onclick="activateLive()" disabled>Live Trading</button><button id="coinbaselivebtn" onclick="activateCoinbaseLive()" disabled title="Activeer autonome Coinbase SPOT trading">Coinbase Live</button><button class="secondary" onclick="logout()">Uitloggen</button></div></header>
-<div id="notice" class="notice">Live Trading blijft fail-closed. De knop wordt alleen actief wanneer alle server-side gates en Bitvavo-credentials aantoonbaar klaarstaan.</div><div class="hero-strip"><div class="card"><div class="hero-label">Systeemstatus</div><div class="hero-value"><span id="systemstatus" class="green">ONLINE</span></div><div class="sub">Bitvavo + Coinbase connectivity, risk gates en learning runtime</div></div><div class="card"><div class="hero-label">Coinbase API</div><div id="coinbasehero" class="hero-value">—</div><div class="sub">Authenticated Advanced Trade</div></div><div class="card"><div class="hero-label">Arbitrage scanner</div><div id="arbhero" class="hero-value">—</div><div class="sub">Shadow · netto edge na kosten</div></div></div>
-<section class="section"><div class="card" style="margin-bottom:14px"><h2>Live Trading</h2><div class="metric"><span>Readiness</span><b id="liveready">controleren…</b></div><div id="livecheck" class="sub" style="margin-top:10px">Geen live orders worden geplaatst door deze statuscontrole.</div><div style="margin-top:12px"><button class="secondary" onclick="groupStrategyControl('start-live')">Start alle live bots</button><button class="secondary" onclick="groupStrategyControl('stop-live')" style="margin-left:8px">Stop alle live bots</button><button id="liveaction" onclick="activateLive()" disabled style="margin-left:8px">Live Trading activeren</button><button id="livestop" class="secondary" onclick="deactivateLive()" style="display:none;margin-left:8px">Stop Live Trading</button></div></div></section>
-<section class="section"><div class="card" style="margin-bottom:14px"><h2>Coinbase Live</h2><div class="metric"><span>Readiness</span><b id="coinbaseliveready">controleren…</b></div><div class="metric"><span>Live execution scope</span><b id="coinbaselivescope">BTC-EUR SPOT</b></div><div id="coinbaselivecheck" class="sub" style="margin-top:10px">Coinbase blijft onafhankelijk fail-closed.</div><div style="margin-top:12px"><button id="coinbaseliveaction" onclick="activateCoinbaseLive()" disabled>Coinbase Live activeren</button><button id="coinbaselivestop" class="secondary" onclick="deactivateCoinbaseLive()" style="display:none;margin-left:8px">Stop Coinbase Live</button></div></div></section>
+<div id="app" class="hidden"><div class="wrap"><header class="top"><div class="brand"><div class="logo">BV</div><div><div class="eyebrow">Bitvavo control room</div><div class="title">AutoTrader · Bitvavo</div><div class="sub">Bitvavo-only monitoring · live execution · research · risk · learning</div></div></div><div class="top-actions"><span class="pill">Mode: <b id="mode">paper</b></span><button class="secondary" onclick="refresh()">Vernieuwen</button><button id="livebtn" onclick="activateLive()" disabled>Live Trading</button><button class="secondary" onclick="logout()">Uitloggen</button></div></header>
+<div id="notice" class="notice">Bitvavo Live Trading blijft fail-closed. De knop wordt alleen actief wanneer alle Bitvavo-, risk-, journal- en profit-gates groen zijn.</div><div class="hero-strip"><div class="card"><div class="hero-label">Bitvavo runtime</div><div class="hero-value"><span id="systemstatus" class="green">ONLINE</span></div><div class="sub">Ticker, agent-loop, journal en execution gateway</div></div><div class="card"><div class="hero-label">Bitvavo API</div><div id="bitvavohero" class="hero-value">—</div><div class="sub">Authenticated account + security probe</div></div><div class="card"><div class="hero-label">Bitvavo scanner</div><div id="scannerhero" class="hero-value">—</div><div class="sub">Volledige spot-universe · EUR + crypto→crypto</div></div></div>
+<section class="section"><div class="card" style="margin-bottom:14px"><h2>Bitvavo Live Trading</h2><div class="metric"><span>Readiness</span><b id="liveready">controleren…</b></div><div id="livecheck" class="sub" style="margin-top:10px">Geen live orders worden geplaatst door deze statuscontrole.</div><div style="margin-top:12px"><button class="secondary" onclick="groupStrategyControl('start-live')">Start alle live bots</button><button class="secondary" onclick="groupStrategyControl('stop-live')" style="margin-left:8px">Stop alle live bots</button><button id="liveaction" onclick="activateLive()" disabled style="margin-left:8px">Live Trading activeren</button><button id="livestop" class="secondary" onclick="deactivateLive()" style="display:none;margin-left:8px">Stop Live Trading</button></div></div></section>
 <section class="section"><div class="grid"><div class="card"><div id="eurlabel" class="label">Portfolio waarde EUR</div><div id="eur" class="value">—</div><div id="eurdelta" class="sub">—</div></div><div class="card"><div id="btclabel" class="label">Portfolio waarde BTC</div><div id="btc" class="value blue">—</div><div id="btcrate" class="sub">—</div></div><div class="card"><div class="label">PnL</div><div id="pnl" class="value">—</div><div id="pnlpct" class="sub">—</div></div><div class="card"><div class="label">Drawdown</div><div id="dd" class="value amber">—</div><div class="sub">Vanaf lokale equity-piek</div></div></div></section>
 <div class="section-title"><h3>Hedge Fund Command Center</h3><div class="line"></div><span id="fundbadge" class="badge">FUND CORE</span></div>
 <section class="section">
@@ -125,11 +124,12 @@ DASHBOARD_HTML = r'''<!doctype html>
     <div id="goalnote" class="sub" style="margin-top:9px">Geen martingale, geen leverage- of budgetverhoging om het doel in te halen.</div>
   </div>
   <div class="card">
-    <div class="exchange-head"><div><div class="exchange-name">BTC Reference Feed</div><div class="mini">Binance public BTCUSDT · 1 seconde · read-only referentie</div></div><span id="binancebadge" class="badge ok">READ ONLY</span></div>
-    <div class="metric"><span>BTCUSDT referentie</span><b id="binanceprice">—</b></div>
-    <div class="metric"><span>Interval</span><b id="binanceinterval">—</b></div>
-    <div class="metric"><span>Laatste update</span><b id="binanceupdated">—</b></div>
-    <div id="binancenote" class="sub" style="margin-top:9px">Deze feed kan geen Binance-orders plaatsen.</div>
+    <div class="exchange-head"><div><div class="exchange-name">Bitvavo Scanner Health</div><div class="mini">Volledige Bitvavo spot-universe · 5s opportunity refresh</div></div><span id="scannerbadge" class="badge ok">SCANNING</span></div>
+    <div class="metric"><span>Markten gescand</span><b id="scannermarkets">—</b></div>
+    <div class="metric"><span>Scanner cap</span><b id="scannercap">—</b></div>
+    <div class="metric"><span>Scanner fouten</span><b id="scannererrors">—</b></div>
+    <div class="metric"><span>Laatste dashboard-update</span><b id="scannerupdated">—</b></div>
+    <div class="sub" style="margin-top:9px">Alleen Bitvavo-data wordt in deze control room weergegeven.</div>
   </div>
 </section>
 <section class="section exchange-grid">
@@ -139,7 +139,7 @@ DASHBOARD_HTML = r'''<!doctype html>
     <div id="execv2note" class="sub" style="margin-top:9px">Analyseert alleen; annuleert of vervangt geen live orders.</div>
   </div>
   <div class="card">
-    <div class="exchange-head"><div><div class="exchange-name">Full Market Opportunity Router</div><div class="mini">Alle Bitvavo spotmarkten op spread, EUR-genormaliseerde liquiditeit, momentum en volatiliteit</div></div><span id="routerbadge" class="badge ok">SCANNING</span></div>
+    <div class="exchange-head"><div><div class="exchange-name">Bitvavo Opportunity Router</div><div class="mini">Alle Bitvavo spotmarkten op spread, EUR-genormaliseerde liquiditeit, momentum en volatiliteit</div></div><span id="routerbadge" class="badge ok">SCANNING</span></div>
     <div class="order-kpis" style="grid-template-columns:repeat(4,1fr);margin-top:8px">
       <div class="order-kpi"><div class="k">Geconfigureerd</div><div id="routerconfigured" class="v blue">—</div></div>
       <div class="order-kpi"><div class="k">Nu gescand</div><div id="routerscanned" class="v green">—</div></div>
@@ -150,20 +150,20 @@ DASHBOARD_HTML = r'''<!doctype html>
     <div id="routernote" class="sub" style="margin-top:9px">Read-only multi-market scan.</div>
   </div>
 </section>
-<div class="section-title"><h3>Full Exchange Universe</h3><div class="line"></div><span class="badge">BITVAVO + COINBASE</span></div>
+<div class="section-title"><h3>Bitvavo Market Universe</h3><div class="line"></div><span class="badge">BITVAVO ONLY</span></div>
 <section class="section">
   <div class="card">
-    <div class="exchange-head"><div><div class="exchange-name">All Spot Markets</div><div class="mini">Fiat + stablecoin + crypto→crypto · read-only discovery · EUR bridge valuation</div></div><span id="universebadge" class="badge ok">READ ONLY</span></div>
+    <div class="exchange-head"><div><div class="exchange-name">Alle Bitvavo Spot Markets</div><div class="mini">EUR + stablecoin + crypto→crypto · liquiditeit · spread · live-route status</div></div><span id="universebadge" class="badge ok">READ ONLY</span></div>
     <div class="order-kpis" style="grid-template-columns:repeat(6,1fr);margin-top:8px">
-      <div class="order-kpi"><div class="k">Bitvavo tradable</div><div id="unibv" class="v blue">—</div></div>
-      <div class="order-kpi"><div class="k">Coinbase scanned (discovery)</div><div id="unicb" class="v blue">—</div></div>
+      <div class="order-kpi"><div class="k">Tradable</div><div id="unibv" class="v blue">—</div></div>
       <div class="order-kpi"><div class="k">Crypto→crypto</div><div id="unicrypto" class="v green">—</div></div>
-      <div class="order-kpi"><div class="k">Exact overlap</div><div id="unioverlap" class="v">—</div></div>
-      <div class="order-kpi"><div class="k">Overlap crypto→crypto</div><div id="uniccoverlap" class="v">—</div></div>
+      <div class="order-kpi"><div class="k">Quality candidates</div><div id="unicandidates" class="v">—</div></div>
+      <div class="order-kpi"><div class="k">Validated routes</div><div id="unilive" class="v green">—</div></div>
+      <div class="order-kpi"><div class="k">Scanner status</div><div id="uniscanned" class="v blue">—</div></div>
       <div class="order-kpi"><div class="k">Status</div><div id="unierror" class="v green">OK</div></div>
     </div>
-    <div class="table-wrap"><table class="table compact"><thead><tr><th>Venue</th><th>Markt</th><th>Type</th><th>Quote</th><th>Score</th><th>Spread</th><th>Depth EUR</th><th>Live route</th></tr></thead><tbody id="universerows"><tr><td colspan="8" class="sub">Volledige markt-universe laden…</td></tr></tbody></table></div>
-    <div id="universenote" class="sub" style="margin-top:9px">Crypto→crypto wordt volledig gescand. Live execution blijft alleen actief waar accounting/risk-gates gevalideerd zijn.</div>
+    <div class="table-wrap"><table class="table compact"><thead><tr><th>Markt</th><th>Type</th><th>Quote</th><th>Score</th><th>Spread</th><th>Depth EUR</th><th>Live route</th></tr></thead><tbody id="universerows"><tr><td colspan="7" class="sub">Bitvavo market-universe laden…</td></tr></tbody></table></div>
+    <div id="universenote" class="sub" style="margin-top:9px">Alleen Bitvavo-markten worden getoond.</div>
   </div>
 </section>
 <section class="section exchange-grid">
@@ -206,10 +206,9 @@ DASHBOARD_HTML = r'''<!doctype html>
 </section>
 <div class="section-title"><h3>Shadow Fast Lane</h3><div class="line"></div><span class="badge">NO LIVE ORDERS</span></div>
 <section class="section exchange-grid"><div class="card"><div class="exchange-head"><div><div class="exchange-name">Shadow Strategy Scorecard</div><div class="mini">Topmarkten parallel · candle-backfill + live marketdata · simulated fills · fees/slippage included</div></div><span id="shadowbadge" class="badge">shadow</span></div><div style="overflow-x:auto"><table class="table compact"><thead><tr><th>Bot</th><th>Markt</th><th>Trades</th><th>W/L</th><th>Winrate</th><th>Net PnL</th><th>DD</th><th>Positie</th><th>Score</th><th>Status</th><th>Signaal</th></tr></thead><tbody id="shadowrows"><tr><td colspan="11" class="sub">Shadow bots laden…</td></tr></tbody></table></div><div id="shadownote" class="sub" style="margin-top:10px">Deze bots mogen geen echte orders plaatsen.</div></div><div class="card"><div class="exchange-head"><div><div class="exchange-name">Strategy Allocator v2</div><div class="mini">Performance-weighted advies binnen hetzelfde totaalbudget</div></div><span id="allocatorbadge" class="badge">advisory</span></div><table class="table compact"><thead><tr><th>Strategie</th><th>Mode</th><th>Samples</th><th>Score</th><th>Basis</th><th>Advies</th></tr></thead><tbody id="allocatorrows"><tr><td colspan="6" class="sub">Allocator laden…</td></tr></tbody></table><div id="allocatornote" class="sub" style="margin-top:10px">Live allocaties worden niet automatisch gewijzigd.</div></div></section>
-<div class="section-title"><h3>Exchange connectivity & balances</h3><div class="line"></div><span class="badge live">LIVE DATA</span></div>
-<section class="section exchange-grid"><div class="card"><div class="exchange-head"><div><div class="exchange-name">Coinbase Advanced</div><div class="mini">Authenticated read-only balance view</div></div><span id="coinbasebadge" class="badge">controleren</span></div><div class="metric"><span>Authenticatie</span><b id="coinbaseauth">—</b></div><div class="metric"><span>API-status</span><b id="coinbasestatus">—</b></div><div class="metric"><span>Accounts</span><b id="coinbaseaccounts">—</b></div><div class="metric"><span>Assets met saldo</span><b id="coinbaseassetcount">—</b></div><table class="table compact" style="margin-top:10px"><thead><tr><th>Asset</th><th>Beschikbaar</th><th>Hold</th><th>Totaal</th></tr></thead><tbody id="coinbaseassets"><tr><td colspan="4" class="sub">Coinbase saldo laden…</td></tr></tbody></table><div id="coinbasenote" class="sub" style="margin-top:10px">Geen account-ID's of API-secrets worden weergegeven.</div></div><div class="card"><div class="exchange-head"><div><div class="exchange-name">Coinbase ↔ Bitvavo arbitrage</div><div class="mini">Executable top-of-book shadow scan</div></div><span id="arbbadge" class="badge">shadow</span></div><div class="metric"><span>Scanner</span><b id="arbmode">—</b></div><div class="metric"><span>Laatste scan</span><b id="arbchecked">—</b></div><table class="table compact"><thead><tr><th>Markt</th><th>Koop</th><th>Verkoop</th><th>Bruto</th><th>Netto</th><th>Status</th></tr></thead><tbody id="arbrows"><tr><td colspan="6" class="sub">Scanner laden…</td></tr></tbody></table><div id="arbnote" class="sub" style="margin-top:10px">Shadow scanner: analyseert alleen; verstuurt geen Coinbase-orders.</div></div></section>
-<section class="section two"><div class="card"><h2>Bitvavo</h2><div class="metric"><span>Credentials aanwezig</span><b id="fusioncred">—</b></div><div class="metric"><span>Read-only authenticatie</span><b id="fusionauth">—</b></div><div class="metric"><span>Balance endpoint</span><b id="fusionendpoint">—</b></div><div class="metric"><span>Bitvavo order mode</span><b id="fusionmode">—</b></div><div class="metric"><span>Laatste controle</span><b id="fusionchecked">—</b></div><div id="fusionnote" class="notice" style="margin-top:12px">Geen Bitvavo-status geladen.</div></div><div class="card"><h2>Safety gates</h2><div class="metric"><span>Global mode</span><b id="safetymode">—</b></div><div class="metric"><span>Live Bitvavo orders</span><b id="fusionlive">—</b></div><div class="metric"><span>Emergency stop</span><b id="emergencystop">—</b></div><div class="metric"><span>Withdrawal/Transfer</span><b class="green">Niet gebruikt</b></div><div class="sub" style="margin-top:12px">Deze kaart toont alleen statusmetadata. Het dashboard plaatst geen orders.</div></div></section>
-<div class="foot"><span id="last">Nog niet bijgewerkt</span><span id="apierror" class="red"></span><span>Alle waarden zijn door de API aangeleverd.</span></div></div></div>
+<div class="section-title"><h3>Bitvavo Connectivity & Safety</h3><div class="line"></div><span class="badge live">BITVAVO LIVE DATA</span></div>
+<section class="section two"><div class="card"><h2>Bitvavo Account & API</h2><div class="metric"><span>Credentials aanwezig</span><b id="fusioncred">—</b></div><div class="metric"><span>Read-only authenticatie</span><b id="fusionauth">—</b></div><div class="metric"><span>Balance endpoint</span><b id="fusionendpoint">—</b></div><div class="metric"><span>Bitvavo order mode</span><b id="fusionmode">—</b></div><div class="metric"><span>Laatste controle</span><b id="fusionchecked">—</b></div><div id="fusionnote" class="notice" style="margin-top:12px">Geen Bitvavo-status geladen.</div></div><div class="card"><h2>Safety gates</h2><div class="metric"><span>Global mode</span><b id="safetymode">—</b></div><div class="metric"><span>Live Bitvavo orders</span><b id="fusionlive">—</b></div><div class="metric"><span>Emergency stop</span><b id="emergencystop">—</b></div><div class="metric"><span>Withdrawal/Transfer</span><b class="green">Niet gebruikt</b></div><div class="sub" style="margin-top:12px">Deze kaart toont alleen statusmetadata. Het dashboard plaatst geen orders.</div></div></section>
+<div class="foot"><span id="last">Nog niet bijgewerkt</span><span id="apierror" class="red"></span><span>Alle getoonde exchange-data is Bitvavo-only.</span></div></div></div>
 <script>
 let token=sessionStorage.getItem('at_token')||'', apiKey='', socket;
 const $=id=>document.getElementById(id); const esc=v=>String(v??'—').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); const money=v=>v==null?'—':'€ '+Number(v).toFixed(2); const num=v=>v==null?'—':Number(v).toFixed(6);
@@ -217,40 +216,11 @@ function headers(){let h={'Accept':'application/json'};if(token)h.Authorization=
 async function get(path){let r=await fetch(path,{headers:headers()});if(r.status===401||r.status===503)throw Error('Sessie ongeldig of dashboard-auth ontbreekt');if(!r.ok)throw Error('API fout '+r.status);return r.json()}
 async function login(){ $('loginerr').textContent=''; apiKey=$('apikey').value.trim(); if(apiKey){token='';}else{try{let r=await fetch('/api/auth/login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({username:$('username').value,password:$('password').value})});let d=await r.json();if(!r.ok)throw Error(d.detail||'Login mislukt');token=d.access_token;sessionStorage.setItem('at_token',token)}catch(e){$('loginerr').textContent=e.message;return}} $('login').classList.add('hidden');$('app').classList.remove('hidden');refresh();connect()}
 function logout(){sessionStorage.removeItem('at_token');apiKey='';token='';location.reload()}
-function renderReport(d){let a=d.account||{},p=d.pnl||{},b=d.balance||{},r=d.rates||{};$('eur').textContent=money(b.eur);$('btc').textContent=num(b.btc)+' BTC';$('pnl').textContent=money(p.eur);$('pnl').className='value '+(p.eur>=0?'green':'red');$('pnlpct').textContent=Number(a.pnl_pct||0).toFixed(2)+'% rendement';$('dd').textContent=Number(a.drawdown_pct||0).toFixed(2)+'%';$('eurdelta').textContent=money(p.usd)+' in USD';$('btcrate').textContent=r.btc_usd?'BTC/USD '+Number(r.btc_usd).toFixed(0):'BTC-koers niet beschikbaar'}
+function renderReport(d){let a=d.account||{},p=d.pnl||{},b=d.balance||{};$('eur').textContent=money(b.eur);$('btc').textContent=num(b.btc)+' BTC';$('pnl').textContent=money(p.eur);$('pnl').className='value '+(p.eur>=0?'green':'red');$('pnlpct').textContent=Number(a.pnl_pct||0).toFixed(2)+'% rendement';$('dd').textContent=Number(a.drawdown_pct||0).toFixed(2)+'%';$('eurdelta').textContent='Bitvavo live saldo wordt hieronder gesynchroniseerd';$('btcrate').textContent='Bitvavo BTC/EUR live state'}
 function renderExec(d){let l=d.limits||{};$('mode').textContent=d.mode||'paper';$('execmode').textContent=(d.mode||'paper')+' · '+(d.live_execution_capability||'onbekend');$('exposure').textContent=money(d.daily_exposure_eur||0);$('remainingexposure').textContent=money(d.remaining_daily_exposure_eur||0);$('entryturnover').textContent=money(d.daily_entry_turnover_eur||0);$('loss').textContent=money(d.daily_loss_eur||0);$('maxtrade').textContent=money(l.max_trade_eur);$('maxdaily').textContent=money(l.max_daily_exposure_eur);$('maxloss').textContent=money(l.max_daily_loss_eur);$('exposure').className=Number(d.daily_exposure_eur||0)>Number(l.max_daily_exposure_eur||0)?'red':'green';$('remainingexposure').className=Number(d.remaining_daily_exposure_eur||0)>=5?'green':'amber'}
 function renderStrategies(d){let rows=d.pnl_per_strategy||[];$('strategies').innerHTML=rows.length?rows.map(x=>`<tr><td>${esc(x.name)}</td><td><span class="status"><i class="dot ${x.status==='running'?'':'off'}"></i>${esc(x.status)}</span></td><td>${money(x.pnlAllTime)}</td><td>${esc(x.tradesToday??0)}</td></tr>`).join(''):'<tr><td colspan="4" class="sub">Geen strategieën</td></tr>'}
-function renderMarkets(d){let rows=(d.markets||[]).filter(x=>x.symbol&&x.symbol!=='*');$('markets').innerHTML=rows.length?rows.map(x=>{let live=x.price_status==='live';return `<tr><td><b>${esc(x.symbol)}</b></td><td>${esc(d.venue||'—')}</td><td><span class="status"><i class="dot ${live?'':'off'}"></i>${esc(x.price_status||'onbekend')}</span></td><td>${esc((x.strategies||[]).join(', ')||'scanner')}</td><td>${d.orders_enabled?'ingeschakeld':'uit'}</td></tr>`}).join(''):'<tr><td colspan="5" class="sub">Geen vaste markten geconfigureerd</td></tr>';$('marketnote').textContent=(d.router_scanned||0)+'/'+(d.router_configured||0)+' markten gescand · '+rows.length+' huidige agent-markten zichtbaar · wildcard loopt via de 60-market scanner.'}
-function renderAgents(d){let names={market_maker:'Market maker · passieve spread',arbitrage:'Arbitrage hunter · prijsverschil',grid:'Grid runner · inventory grid',grid_eth:'Grid runner ETH · inventory grid',sniper:'Sniper bot · momentum'};let rows=d.strategies||[];$('agents').innerHTML=rows.length?rows.map(x=>{let arb=x.name==='arbitrage',label=x.running?'actief':(arb?'shadow gereed':'gestopt'),cls=x.running?'green':(arb?'blue':'amber'),id=arb?' id="arbAgentState"':'';return `<div class="metric"><span>${esc(names[x.name]||x.name)}<small class="sub"> · ${x.live_capable?'live':'shadow'} · €${Number(x.allocation_eur||0).toFixed(0)}</small></span><b${id} class="${cls}">${label}</b></div>`}).join(''):'<div class="sub">Geen agents geregistreerd</div>'}
-function renderCoinbase(d){
- let ok=d.authenticated===true;
- $('coinbaseauth').textContent=ok?'geslaagd':'mislukt';
- $('coinbaseauth').className=ok?'green':'red';
- $('coinbasestatus').textContent=d.status?('HTTP '+d.status):(ok?'200':'—');
- $('coinbasestatus').className=ok?'green':'amber';
- $('coinbasehero').textContent=ok?'CONNECTED':'OFFLINE';
- $('coinbasehero').className='hero-value '+(ok?'green':'red');
- $('coinbasebadge').textContent=ok?'CONNECTED':'OFFLINE';
- $('coinbasebadge').className='badge '+(ok?'ok':'');
- $('coinbasenote').textContent=ok?'Coinbase Advanced API is verbonden. Saldi worden read-only weergegeven.':'Coinbase authenticatie niet beschikbaar: '+(d.error_category||'onbekend');
-}
-function renderCoinbaseBalances(d){
- $('coinbaseaccounts').textContent=(d.active_account_count??d.account_count??'—')+' actief';
- $('coinbaseassetcount').textContent=d.asset_count??0;
- let rows=d.assets||[];
- $('coinbaseassets').innerHTML=rows.length?rows.map(x=>`<tr><td><b>${esc(x.currency)}</b></td><td>${num(x.available)}</td><td>${num(x.hold)}</td><td>${num(x.total)}</td></tr>`).join(''):'<tr><td colspan="4" class="sub">Geen niet-nul saldi gevonden</td></tr>';
-}
-function renderArbitrage(d){
- $('arbmode').textContent=d.mode==='shadow'?'shadow actief':(d.mode||'—'); $('arbhero').textContent=d.mode==='shadow'?'SCANNING':'OFFLINE'; $('arbhero').className='hero-value '+(d.mode==='shadow'?'green':'amber'); $('arbbadge').textContent=d.mode==='shadow'?'SCANNING':'OFFLINE'; $('arbbadge').className='badge '+(d.mode==='shadow'?'ok':''); let aas=$('arbAgentState'); if(aas){aas.textContent=d.mode==='shadow'?'shadow actief':'shadow offline';aas.className=d.mode==='shadow'?'green':'amber';}
- $('arbmode').className=d.mode==='shadow'?'green':'amber';
- $('arbchecked').textContent=new Date().toLocaleTimeString();
- let rows=d.markets||[];
- $('arbrows').innerHTML=rows.length?rows.map(x=>{
-  let b=x.best_direction||{}, ok=x.status==='ok', act=!!b.actionable;
-  return `<tr><td>${esc(x.market||'—')}</td><td>${esc(b.buy_venue||'—')}</td><td>${esc(b.sell_venue||'—')}</td><td>${b.gross_edge_pct==null?'—':Number(b.gross_edge_pct).toFixed(3)+'%'}</td><td class="${Number(b.net_edge_pct||0)>=0?'green':'amber'}">${b.net_edge_pct==null?'—':Number(b.net_edge_pct).toFixed(3)+'%'}</td><td class="${act?'green':'amber'}">${ok?(act?'kans':'geen kans'):'niet beschikbaar'}</td></tr>`;
- }).join(''):'<tr><td colspan="6" class="sub">Geen arbitragemarkten</td></tr>';
- $('arbnote').textContent='Shadow scanner · budget €'+Number(d.budget_eur||0).toFixed(2)+' · min. netto edge '+Number(d.min_net_edge_pct||0).toFixed(2)+'% · live orders verzonden: '+(d.live_orders_sent?'JA':'nee');
-}
+function renderMarkets(d){let rows=(d.markets||[]).filter(x=>x.symbol&&x.symbol!=='*');$('markets').innerHTML=rows.length?rows.map(x=>{let live=x.price_status==='live';return `<tr><td><b>${esc(x.symbol)}</b></td><td>Bitvavo</td><td><span class="status"><i class="dot ${live?'':'off'}"></i>${esc(x.price_status||'onbekend')}</span></td><td>${esc((x.strategies||[]).join(', ')||'scanner')}</td><td>${d.orders_enabled?'ingeschakeld':'uit'}</td></tr>`}).join(''):'<tr><td colspan="5" class="sub">Geen vaste markten geconfigureerd</td></tr>';$('marketnote').textContent=(d.router_scanned||0)+'/'+(d.router_configured||0)+' Bitvavo-markten gescand · '+rows.length+' huidige agent-markten zichtbaar · wildcard gebruikt de volledige Bitvavo opportunity-router.'}
+function renderAgents(d){let names={market_maker:'Market maker · passieve spread',arbitrage:'Arbitrage hunter · Bitvavo shadow research',grid:'Grid runner · inventory grid',grid_eth:'Grid runner ETH · inventory grid',sniper:'Sniper bot · momentum'};let rows=d.strategies||[];$('agents').innerHTML=rows.length?rows.map(x=>{let arb=x.name==='arbitrage',label=x.running?'actief':(arb?'shadow gereed':'gestopt'),cls=x.running?'green':(arb?'blue':'amber'),id=arb?' id="arbAgentState"':'';return `<div class="metric"><span>${esc(names[x.name]||x.name)}<small class="sub"> · ${x.live_capable?'live':'shadow'} · €${Number(x.allocation_eur||0).toFixed(0)}</small></span><b${id} class="${cls}">${label}</b></div>`}).join(''):'<div class="sub">Geen agents geregistreerd</div>'}
 function renderShadow(d){
  let rows=d.strategies||[];
  $('shadowbadge').textContent=d.live_orders_sent?'ERROR':'SHADOW ACTIVE';
@@ -287,14 +257,6 @@ function renderGoal(d){
  $('goalbadge').className='badge '+(d.target_reached?'ok':'');
  $('goalnote').textContent='Dagstand = benodigde gemiddelde netto groei vanaf de huidige equity over '+Number(d.target_days||0).toFixed(0)+' dagen. Dit is een doelmeter, geen reden om slechtere trades te forceren.';
 }
-function renderBinanceReference(d){
- $('binanceprice').textContent=d.price==null?'—':'$ '+Number(d.price).toLocaleString(undefined,{maximumFractionDigits:2});
- $('binanceinterval').textContent=Number(d.interval_seconds||1).toFixed(0)+' sec';
- $('binanceupdated').textContent=d.updated_at?new Date(Number(d.updated_at)*1000).toLocaleTimeString():'—';
- $('binancebadge').textContent=d.error?'FEED ERROR':'READ ONLY';
- $('binancebadge').className='badge '+(d.error?'':'ok');
- $('binancenote').textContent='Bron: '+esc(d.source||'binance_public')+' · live orders verzonden: '+(d.live_orders_sent?'JA':'nee')+(d.error?' · '+d.error:'');
-}
 function renderThreeHour(d){
  let a=d.activity||{},p=d.pnl_now||{},ops=d.opportunities||[],errs=Number(a.error_orders||0);
  $('threehOrders').textContent=Number(a.orders_created||0);
@@ -324,6 +286,10 @@ function renderOpportunities(d){
  let names={market_maker:'MarketMaker',grid:'GridRunner',sniper:'SniperBot',mean_reversion:'Mean Reversion',volatility_breakout:'Volatility Breakout'};
  let rows=keys.map(k=>({key:k,best:(ranks[k]||[]).find(x=>x.eligible)||(ranks[k]||[])[0]})).filter(x=>x.best);
  const scanned=Number(d.markets_scanned||0),configured=Number(d.markets_configured||0),maxm=Number(d.max_markets||60),errCount=Object.keys(d.errors||{}).length+(d.runtime_error?1:0);
+ $('scannerhero').textContent=scanned+'/'+configured;
+ $('scannerhero').className='hero-value '+(errCount?'amber':'green');
+ $('scannerbadge').textContent=errCount?'DEGRADED':'SCANNING';$('scannerbadge').className='badge '+(errCount?'':'ok');
+ $('scannermarkets').textContent=scanned+'/'+configured;$('scannercap').textContent=maxm;$('scannererrors').textContent=errCount;$('scannererrors').className=errCount?'red':'green';$('scannerupdated').textContent=new Date().toLocaleTimeString();
  $('routerbadge').textContent=d.live_orders_sent?'ERROR':(scanned>=50?'50+ SCANNING':'SCANNING');
  $('routerbadge').className='badge '+(d.live_orders_sent?'':'ok');
  $('routerconfigured').textContent=configured||'—';$('routerscanned').textContent=scanned||'—';$('routertarget').textContent=maxm;$('routererrors').textContent=errCount;
@@ -332,17 +298,19 @@ function renderOpportunities(d){
  $('routernote').textContent=scanned+' van '+configured+' beschikbare EUR-markten gescand · cap '+maxm+' · auto-discovery '+(d.auto_discover_eur?'AAN':'uit')+' · live orders verzonden: '+(d.live_orders_sent?'JA':'nee')+(d.runtime_error?' · fout: '+d.runtime_error:'');
 }
 function renderUniverse(d){
- const bv=d.bitvavo||{},cb=d.coinbase||{},rows=d.top_quality_candidates||[];
+ const bv=d.bitvavo||{},all=d.top_quality_candidates||[],rows=all.filter(x=>String(x.venue||'').toLowerCase()==='bitvavo');
+ const liveRoutes=rows.filter(x=>x.live_execution_supported_now).length;
  $('unibv').textContent=Number(bv.tradable||0);
- $('unicb').textContent=Number(cb.tradable||0);
- $('unicrypto').textContent=Number(bv.crypto_crypto||0)+Number(cb.crypto_crypto||0);
- $('unioverlap').textContent=Number(d.exact_cross_venue_overlap||0);
- $('uniccoverlap').textContent=Number(d.overlap_crypto_crypto||0);
- $('unierror').textContent=d.error?'ERROR':'OK';$('unierror').className='v '+(d.error?'red':'green');
- $('universebadge').textContent=d.live_orders_sent?'ERROR':'READ ONLY';
+ $('unicrypto').textContent=Number(bv.crypto_crypto||0);
+ $('unicandidates').textContent=rows.length;
+ $('unilive').textContent=liveRoutes;
+ $('uniscanned').textContent=Number(bv.tradable||0)>0?'ACTIVE':'WAIT';
+ const err=(d.venue_errors||{}).bitvavo||d.error||d.runtime_error||null;
+ $('unierror').textContent=err?'ERROR':'OK';$('unierror').className='v '+(err?'red':'green');
+ $('universebadge').textContent=d.live_orders_sent?'ERROR':'BITVAVO ONLY';
  $('universebadge').className='badge '+(d.live_orders_sent?'':'ok');
- $('universerows').innerHTML=rows.length?rows.slice(0,12).map(x=>`<tr><td><b>${esc(x.venue)}</b></td><td>${esc(x.market)}</td><td>${esc(x.pair_type)}</td><td>${esc(x.quote)}</td><td class="mono">${Number(x.market_quality_score||0).toFixed(1)}</td><td class="mono">${x.spread_bps==null?'—':Number(x.spread_bps).toFixed(1)+' bps'}</td><td class="mono">${x.top_depth_eur==null?'—':money(x.top_depth_eur)}</td><td class="${x.live_execution_supported_now?'green':'amber'}">${x.live_execution_supported_now?'VALIDATED':'RESEARCH'}</td></tr>`).join(''):'<tr><td colspan="8" class="sub">Nog geen universe-data</td></tr>';
- $('universenote').textContent='Alle spotparen geïnventariseerd · Bitvavo crypto→crypto '+Number(bv.crypto_crypto||0)+' · Coinbase crypto→crypto '+Number(cb.crypto_crypto||0)+' · exacte venue-overlap '+Number(d.exact_cross_venue_overlap||0)+' · live orders door deze scanner: '+(d.live_orders_sent?'JA':'nee')+(d.runtime_error?' · fout: '+esc(d.runtime_error):'');
+ $('universerows').innerHTML=rows.length?rows.slice(0,20).map(x=>`<tr><td><b>${esc(x.market)}</b></td><td>${esc(x.pair_type)}</td><td>${esc(x.quote)}</td><td class="mono">${Number(x.market_quality_score||0).toFixed(1)}</td><td class="mono">${x.spread_bps==null?'—':Number(x.spread_bps).toFixed(1)+' bps'}</td><td class="mono">${x.top_depth_eur==null?'—':money(x.top_depth_eur)}</td><td class="${x.live_execution_supported_now?'green':'amber'}">${x.live_execution_supported_now?'VALIDATED':'RESEARCH'}</td></tr>`).join(''):'<tr><td colspan="7" class="sub">Nog geen Bitvavo universe-data</td></tr>';
+ $('universenote').textContent='Bitvavo tradable '+Number(bv.tradable||0)+' · crypto→crypto '+Number(bv.crypto_crypto||0)+' · quality candidates '+rows.length+' · validated routes '+liveRoutes+' · live orders door universe-scanner: '+(d.live_orders_sent?'JA':'nee')+(err?' · fout: '+esc(err):'');
 }
 function renderFeeEfficiency(d){
  let rows=d.rows||[];
@@ -494,7 +462,7 @@ function renderOrderActivity(d){
  $('orderactivity').innerHTML=rows.length?rows.map(x=>`<tr><td class="mono">${esc(when(x.created_at))}</td><td><b>${esc(x.strategy)}</b></td><td>${esc(x.market)}</td><td class="${x.side==='buy'?'side-buy':'side-sell'}">${esc((x.side||'').toUpperCase())}</td><td>${esc(x.order_type||'—')}</td><td class="mono">${num(x.amount)}</td><td class="mono">${x.price?money(x.price):'MARKET'}</td><td class="mono">${esc(x.fill_count||0)} · ${num(x.filled_amount||0)}</td><td>${chip(x.status)}</td></tr>`).join(''):'<tr><td colspan="9" class="sub">Nog geen orders in het journal</td></tr>';
  $('orderactivitynote').textContent=(d.total_returned||0)+' orders getoond · nieuwste eerst · historische foutstatussen in deze 100: '+errors+' · de rode KPI bovenaan telt alleen de laatste 3 uur';
 }
-function renderBitvavo(d,e){let ok=d.authenticated_probe===true;$('fusioncred').textContent=d.credentials_present?'aanwezig':'ontbreekt';$('fusioncred').className=d.credentials_present?'green':'red';$('fusionauth').textContent=ok?'geslaagd':'mislukt';$('fusionauth').className=ok?'green':'red';$('fusionendpoint').textContent='account + EUR balance';$('fusionmode').textContent=(e?.mode||'paper')+' · live '+(e?.live_execution_capability||'uit');$('fusionchecked').textContent=new Date().toLocaleTimeString();$('fusionnote').textContent=ok?(d.passed?'Bitvavo securitycontrole geslaagd.':'Bitvavo authenticatie geslaagd; aanvullende safety-checks zijn nog niet compleet.'):'Bitvavo read-only authenticatie niet geslaagd: '+((d.errors||[]).join(', ')||'onbekend');$('safetymode').textContent=e?.mode||'paper';$('fusionlive').textContent=e?.live_execution_capability||'uit';$('emergencystop').textContent=e?.emergency_stop?'ACTIEF':'niet actief'}
+function renderBitvavo(d,e){let ok=d.authenticated_probe===true;$('fusioncred').textContent=d.credentials_present?'aanwezig':'ontbreekt';$('fusioncred').className=d.credentials_present?'green':'red';$('fusionauth').textContent=ok?'geslaagd':'mislukt';$('fusionauth').className=ok?'green':'red';$('fusionendpoint').textContent='account + balance + markets';$('fusionmode').textContent=(e?.mode||'paper')+' · live '+(e?.live_execution_capability||'uit');$('fusionchecked').textContent=new Date().toLocaleTimeString();$('fusionnote').textContent=ok?(d.passed?'Bitvavo securitycontrole geslaagd.':'Bitvavo authenticatie geslaagd; aanvullende safety-checks zijn nog niet compleet.'):'Bitvavo read-only authenticatie niet geslaagd: '+((d.errors||[]).join(', ')||'onbekend');$('safetymode').textContent=e?.mode||'paper';$('fusionlive').textContent=e?.live_execution_capability||'uit';$('emergencystop').textContent=e?.emergency_stop?'ACTIEF':'niet actief';$('bitvavohero').textContent=ok?(d.passed?'SECURE':'CONNECTED'):'OFFLINE';$('bitvavohero').className='hero-value '+(ok?(d.passed?'green':'amber'):'red')}
 function setSectionError(label,error){$('apierror').textContent=label+': '+(error?.message||'niet beschikbaar')}
 function renderLiveReadiness(d){
   const resume=!!d.resume_mode;
@@ -565,44 +533,6 @@ async function deactivateLive(){
  }catch(e){alert(e.message||'Stoppen mislukt');}
 }
 
-function renderCoinbaseLiveReadiness(d){
- const armed=!!d.coinbase_armed, ready=!!d.ready_to_arm, nowReady=!!d.execution_ready_now, failed=d.failed_gates||[], execFailed=d.execution_failed_gates||[];
- const scope=(d.live_execution_scope||['BTC-EUR']).join(', ');
- $('coinbaselivescope').textContent=scope+' SPOT';
- $('coinbaseliveready').textContent=armed?(nowReady?'ARMED · EXECUTION READY':'ARMED · GATED'):(ready?'READY TO ARM':'NOT READY');
- $('coinbaseliveready').className=armed?(nowReady?'green':'blue'):(ready?'green':'amber');
- $('coinbaselivecheck').textContent=armed
-   ? (nowReady ? 'Coinbase kan nu binnen de risk-gates orders plaatsen op '+scope+'.' : 'Coinbase is armed, maar nieuwe orders zijn nu geblokkeerd door: '+execFailed.join(', '))
-   : (ready ? 'Technisch klaar om te armen. Live execution scope: '+scope+'. De brede Coinbase universe is alleen discovery/market-data.' : 'Nog niet klaar: '+failed.join(', '));
- $('coinbaseliveaction').disabled=!ready||armed;
- $('coinbaselivestop').style.display=armed?'inline-block':'none';
- $('coinbaselivebtn').disabled=!ready||armed;
- $('coinbaselivebtn').textContent=armed?'Coinbase ARMED':(ready?'Coinbase Live':'Coinbase niet klaar');
-}
-async function refreshCoinbaseLiveReadiness(){
- try{renderCoinbaseLiveReadiness(await get('/api/coinbase/live/readiness'))}
- catch(e){$('coinbaseliveready').textContent='ONBEKEND';$('coinbaselivecheck').textContent=e.message;$('coinbaseliveaction').disabled=true;$('coinbaselivebtn').disabled=true;$('coinbaselivebtn').textContent='Coinbase niet klaar'}
-}
-async function activateCoinbaseLive(){
- try{
-  const ctl=prompt('Vul je AUTOTRADER_CONTROL_TOKEN in. Deze wordt niet opgeslagen.');
-  if(!ctl) return;
-  const phrase=prompt('Bevestig door exact I_UNDERSTAND_COINBASE_LIVE_ORDERS in te vullen.');
-  if(phrase!=='I_UNDERSTAND_COINBASE_LIVE_ORDERS') return;
-  const r=await fetch('/api/coinbase/live/activate',{method:'POST',headers:{...headers(),'Content-Type':'application/json','X-Autotrader-Token':ctl},body:JSON.stringify({confirmation:phrase})});
-  const d=await r.json(); if(!r.ok) throw Error(d.detail?.message||d.detail||'Coinbase activering geweigerd');
-  await refreshCoinbaseLiveReadiness(); alert('Coinbase Live is geactiveerd.');
- }catch(e){alert(e.message||'Coinbase live activering mislukt')}
-}
-async function deactivateCoinbaseLive(){
- try{
-  const ctl=prompt('Vul je AUTOTRADER_CONTROL_TOKEN in. Deze wordt niet opgeslagen.');
-  if(!ctl) return;
-  const r=await fetch('/api/coinbase/live/deactivate',{method:'POST',headers:{...headers(),'X-Autotrader-Token':ctl}});
-  const d=await r.json(); if(!r.ok) throw Error(d.detail||'Coinbase stoppen mislukt');
-  await refreshCoinbaseLiveReadiness(); alert('Coinbase Live is gestopt.');
- }catch(e){alert(e.message||'Coinbase stoppen mislukt')}
-}
 async function refresh(){
  let now=new Date().toLocaleString();
  $('last').textContent='Bijwerken…';$('apierror').textContent='';
@@ -612,17 +542,15 @@ async function refresh(){
   let entries=[
    section('paper_report'),section('execution_status'),section('pnl_summary'),section('health'),section('bitvavo_security'),
    section('risk_status'),section('fund'),section('fund_automation'),section('markets_overview'),section('strategies'),section('bitvavo_live_state'),section('live_pnl'),
-   section('coinbase_security'),section('coinbase_live_state'),section('arbitrage'),section('shadow'),section('allocator'),
-   section('orders'),section('execution_v2'),section('opportunities'),section('fee_efficiency'),section('portfolio_goal'),
-   section('binance_reference'),section('autonomy'),section('risk_lab'),section('three_hour'),section('fees_live'),
-   section('universe_summary'),section('live_readiness')
+   section('shadow'),section('allocator'),section('orders'),section('execution_v2'),section('opportunities'),section('fee_efficiency'),section('portfolio_goal'),
+   section('autonomy'),section('risk_lab'),section('three_hour'),section('fees_live'),section('universe_summary'),section('live_readiness')
   ];
-  let [r,e,s,h,f,k,fund,fa,m,a,v,p,cb,cbb,arb,sh,al,oa,ev2,op,fe,goal,bref,auto,rl,threeh,fr,uni,lr]=entries;
+  let [r,e,s,h,f,k,fund,fa,m,a,v,p,sh,al,oa,ev2,op,fe,goal,auto,rl,threeh,fr,uni,lr]=entries;
   let fail=(entry,label)=>{if(entry.status==='rejected')setSectionError(label,entry.reason)};
   if(r.status==='fulfilled')renderReport(r.value);else fail(r,'Portfolio');
   if(e.status==='fulfilled')renderExec(e.value);else fail(e,'Execution');
   if(s.status==='fulfilled')renderStrategies(s.value);else fail(s,'PnL');
-  if(h.status==='fulfilled'){$('ticker').textContent=h.value.runtime?.ticker_running?'actief':'gestopt';$('updated').textContent=new Date().toLocaleTimeString();$('healthbar').style.width=h.value.runtime?.last_tick_error?'25%':'100%'}else fail(h,'Runtime');
+  if(h.status==='fulfilled'){let bad=!!h.value.runtime?.last_tick_error;$('ticker').textContent=h.value.runtime?.ticker_running?'actief':'gestopt';$('updated').textContent=new Date().toLocaleTimeString();$('healthbar').style.width=bad?'25%':'100%';$('systemstatus').textContent=bad?'DEGRADED':'ONLINE';$('systemstatus').className=bad?'amber':'green'}else fail(h,'Runtime');
   if(f.status==='fulfilled')renderBitvavo(f.value,e.status==='fulfilled'?e.value:{});else fail(f,'Bitvavo');
   if(k.status==='fulfilled')renderRisk(k.value);else fail(k,'Risk');
   if(fund.status==='fulfilled')renderFund(fund.value);else fail(fund,'Fund Core');
@@ -631,24 +559,19 @@ async function refresh(){
   if(a.status==='fulfilled')renderAgents(a.value);else fail(a,'Agents');
   if(v.status==='fulfilled')renderLiveState(v.value);else fail(v,'Open orders');
   if(p.status==='fulfilled')renderProfit(p.value);else fail(p,'Profit supervisor');
-  if(cb.status==='fulfilled')renderCoinbase(cb.value);else fail(cb,'Coinbase');
-  if(cbb.status==='fulfilled')renderCoinbaseBalances(cbb.value);else fail(cbb,'Coinbase saldo');
-  if(arb.status==='fulfilled')renderArbitrage(arb.value);else fail(arb,'Arbitrage');
   if(sh.status==='fulfilled')renderShadow(sh.value);else fail(sh,'Shadow bots');
   if(al.status==='fulfilled')renderAllocator(al.value);else fail(al,'Allocator v2');
   if(oa.status==='fulfilled')renderOrderActivity(oa.value);else fail(oa,'Orderhistorie');
   if(ev2.status==='fulfilled')renderExecutionV2(ev2.value);else fail(ev2,'Execution v2');
   if(op.status==='fulfilled')renderOpportunities(op.value);else fail(op,'Opportunity Router');
   if(fe.status==='fulfilled')renderFeeEfficiency(fe.value);else fail(fe,'Fee Efficiency');
-  if(goal.status==='fulfilled')renderGoal(goal.value);else fail(goal,'€25k doel');
-  if(bref.status==='fulfilled')renderBinanceReference(bref.value);else fail(bref,'Binance reference');
+  if(goal.status==='fulfilled')renderGoal(goal.value);else fail(goal,'Portfolio doel');
   if(auto.status==='fulfilled')renderAutonomy(auto.value);else fail(auto,'Autonomy');
   if(rl.status==='fulfilled')renderRiskLab(rl.value);else fail(rl,'Risk Lab');
   if(threeh.status==='fulfilled')renderThreeHour(threeh.value);else fail(threeh,'3-uurs rapport');
-  if(fr.status==='fulfilled')renderFeeReality(fr.value);else fail(fr,'Fee Reality');
-  if(uni.status==='fulfilled')renderUniverse(uni.value);else fail(uni,'Full Market Universe');
+  if(fr.status==='fulfilled')renderFeeReality(fr.value);else fail(fr,'Bitvavo Fee Reality');
+  if(uni.status==='fulfilled')renderUniverse(uni.value);else fail(uni,'Bitvavo Market Universe');
   if(lr.status==='fulfilled')renderLiveReadiness(lr.value);else fail(lr,'Live readiness');
-  await refreshCoinbaseLiveReadiness();
  }catch(e){setSectionError('Dashboard',e)}
  $('last').textContent='Bijgewerkt '+now
 }
