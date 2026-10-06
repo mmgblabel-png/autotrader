@@ -611,13 +611,14 @@ coinbase_autonomous_execution:
   interval_seconds: 5
   # Only this sleeve is controlled by the Coinbase agent. Remaining BTC is not
   # adopted as bot inventory.
-  # The entire isolated Coinbase Agent portfolio is agent-owned capital.
-  # Exposure is still bounded independently by max_single_trade_pct and the cash reserve.
+  # The entire isolated Coinbase Agent portfolio is agent-owned RiskTrader capital.
+  # No extra trust-fund reserve or 20% sizing throttle is applied inside this sleeve.
+  # Funds outside the isolated agent portfolio are never adopted as bot inventory.
   managed_capital_pct: 100.0
-  cash_reserve_pct: 20.0
-  max_single_trade_pct: 20.0
-  # In full-capacity mode max_order_eur is not an extra cap; the hard 20%
-  # single-position rule and available isolated quote balance determine sizing.
+  cash_reserve_pct: 0.0
+  max_single_trade_pct: 100.0
+  # In full-capacity mode max_order_eur is not an extra cap; the available
+  # isolated quote balance determines sizing after live fee/slippage checks.
   max_order_eur: 5.0
   min_order_eur: 1.0
   full_capacity: true
