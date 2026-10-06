@@ -904,30 +904,124 @@ def _inventory_reconciliation_kind(
 
 
 def _apply_strategy_evidence_gate(agent: AutoTrader) -> dict[str, object]:
-    """Overlay historical evidence on entry eligibility without mutating router state."""
+    """Overlay live evidence without creating a permanent recovery deadlock.
+
+    Proven negative live evidence still blocks normal entries. A narrowly
+    bounded recovery canary may be allowed for GridRunner only when the router
+    independently selects a very high-quality setup, the live deficit is small,
+    and the recovery cooldown has elapsed.
+    """
     cfg = agent._config.get("live_evidence_gate", {}) or {}
     enabled = bool(cfg.get("enabled", True))
     min_exits = max(1, int(cfg.get("min_completed_exits", 4)))
     min_net = float(cfg.get("minimum_net_pnl_eur", 0.0))
+    recovery_enabled = bool(cfg.get("recovery_enabled", True))
+    recovery_order_eur = max(
+        5.0,
+        min(6.0, float(cfg.get("recovery_order_eur", 5.50))),
+    )
+    recovery_cooldown_seconds = max(
+        900.0,
+        float(cfg.get("recovery_cooldown_seconds", 1800.0)),
+    )
+    recovery_min_score = max(
+        92.0,
+        min(100.0, float(cfg.get("recovery_min_score", 92.0))),
+    )
+    recovery_min_confidence = max(
+        0.75,
+        min(1.0, float(cfg.get("recovery_min_confidence", 0.75))),
+    )
+    recovery_min_signal_strength = max(
+        80.0,
+        min(100.0, float(cfg.get("recovery_min_signal_strength", 80.0))),
+    )
+    recovery_min_winrate_pct = max(
+        50.0,
+        min(100.0, float(cfg.get("recovery_min_winrate_pct", 50.0))),
+    )
+    recovery_max_net_deficit_eur = max(
+        0.0,
+        float(cfg.get("recovery_max_net_deficit_eur", 0.50)),
+    )
+    recovery_strategies = {
+        str(name).strip()
+        for name in (cfg.get("recovery_strategies") or ["GridRunner"])
+        if str(name).strip()
+    }
+
     summary = agent.profit_engine.as_summary().get("by_strategy", {}) or {}
     blocked = []
     evaluated = []
+    now = time.time()
     for strategy in agent._strategies.values():
         row = summary.get(strategy.name, {}) or {}
         exits = int(row.get("wins") or 0) + int(row.get("losses") or 0)
         net = float(row.get("net_pnl") or 0.0)
+        winrate = float(row.get("winrate_pct") or 0.0)
         evidence_blocked = bool(enabled and exits >= min_exits and net < min_net)
+
+        score = float(strategy._config.get("_autonomous_score", 0.0) or 0.0)
+        confidence = float(
+            strategy._config.get("_autonomous_confidence", 0.0) or 0.0
+        )
+        signal_strength = float(
+            strategy._config.get("_autonomous_signal_strength", 0.0) or 0.0
+        )
+        router_allowed = bool(
+            strategy._config.get("_autonomous_entry_allowed", True)
+        )
+        last_recovery_attempt = max(
+            0.0,
+            float(
+                strategy._config.get("_evidence_recovery_last_attempt_at", 0.0)
+                or 0.0
+            ),
+        )
+        cooldown_remaining = max(
+            0.0,
+            recovery_cooldown_seconds - (now - last_recovery_attempt),
+        ) if last_recovery_attempt > 0 else 0.0
+        deficit = max(0.0, min_net - net)
+
+        recovery_allowed = bool(
+            evidence_blocked
+            and recovery_enabled
+            and strategy.name in recovery_strategies
+            and deficit <= recovery_max_net_deficit_eur
+            and winrate >= recovery_min_winrate_pct
+            and router_allowed
+            and score >= recovery_min_score
+            and confidence >= recovery_min_confidence
+            and signal_strength >= recovery_min_signal_strength
+            and cooldown_remaining <= 0
+        )
+
         strategy._config["_evidence_completed_exits"] = exits
         strategy._config["_evidence_net_pnl_eur"] = net
         strategy._config["_evidence_entry_blocked"] = evidence_blocked
         strategy._config["_evidence_entry_reason"] = (
             "live_evidence_gate" if evidence_blocked else ""
         )
+        strategy._config["_evidence_recovery_allowed"] = recovery_allowed
+        strategy._config["_evidence_recovery_order_eur"] = (
+            recovery_order_eur if recovery_allowed else 0.0
+        )
+        strategy._config["_evidence_recovery_cooldown_remaining_seconds"] = (
+            cooldown_remaining
+        )
+
         status_row = {
             "strategy": strategy.name,
             "completed_exits": exits,
             "net_pnl_eur": round(net, 4),
+            "winrate_pct": round(winrate, 2),
             "blocked": evidence_blocked,
+            "recovery_allowed": recovery_allowed,
+            "recovery_order_eur": round(recovery_order_eur, 2)
+            if recovery_allowed
+            else 0.0,
+            "recovery_cooldown_remaining_seconds": round(cooldown_remaining, 1),
         }
         evaluated.append(status_row)
         if evidence_blocked:
@@ -936,6 +1030,14 @@ def _apply_strategy_evidence_gate(agent: AutoTrader) -> dict[str, object]:
         "enabled": enabled,
         "min_completed_exits": min_exits,
         "minimum_net_pnl_eur": min_net,
+        "recovery_enabled": recovery_enabled,
+        "recovery_order_eur": recovery_order_eur,
+        "recovery_cooldown_seconds": recovery_cooldown_seconds,
+        "recovery_min_score": recovery_min_score,
+        "recovery_min_confidence": recovery_min_confidence,
+        "recovery_min_signal_strength": recovery_min_signal_strength,
+        "recovery_min_winrate_pct": recovery_min_winrate_pct,
+        "recovery_max_net_deficit_eur": recovery_max_net_deficit_eur,
         "blocked": blocked,
         "evaluated": evaluated,
     }
