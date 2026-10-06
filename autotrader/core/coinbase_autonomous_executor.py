@@ -264,7 +264,7 @@ class CoinbaseAutonomousExecutor:
             if self.config.portfolio_id
             else self.client.account_balances()
         )
-        result = {"EUR": 0.0, "BTC": 0.0}
+        result = {"EUR": 0.0, "USDC": 0.0, "BTC": 0.0}
         for row in payload.get("assets", []) if isinstance(payload, dict) else []:
             if not isinstance(row, dict):
                 continue
@@ -277,9 +277,24 @@ class CoinbaseAutonomousExecutor:
                 pass
         return result
 
+    def _usdc_to_eur(self) -> float:
+        """Conservative EUR value for one USDC using the executable bid."""
+        try:
+            book = self.client.top_of_book("USDC-EUR")
+            rate = float(book.bid_price)
+        except Exception:
+            return 0.0
+        return rate if rate > 0 else 0.0
+
     def _account_nav(self, bid: float) -> tuple[float, dict[str, float]]:
         balances = self._balances()
-        nav = balances["EUR"] + balances["BTC"] * bid
+        usdc_to_eur = self._usdc_to_eur() if balances.get("USDC", 0.0) > 0 else 0.0
+        balances["_USDC_TO_EUR"] = usdc_to_eur
+        nav = (
+            balances["EUR"]
+            + balances["USDC"] * usdc_to_eur
+            + balances["BTC"] * bid
+        )
         return max(0.0, nav), balances
 
     def _managed_equity(self, bid: float) -> float:
@@ -287,13 +302,7 @@ class CoinbaseAutonomousExecutor:
         return max(0.0, self.state.managed_cash_eur + position_value)
 
     def _reconcile_isolated_cash(self, balances: dict[str, float], now: float) -> None:
-        """Adopt EUR only from the configured isolated agent portfolio.
-
-        Manual funding of the dedicated Coinbase portfolio must become managed
-        cash without ever reading from or spending the default portfolio.
-        Reconciliation is intentionally limited to flat/no-pending state so an
-        in-flight order or managed BTC position cannot be double-counted.
-        """
+        """Adopt EUR + USDC cash only from the configured isolated portfolio."""
         if not self.config.portfolio_id:
             return
         if (
@@ -302,7 +311,12 @@ class CoinbaseAutonomousExecutor:
             or self.state.submission_intent is not None
         ):
             return
-        available_eur = max(0.0, float(balances.get("EUR") or 0.0))
+        usdc_to_eur = max(0.0, float(balances.get("_USDC_TO_EUR") or 0.0))
+        available_eur = max(
+            0.0,
+            float(balances.get("EUR") or 0.0)
+            + float(balances.get("USDC") or 0.0) * usdc_to_eur,
+        )
         if abs(self.state.managed_cash_eur - available_eur) < 1e-8:
             return
         previous = self.state.managed_cash_eur
@@ -312,6 +326,9 @@ class CoinbaseAutonomousExecutor:
             "action": "ISOLATED_CASH_RECONCILED",
             "previous_managed_cash_eur": round(previous, 8),
             "managed_cash_eur": round(available_eur, 8),
+            "eur_available": round(float(balances.get("EUR") or 0.0), 8),
+            "usdc_available": round(float(balances.get("USDC") or 0.0), 8),
+            "usdc_to_eur": round(usdc_to_eur, 8),
         }
         self._audit(dict(self.state.last_action))
         self._save()
