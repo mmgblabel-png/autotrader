@@ -3283,8 +3283,8 @@ async def dashboard_snapshot() -> dict[str, object]:
     """Aggregate dashboard reads into one authenticated request.
 
     Sections keep their existing implementation and fail independently. The
-    browser therefore keeps partial-data behavior while avoiding 26+ separate
-    reverse-proxy requests every refresh.
+    browser therefore keeps partial-data behavior while serving a Bitvavo-only
+    control-room payload without polling external exchange sections.
     """
     sections = [
         ("paper_report", paper_report, (), {}),
@@ -3299,9 +3299,6 @@ async def dashboard_snapshot() -> dict[str, object]:
         ("strategies", strategies, (), {}),
         ("bitvavo_live_state", bitvavo_live_state, (), {}),
         ("live_pnl", live_pnl, (), {}),
-        ("coinbase_security", coinbase_security_status, (), {}),
-        ("coinbase_live_state", coinbase_live_state, (), {}),
-        ("arbitrage", coinbase_bitvavo_shadow_scan, (), {}),
         ("shadow", shadow_strategy_status, (), {}),
         ("allocator", allocator_v2_status, (), {}),
         ("orders", order_activity, (), {"limit": 100}),
@@ -3309,7 +3306,6 @@ async def dashboard_snapshot() -> dict[str, object]:
         ("opportunities", optimization_opportunities, (), {}),
         ("fee_efficiency", optimization_fee_efficiency, (), {}),
         ("portfolio_goal", portfolio_goal_status, (), {}),
-        ("binance_reference", binance_btc_reference, (), {}),
         ("autonomy", autonomy_status, (), {}),
         ("risk_lab", leverage_martingale_risk_lab_status, (), {}),
         ("three_hour", three_hour_report, (), {}),
