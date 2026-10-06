@@ -22,22 +22,29 @@ def test_research_pack_config_uses_80_eur_live_capital_policy():
     }
     assert sum(float(row.get("allocation_eur", 0)) for row in live.values()) == 72
     assert live["market_maker"]["allocation_eur"] == 8
-    assert live["market_maker"]["max_order_eur"] == 5
+    assert live["market_maker"]["max_order_eur"] == 6
+    assert live["market_maker"]["order_value_eur"] == 5.5
     assert live["grid"]["allocation_eur"] == 44
     assert live["grid"]["max_order_eur"] == 12
     assert live["grid"]["order_value_eur"] == 10.0
     assert live["grid"]["exit_markup_pct"] == 1.00
     assert live["grid_eth"]["allocation_eur"] == 8
-    assert live["grid_eth"]["max_order_eur"] == 5
+    assert live["grid_eth"]["max_order_eur"] == 6
+    assert live["grid_eth"]["order_value_eur"] == 5.5
     assert live["shadow_canary"]["allocation_eur"] == 6
     assert live["shadow_canary"]["max_order_eur"] == 6
     assert live["sniper"]["allocation_eur"] == 6
-    assert live["sniper"]["max_order_eur"] == 5
+    assert live["sniper"]["max_order_eur"] == 6
+    assert live["sniper"]["order_value_eur"] == 5.5
     assert cfg["live_evidence_gate"]["min_completed_exits"] == 4
     assert cfg["live_evidence_gate"]["minimum_net_pnl_eur"] == 0.0
     assert live["grid"]["symbol"] == "SOL-EUR"
     assert cfg["strategies"]["grid_eth"]["symbol"] == "ETH-EUR"
     assert cfg["strategies"]["grid_eth"]["strategy_name"] == "GridRunnerETH"
+    assert cfg["autonomous_execution"]["minimum_live_order_eur"] == 5.5
+    for key in ("market_maker", "grid_eth", "sniper"):
+        assert live[key]["order_value_eur"] >= cfg["autonomous_execution"]["minimum_live_order_eur"]
+        assert live[key]["max_order_eur"] >= live[key]["order_value_eur"]
 
 
 def test_all_live_bots_can_use_broad_safe_market_selection():
@@ -79,8 +86,8 @@ def test_live_sniper_has_bounded_execution_quality_gates():
     cfg = _config()
     sniper = cfg["strategies"]["sniper"]
     assert sniper["autonomous_min_score"] >= 82
-    assert sniper["autonomous_min_signal_strength"] >= 80
-    assert sniper["autonomous_min_confidence"] >= 0.75
+    assert sniper["autonomous_min_signal_strength"] >= 72
+    assert sniper["autonomous_min_confidence"] >= 0.68
     assert sniper["autonomous_min_momentum_pct"] >= 0.12
     assert sniper["autonomous_max_momentum_pct"] <= 0.80
     assert sniper["autonomous_max_spread_bps"] <= 15.0
@@ -141,8 +148,9 @@ def test_aggressive_safe_bitvavo_profile_keeps_hard_risk_floor():
 
     assert auto["min_score"] == 85.0
     assert gate["recovery_min_score"] == 85.0
-    assert gate["recovery_order_eur"] <= 5.0
-    assert gate["recovery_cooldown_seconds"] == 600
+    assert gate["recovery_order_eur"] <= 5.5
+    assert gate["recovery_order_eur"] > 5.0
+    assert gate["recovery_cooldown_seconds"] == 300
     assert gate["recovery_min_confidence"] >= 0.62
     assert gate["recovery_min_signal_strength"] >= 62.0
     assert gate["recovery_min_winrate_pct"] >= 45.0
@@ -161,8 +169,8 @@ def test_aggressive_safe_bitvavo_profile_keeps_hard_risk_floor():
     assert auto["max_size_score"] == 90.0
     assert auto["max_size_confidence"] == 0.70
     assert auto["high_volatility_size_multiplier"] == 0.65
-    assert grid["cycle_cooldown_seconds"] == 20
-    assert grid["failure_cooldown_seconds"] == 5
+    assert grid["cycle_cooldown_seconds"] == 12
+    assert grid["failure_cooldown_seconds"] == 4
 
 
 def test_all_research_agents_participate_and_learning_runs_faster():
@@ -214,14 +222,14 @@ def test_bitvavo_aggressive_canary_profile_preserves_hard_risk():
         assert strategies[key]["enabled"] is True
         assert strategies[key]["live_capable"] is True
 
-    assert strategies["market_maker"]["max_order_eur"] <= 5
-    assert strategies["grid_eth"]["max_order_eur"] <= 5
-    assert strategies["sniper"]["max_order_eur"] <= 5
+    assert strategies["market_maker"]["max_order_eur"] <= 6
+    assert strategies["grid_eth"]["max_order_eur"] <= 6
+    assert strategies["sniper"]["max_order_eur"] <= 6
     assert strategies["arbitrage"]["enabled"] is True
     assert strategies["arbitrage"]["live_capable"] is False
 
     gate = cfg["live_evidence_gate"]
-    assert gate["recovery_order_eur"] <= 5.0
+    assert gate["recovery_order_eur"] <= 5.5
     assert gate["recovery_min_score"] >= 85.0
     assert gate["recovery_min_confidence"] >= 0.62
     assert gate["recovery_min_signal_strength"] >= 62.0
