@@ -37,7 +37,7 @@ class CoinbaseAutonomousConfig:
     require_isolated_portfolio: bool = True
     allow_existing_btc_seed: bool = False
     interval_seconds: float = 5.0
-    managed_capital_pct: float = 20.0
+    managed_capital_pct: float = 100.0
     cash_reserve_pct: float = 20.0
     max_single_trade_pct: float = 20.0
     max_order_eur: float = 5.0
@@ -64,7 +64,7 @@ class CoinbaseAutonomousConfig:
                 bool(cfg.get("allow_existing_btc_seed", False)),
             ),
             interval_seconds=max(2.0, float(cfg.get("interval_seconds", 5.0))),
-            managed_capital_pct=min(20.0, max(1.0, float(cfg.get("managed_capital_pct", 20.0)))),
+            managed_capital_pct=min(100.0, max(1.0, float(cfg.get("managed_capital_pct", 100.0)))),
             cash_reserve_pct=min(90.0, max(20.0, float(cfg.get("cash_reserve_pct", 20.0)))),
             max_single_trade_pct=min(20.0, max(1.0, float(cfg.get("max_single_trade_pct", 20.0)))),
             max_order_eur=max(1.0, float(cfg.get("max_order_eur", 5.0))),
@@ -257,6 +257,36 @@ class CoinbaseAutonomousExecutor:
     def _managed_equity(self, bid: float) -> float:
         position_value = self.state.position.base_size * bid if self.state.position else 0.0
         return max(0.0, self.state.managed_cash_eur + position_value)
+
+    def _reconcile_isolated_cash(self, balances: dict[str, float], now: float) -> None:
+        """Adopt EUR only from the configured isolated agent portfolio.
+
+        Manual funding of the dedicated Coinbase portfolio must become managed
+        cash without ever reading from or spending the default portfolio.
+        Reconciliation is intentionally limited to flat/no-pending state so an
+        in-flight order or managed BTC position cannot be double-counted.
+        """
+        if not self.config.portfolio_id:
+            return
+        if (
+            self.state.position is not None
+            or self.state.pending is not None
+            or self.state.submission_intent is not None
+        ):
+            return
+        available_eur = max(0.0, float(balances.get("EUR") or 0.0))
+        if abs(self.state.managed_cash_eur - available_eur) < 1e-8:
+            return
+        previous = self.state.managed_cash_eur
+        self.state.managed_cash_eur = available_eur
+        self.state.last_action = {
+            "at": now,
+            "action": "ISOLATED_CASH_RECONCILED",
+            "previous_managed_cash_eur": round(previous, 8),
+            "managed_cash_eur": round(available_eur, 8),
+        }
+        self._audit(dict(self.state.last_action))
+        self._save()
 
     def _roll_day(self, now: float, managed_equity: float) -> None:
         key = datetime.fromtimestamp(now, tz=timezone.utc).strftime("%Y-%m-%d")
@@ -571,7 +601,10 @@ class CoinbaseAutonomousExecutor:
         bid, ask = float(book.bid_price), float(book.ask_price)
         nav, balances = self._account_nav(bid)
         reserve = nav * self.config.cash_reserve_pct / 100.0
-        sleeve = nav * self.config.managed_capital_pct / 100.0
+        sleeve = min(
+            nav * self.config.managed_capital_pct / 100.0,
+            max(0.0, nav - reserve),
+        )
         max_trade = nav * self.config.max_single_trade_pct / 100.0
         gates = self._global_gates(armed=armed, shadow_status=shadow_status)
         return {
@@ -611,6 +644,8 @@ class CoinbaseAutonomousExecutor:
             ask = float(ready["best_ask"])
             nav = float(ready["portfolio_nav_eur"])
             balances = dict(ready["balances"])
+            self._reconcile_isolated_cash(balances, ts)
+            ready["managed_cash_eur"] = round(self.state.managed_cash_eur, 8)
             managed_equity = self._managed_equity(bid)
             self._roll_day(ts, managed_equity)
             self.state.peak_managed_equity_eur = max(self.state.peak_managed_equity_eur, managed_equity)
@@ -783,6 +818,7 @@ class CoinbaseAutonomousExecutor:
             "hard_rules": {
                 "spot_only": True,
                 "max_managed_capital_pct": self.config.managed_capital_pct,
+                "managed_portfolio_scope_pct": self.config.managed_capital_pct,
                 "max_single_trade_pct": self.config.max_single_trade_pct,
                 "min_cash_reserve_pct": self.config.cash_reserve_pct,
                 "max_daily_loss_pct": self.config.max_daily_loss_pct,

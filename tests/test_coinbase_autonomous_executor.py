@@ -16,8 +16,10 @@ class FakeCoinbase:
         self.ask = 75360.0
         self.created = []
         self.orders = {}
+        self.balance_portfolio_ids = []
+        self.preview_portfolio_ids = []
 
-    def authenticated_accounts_probe(self):
+    def authenticated_accounts_probe(self, portfolio_id=None):
         return {
             "authenticated": True,
             "format_compatible": True,
@@ -25,7 +27,8 @@ class FakeCoinbase:
             "error_category": None,
         }
 
-    def account_balances(self):
+    def account_balances(self, portfolio_id=None):
+        self.balance_portfolio_ids.append(portfolio_id)
         rows = []
         if self.eur > 0:
             rows.append({
@@ -53,6 +56,7 @@ class FakeCoinbase:
         )
 
     def preview_spot_market_order(self, *, product_id, side, quote_size=None, base_size=None, portfolio_id=None):
+        self.preview_portfolio_ids.append(portfolio_id)
         reference = self.ask if side == "BUY" else self.bid
         notional = float(quote_size) if quote_size else float(base_size) * reference
         return {
@@ -81,6 +85,7 @@ class FakeCoinbase:
             "quote_size": quote_size,
             "base_size": base_size,
             "preview_id": preview_id,
+            "portfolio_id": portfolio_id,
         }
         self.created.append(row)
         if side == "SELL":
@@ -308,3 +313,51 @@ def test_legacy_live_order_counter_is_flagged_when_audit_is_missing(tmp_path, mo
     assert status["live_orders_sent"] == 2
     assert status["audited_submissions"] == 0
     assert status["unattributed_legacy_live_orders"] == 2
+
+
+def test_isolated_agent_portfolio_adopts_manual_eur_and_never_uses_default(tmp_path, monkeypatch):
+    _set_live_env(monkeypatch)
+    fake = FakeCoinbase()
+    fake.eur = 6.0
+    fake.btc = 0.0
+    cfg = CoinbaseAutonomousConfig(
+        state_path=str(tmp_path / "coinbase.json"),
+        portfolio_id="agent-portfolio",
+        require_isolated_portfolio=True,
+        require_shadow_promotion=False,
+        managed_capital_pct=100.0,
+        cash_reserve_pct=20.0,
+        max_single_trade_pct=20.0,
+        max_order_eur=5.0,
+    )
+    executor = CoinbaseAutonomousExecutor(cfg, client=fake)
+    status = executor.tick(
+        armed=True,
+        shadow_status={
+            "promotion_ready": True,
+            "last_signal": {
+                "decisions": [{
+                    "decision": "LONG",
+                    "window_key": "BTC-EUR:3600:agent",
+                    "duration_seconds": 3600,
+                    "seconds_remaining": 1800,
+                }]
+            },
+        },
+    )
+
+    assert status["managed_cash_eur"] == 6.0
+    assert status["readiness"]["portfolio_nav_eur"] == 6.0
+    assert status["readiness"]["required_cash_reserve_eur"] == 1.2
+    assert status["readiness"]["managed_sleeve_target_eur"] == 4.8
+    assert status["readiness"]["max_single_trade_eur"] == 1.2
+    assert status["live_orders_sent"] == 1
+    assert float(fake.created[0]["quote_size"]) == 1.2
+    assert fake.created[0]["portfolio_id"] == "agent-portfolio"
+    assert all(pid == "agent-portfolio" for pid in fake.balance_portfolio_ids)
+    assert all(pid == "agent-portfolio" for pid in fake.preview_portfolio_ids)
+    assert any(
+        row.get("action") == "ISOLATED_CASH_RECONCILED"
+        and row.get("managed_cash_eur") == 6.0
+        for row in status["order_audit"]
+    )

@@ -551,7 +551,7 @@ strategies:
 coinbase_zscore_shadow:
   enabled: true
   product_id: BTC-EUR
-  durations_seconds: [300, 900]
+  durations_seconds: [300, 900, 1800, 3600]
   interval_seconds: 5
   volatility_lookback_seconds: 3600
   drift_lookback_seconds: 90
@@ -563,9 +563,10 @@ coinbase_zscore_shadow:
   min_probability_long: 0.62
   max_entry_reference_z: 2.0
   max_forecast_z: 2.0
-  # Conservative planning floor; live execution still uses authenticated
-  # preview gating before every order. Spread is modeled by ask entry / bid exit.
-  fee_bps_each_leg: 25
+  # Current Coinbase Intro taker fee is 0.50% (=50 bps) per market-order leg.
+  # Live execution still verifies the authenticated preview before every order.
+  # Spread is modeled separately by ask entry / bid exit.
+  fee_bps_each_leg: 50
   slippage_bps_each_leg: 5
   safety_margin_bps: 10
   min_after_cost_edge_bps: 15
@@ -596,7 +597,9 @@ coinbase_autonomous_execution:
   interval_seconds: 5
   # Only this sleeve is controlled by the Coinbase agent. Remaining BTC is not
   # adopted as bot inventory.
-  managed_capital_pct: 20.0
+  # The entire isolated Coinbase Agent portfolio is agent-owned capital.
+  # Exposure is still bounded independently by max_single_trade_pct and the cash reserve.
+  managed_capital_pct: 100.0
   cash_reserve_pct: 20.0
   max_single_trade_pct: 20.0
   max_order_eur: 5.0

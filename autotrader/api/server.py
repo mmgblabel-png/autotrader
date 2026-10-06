@@ -1696,12 +1696,54 @@ async def _arbitrage_shadow_loop(app: FastAPI) -> None:
 
 
 async def _coinbase_zscore_shadow_loop(app: FastAPI) -> None:
-    """Run the persistent Coinbase BTC short-horizon shadow engine."""
+    """Run Coinbase BTC shadow research and surface promotion progress."""
     first_success = True
+    last_summary = None
+    last_summary_log_at = 0.0
     while True:
         try:
             status = await asyncio.to_thread(app.state.coinbase_zscore_shadow.tick)
             app.state.coinbase_zscore_shadow_error = None
+            now_mono = time.monotonic()
+            blockers = tuple(status.get("promotion_blockers") or [])
+            summary = (
+                int(status.get("settled_trades") or 0),
+                int(status.get("wins") or 0),
+                int(status.get("losses") or 0),
+                bool(status.get("promotion_ready")),
+                blockers,
+            )
+            if (
+                first_success
+                or summary != last_summary
+                or (now_mono - last_summary_log_at) >= 300.0
+            ):
+                decisions = ((status.get("last_signal") or {}).get("decisions") or [])
+                decision_reasons = sorted({
+                    str(row.get("reason") or row.get("decision") or "unknown")
+                    for row in decisions
+                    if isinstance(row, dict)
+                })
+                log.info(
+                    "Coinbase shadow evidence: product=%s durations=%s settled=%d wins=%d losses=%d "
+                    "winrate=%.2f pnl=%.4f pf=%s dd=%.3f promotion_ready=%s blockers=%s "
+                    "progress=%s decision_reasons=%s",
+                    status.get("product_id"),
+                    app.state.coinbase_zscore_shadow.config.durations_seconds,
+                    int(status.get("settled_trades") or 0),
+                    int(status.get("wins") or 0),
+                    int(status.get("losses") or 0),
+                    float(status.get("winrate_pct") or 0.0),
+                    float(status.get("realized_pnl_eur") or 0.0),
+                    status.get("profit_factor"),
+                    float(status.get("max_drawdown_pct") or 0.0),
+                    bool(status.get("promotion_ready")),
+                    list(blockers),
+                    status.get("promotion_progress") or {},
+                    decision_reasons,
+                )
+                last_summary = summary
+                last_summary_log_at = now_mono
             if first_success:
                 log.info(
                     "Coinbase Z-score shadow active: product=%s durations=%s api_key_required=%s live_orders_sent=%s",
