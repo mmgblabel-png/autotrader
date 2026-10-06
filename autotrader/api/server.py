@@ -921,24 +921,26 @@ def _apply_strategy_evidence_gate(agent: AutoTrader) -> dict[str, object]:
         min(6.0, float(cfg.get("recovery_order_eur", 5.50))),
     )
     recovery_cooldown_seconds = max(
-        900.0,
-        float(cfg.get("recovery_cooldown_seconds", 1800.0)),
+        300.0,
+        float(cfg.get("recovery_cooldown_seconds", 900.0)),
     )
+    # Recovery is intentionally more permissive than normal evidence release,
+    # but it can never undercut the immutable >85 live score floor.
     recovery_min_score = max(
-        92.0,
-        min(100.0, float(cfg.get("recovery_min_score", 92.0))),
+        86.0,
+        min(100.0, float(cfg.get("recovery_min_score", 86.0))),
     )
     recovery_min_confidence = max(
-        0.75,
-        min(1.0, float(cfg.get("recovery_min_confidence", 0.75))),
+        0.65,
+        min(1.0, float(cfg.get("recovery_min_confidence", 0.65))),
     )
     recovery_min_signal_strength = max(
-        80.0,
-        min(100.0, float(cfg.get("recovery_min_signal_strength", 80.0))),
+        65.0,
+        min(100.0, float(cfg.get("recovery_min_signal_strength", 65.0))),
     )
     recovery_min_winrate_pct = max(
-        50.0,
-        min(100.0, float(cfg.get("recovery_min_winrate_pct", 50.0))),
+        45.0,
+        min(100.0, float(cfg.get("recovery_min_winrate_pct", 45.0))),
     )
     recovery_max_net_deficit_eur = max(
         0.0,
