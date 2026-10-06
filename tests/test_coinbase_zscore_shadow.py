@@ -137,3 +137,44 @@ def test_fast_canary_gate_keeps_quality_requirements(tmp_path):
 
     engine.state.realized_pnl_eur = 0.05
     assert engine.status()["promotion_ready"] is False
+
+
+def test_coinbase_shadow_accepts_fee_realistic_evidence_horizons(tmp_path):
+    cfg = CoinbaseZScoreConfig.from_mapping({
+        "durations_seconds": [300, 900, 1800, 3600],
+        "state_path": str(tmp_path / "state.json"),
+        "status_path": str(tmp_path / "status.json"),
+    })
+    assert cfg.durations_seconds == (300, 900, 1800, 3600)
+
+
+def test_promotion_status_exposes_exact_blockers_and_progress(tmp_path):
+    cfg = CoinbaseZScoreConfig(
+        state_path=str(tmp_path / "state.json"),
+        status_path=str(tmp_path / "status.json"),
+        promotion_min_settled_trades=50,
+        promotion_min_winrate_pct=52.0,
+        promotion_min_net_pnl_eur=0.10,
+        promotion_min_profit_factor=1.25,
+        promotion_max_drawdown_pct=5.0,
+    )
+    engine = CoinbaseZScoreShadowEngine(cfg, market_data=FakeCoinbase())
+    engine.state.settled_trades = 10
+    engine.state.wins = 4
+    engine.state.losses = 6
+    engine.state.gross_profit_eur = 0.04
+    engine.state.gross_loss_eur = 0.10
+    engine.state.realized_pnl_eur = -0.06
+    engine.state.peak_equity_eur = 80.0
+    engine.state.max_drawdown_eur = 0.50
+
+    status = engine.status()
+    assert status["promotion_ready"] is False
+    assert set(status["promotion_blockers"]) == {
+        "settled_trades", "winrate", "net_pnl", "profit_factor"
+    }
+    assert status["promotion_progress"]["settled_trades_remaining"] == 40
+    assert status["promotion_progress"]["winrate_gap_pct"] == 12.0
+    assert status["promotion_progress"]["net_pnl_gap_eur"] == 0.16
+    assert status["promotion_progress"]["profit_factor_gap"] == 0.85
+    assert status["promotion_gates"]["drawdown"] is True
