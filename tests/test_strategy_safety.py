@@ -432,3 +432,84 @@ def test_sniper_uses_bounded_ioc_limit_entry_instead_of_market_chase(tmp_path):
     assert order.post_only is False
     assert order.price <= 1.1110 * 1.0012 + 1e-12
     assert order.quantity * order.price <= 6.000001
+
+
+def test_grid_recovery_canary_is_capped_to_small_notional(tmp_path):
+    om = OrderManager()
+    strategy = GridRunner(
+        om,
+        RiskManager(),
+        ProfitEngine(export_dir=str(tmp_path)),
+        {
+            "enabled": True,
+            "symbol": "SOL-EUR",
+            "exchange": "bitvavo",
+            "order_value_eur": 12.0,
+            "entry_offset_pct": 0.6,
+            "exit_markup_pct": 1.0,
+            "_current_price": 100.0,
+            "_min_order_quote": 5.0,
+            "_live_balance_snapshot_ready": True,
+            "_available_quote": 50.0,
+            "_available_base": 0.0,
+            "_bot_base_inventory": 0.0,
+            "_bot_average_entry_price": 0.0,
+            "_exchange_open_orders_snapshot_ready": True,
+            "_exchange_open_order_count": 0,
+            "_autonomous_entry_allowed": True,
+            "_evidence_entry_blocked": True,
+            "_evidence_recovery_allowed": True,
+            "_evidence_recovery_order_eur": 5.5,
+            "_autonomous_score": 95.0,
+            "_autonomous_confidence": 0.85,
+            "_autonomous_signal_strength": 90.0,
+        },
+    )
+    strategy.start()
+    strategy.tick()
+
+    orders = om.open_orders("GridRunner")
+    assert len(orders) == 1
+    order = orders[0]
+    assert order.side is OrderSide.BUY
+    assert order.quantity * order.price <= 5.500001
+    assert order.quantity * order.price >= 5.0
+    assert strategy._config["_evidence_recovery_last_attempt_at"] > 0
+    assert strategy._config["_evidence_recovery_allowed"] is False
+
+
+def test_grid_tighter_stop_loss_triggers_protective_exit(tmp_path):
+    om = OrderManager()
+    strategy = GridRunner(
+        om,
+        RiskManager(),
+        ProfitEngine(export_dir=str(tmp_path)),
+        {
+            "enabled": True,
+            "symbol": "W-EUR",
+            "exchange": "bitvavo",
+            "order_value_eur": 6.0,
+            "entry_offset_pct": 0.6,
+            "exit_markup_pct": 1.0,
+            "protection_stop_loss_pct": 1.25,
+            "protection_trailing_activation_pct": 0.90,
+            "protection_trailing_drawdown_pct": 0.75,
+            "_current_price": 98.70,
+            "_live_balance_snapshot_ready": True,
+            "_available_quote": 50.0,
+            "_available_base": 0.10,
+            "_bot_base_inventory": 0.10,
+            "_bot_average_entry_price": 100.0,
+            "_exchange_open_orders_snapshot_ready": True,
+            "_exchange_open_order_count": 0,
+        },
+    )
+    strategy.start()
+    strategy.tick()
+
+    orders = om.open_orders("GridRunner")
+    assert len(orders) == 1
+    order = orders[0]
+    assert order.side is OrderSide.SELL
+    assert order.order_type is OrderType.MARKET
+    assert strategy._config["_protection_pending_action"] == "stop_loss"
