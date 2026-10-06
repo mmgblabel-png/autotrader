@@ -84,6 +84,7 @@ from autotrader.core.coinbase_zscore_shadow import CoinbaseZScoreShadowEngine
 from autotrader.core.coinbase_autonomous_executor import CoinbaseAutonomousExecutor
 from autotrader.connectors.bitpanda_fusion import BitpandaFusionAdapter
 from autotrader.api.dashboard_html import dashboard_html
+from autotrader.api.coinbase_dashboard_html import coinbase_dashboard_html
 from autotrader.ml.shadow import walk_forward, lookahead_analysis, recursive_analysis
 
 log = get_logger("api.server")
@@ -2267,6 +2268,12 @@ def dashboard() -> HTMLResponse:
     return HTMLResponse(dashboard_html())
 
 
+@app.get("/coinbase-dashboard", response_class=HTMLResponse, include_in_schema=False)
+def coinbase_dashboard() -> HTMLResponse:
+    """Serve the standalone Coinbase-only control room."""
+    return HTMLResponse(coinbase_dashboard_html())
+
+
 def _protected_path(path: str) -> bool:
     """Protect dashboard data while keeping Railway's healthcheck public."""
     return (path.startswith("/api/") and path not in {"/api/health", "/api/auth/login"}) or path.startswith("/strategies/")
@@ -3990,6 +3997,54 @@ def coinbase_live_state() -> dict[str, object]:
             status_code=exc.status or 503,
             detail={"message": "Coinbase balance request failed", "category": exc.category},
         ) from exc
+
+
+@app.get("/api/coinbase/dashboard/snapshot", tags=["coinbase"])
+def coinbase_dashboard_snapshot() -> dict[str, object]:
+    """Aggregate only Coinbase Agent data for the dedicated Coinbase dashboard.
+
+    The balance request is explicitly scoped to the configured isolated
+    Coinbase Agent portfolio. No Bitvavo balances, orders, PnL, controls or
+    strategy state are exposed through this endpoint.
+    """
+    executor = app.state.coinbase_autonomous_executor
+    portfolio_id = str(executor.config.portfolio_id or "").strip()
+    shadow = coinbase_zscore_shadow_status()
+    autonomous = coinbase_autonomous_status()
+    readiness = coinbase_live_readiness()
+
+    try:
+        balances = CoinbaseAdvancedMarketData().account_balances(
+            portfolio_id=portfolio_id or None,
+        )
+    except CoinbaseAuthenticationError as exc:
+        balances = {
+            "venue": "coinbase_advanced",
+            "authenticated": False,
+            "read_only": True,
+            "portfolio_scoped": bool(portfolio_id),
+            "asset_count": 0,
+            "assets": [],
+            "error_category": exc.category,
+        }
+
+    universe_status = app.state.market_universe.status()
+    coinbase_universe = dict(universe_status.get("coinbase") or {})
+    return {
+        "venue": "coinbase_advanced",
+        "generated_at": time.time(),
+        "portfolio_isolated": bool(
+            portfolio_id
+            and executor.config.require_isolated_portfolio
+        ),
+        "balances": balances,
+        "autonomous": autonomous,
+        "readiness": readiness,
+        "shadow": shadow,
+        "universe": coinbase_universe,
+        "universe_updated_at": universe_status.get("updated_at"),
+        "universe_error": (universe_status.get("venue_errors") or {}).get("coinbase"),
+    }
 
 
 @app.get("/api/security/bitvavo", tags=["security"])
