@@ -551,7 +551,7 @@ strategies:
 coinbase_zscore_shadow:
   enabled: true
   product_id: BTC-EUR
-  durations_seconds: [300, 900]
+  durations_seconds: [300, 900, 1800, 3600]
   interval_seconds: 5
   volatility_lookback_seconds: 3600
   drift_lookback_seconds: 90
