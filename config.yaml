@@ -596,7 +596,9 @@ coinbase_autonomous_execution:
   interval_seconds: 5
   # Only this sleeve is controlled by the Coinbase agent. Remaining BTC is not
   # adopted as bot inventory.
-  managed_capital_pct: 20.0
+  # The entire isolated Coinbase Agent portfolio is agent-owned capital.
+  # Exposure is still bounded independently by max_single_trade_pct and the cash reserve.
+  managed_capital_pct: 100.0
   cash_reserve_pct: 20.0
   max_single_trade_pct: 20.0
   max_order_eur: 5.0
