@@ -33,6 +33,7 @@ def _env_true(name: str, default: bool = False) -> bool:
 class CoinbaseAutonomousConfig:
     enabled: bool = True
     product_id: str = "BTC-EUR"
+    supported_products: tuple[str, ...] = ("BTC-EUR", "BTC-USDC")
     portfolio_id: str = ""
     require_isolated_portfolio: bool = True
     allow_existing_btc_seed: bool = False
@@ -42,12 +43,18 @@ class CoinbaseAutonomousConfig:
     max_single_trade_pct: float = 20.0
     max_order_eur: float = 5.0
     min_order_eur: float = 1.0
+    full_capacity: bool = False
     max_daily_loss_pct: float = 3.0
     max_drawdown_pct: float = 10.0
     stop_loss_pct: float = 1.0
     take_profit_pct: float = 1.5
     max_preview_fee_bps: float = 60.0
     max_preview_slippage_bps: float = 25.0
+    assumed_exit_fee_bps: float = 50.0
+    min_live_net_edge_bps: float = 10.0
+    max_spread_bps: float = 25.0
+    trailing_activate_pct: float = 0.8
+    trailing_stop_pct: float = 0.5
     require_shadow_promotion: bool = True
     state_path: str = "/data/coinbase_autonomous_canary.json"
 
@@ -57,6 +64,11 @@ class CoinbaseAutonomousConfig:
         return cls(
             enabled=bool(cfg.get("enabled", True)),
             product_id=str(cfg.get("product_id", "BTC-EUR")).upper(),
+            supported_products=tuple(
+                str(value).upper()
+                for value in cfg.get("supported_products", ["BTC-EUR", "BTC-USDC"])
+                if str(value).upper() in {"BTC-EUR", "BTC-USDC"}
+            ) or ("BTC-EUR",),
             portfolio_id=str(os.getenv("COINBASE_AGENT_PORTFOLIO_ID", cfg.get("portfolio_id", "")) or "").strip(),
             require_isolated_portfolio=bool(cfg.get("require_isolated_portfolio", True)),
             allow_existing_btc_seed=_env_true(
@@ -69,12 +81,18 @@ class CoinbaseAutonomousConfig:
             max_single_trade_pct=min(20.0, max(1.0, float(cfg.get("max_single_trade_pct", 20.0)))),
             max_order_eur=max(1.0, float(cfg.get("max_order_eur", 5.0))),
             min_order_eur=max(1.0, float(cfg.get("min_order_eur", 1.0))),
+            full_capacity=bool(cfg.get("full_capacity", False)),
             max_daily_loss_pct=min(3.0, max(0.1, float(cfg.get("max_daily_loss_pct", 3.0)))),
             max_drawdown_pct=min(10.0, max(0.1, float(cfg.get("max_drawdown_pct", 10.0)))),
             stop_loss_pct=max(0.1, float(cfg.get("stop_loss_pct", 1.0))),
             take_profit_pct=max(0.1, float(cfg.get("take_profit_pct", 1.5))),
             max_preview_fee_bps=max(0.0, float(cfg.get("max_preview_fee_bps", 60.0))),
             max_preview_slippage_bps=max(0.0, float(cfg.get("max_preview_slippage_bps", 25.0))),
+            assumed_exit_fee_bps=max(0.0, float(cfg.get("assumed_exit_fee_bps", 50.0))),
+            min_live_net_edge_bps=max(0.0, float(cfg.get("min_live_net_edge_bps", 10.0))),
+            max_spread_bps=max(0.0, float(cfg.get("max_spread_bps", 25.0))),
+            trailing_activate_pct=max(0.1, float(cfg.get("trailing_activate_pct", 0.8))),
+            trailing_stop_pct=max(0.1, float(cfg.get("trailing_stop_pct", 0.5))),
             require_shadow_promotion=bool(cfg.get("require_shadow_promotion", True)),
             state_path=str(cfg.get("state_path", "/data/coinbase_autonomous_canary.json")),
         )
@@ -88,6 +106,10 @@ class ManagedPosition:
     window_key: str
     window_end: float
     opened_at: float
+    product_id: str = "BTC-EUR"
+    quote_currency: str = "EUR"
+    quote_to_eur: float = 1.0
+    peak_price: float = 0.0
 
 
 @dataclass
@@ -99,6 +121,9 @@ class PendingOrder:
     submitted_at: float
     window_key: str = ""
     window_end: float = 0.0
+    product_id: str = "BTC-EUR"
+    quote_currency: str = "EUR"
+    quote_to_eur: float = 1.0
 
 @dataclass
 class SubmissionIntent:
@@ -111,6 +136,9 @@ class SubmissionIntent:
     window_key: str = ""
     window_end: float = 0.0
     retry_count: int = 0
+    product_id: str = "BTC-EUR"
+    quote_currency: str = "EUR"
+    quote_to_eur: float = 1.0
 
 
 @dataclass
