@@ -1935,6 +1935,18 @@ def _start_enabled_strategy_runtimes(agent: AutoTrader) -> list[str]:
     return started
 
 
+def _running_strategies_are_approved(strategy_states: dict[str, dict]) -> bool:
+    """Allow enabled shadow runtimes while rejecting any disabled runtime that is running.
+
+    Live order authority is enforced separately through each strategy's live_capable
+    flag, the allocator, preflight, and the explicit live-arm gate.
+    """
+    return all(
+        (not state.get("running")) or bool(state.get("enabled"))
+        for state in strategy_states.values()
+    )
+
+
 @contextlib.asynccontextmanager
 async def _lifespan(app: FastAPI):
     """Initialise the agent, run its tick task, then stop it cleanly."""
@@ -2790,10 +2802,7 @@ def live_readiness():
         "growth_stage_total_budget_safe": growth_stage_total_budget_safe,
         "live_strategy_configured": bool(approved_live),
         "live_strategy_running": any(state.get("running") for state in approved_live),
-        "running_strategies_approved": all(
-            (not state.get("running")) or bool(state.get("live_capable"))
-            for state in strategy_states.values()
-        ),
+        "running_strategies_approved": _running_strategies_are_approved(strategy_states),
         "control_token_present": bool(os.getenv("AUTOTRADER_CONTROL_TOKEN", "").strip()),
     }
     ready = all(gates.values())

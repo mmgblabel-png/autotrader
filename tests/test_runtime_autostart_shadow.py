@@ -15,7 +15,7 @@ class _FakeAgent:
             "market_maker": {"enabled": True, "live_capable": True},
             "grid": {"enabled": True, "live_capable": True},
             "sniper": {"enabled": True, "live_capable": True},
-            "arbitrage": {"enabled": False, "live_capable": False},
+            "arbitrage": {"enabled": True, "live_capable": False},
         }
     def start(self, name):
         self.started.append(name)
@@ -31,17 +31,29 @@ def test_shadow_scan_never_reports_live_orders(monkeypatch):
     assert payload["markets"] == []
 
 
-def test_approved_runtime_selection_excludes_arbitrage():
+def test_enabled_shadow_runtime_autostarts_but_remains_non_live_capable():
     agent = _FakeAgent()
-    state = agent.list_strategies()
-    names = [
-        name for name, item in state.items()
-        if item.get("enabled") and item.get("live_capable")
-    ]
-    for name in names:
-        agent.start(name)
-    assert agent.started == ["market_maker", "grid", "sniper"]
-    assert "arbitrage" not in agent.started
+
+    started = server._start_enabled_strategy_runtimes(agent)
+
+    assert started == ["market_maker", "grid", "sniper", "arbitrage"]
+    assert agent.started == started
+    assert agent.list_strategies()["arbitrage"]["live_capable"] is False
+
+
+def test_readiness_allows_enabled_shadow_runtime_and_blocks_disabled_running_runtime():
+    states = {
+        "grid": {"enabled": True, "live_capable": True, "running": True},
+        "arbitrage": {"enabled": True, "live_capable": False, "running": True},
+    }
+    assert server._running_strategies_are_approved(states) is True
+
+    states["disabled_agent"] = {
+        "enabled": False,
+        "live_capable": False,
+        "running": True,
+    }
+    assert server._running_strategies_are_approved(states) is False
 
 
 def test_shadow_loop_updates_cache_without_arming(monkeypatch):
