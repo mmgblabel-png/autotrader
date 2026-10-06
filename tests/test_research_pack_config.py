@@ -132,3 +132,61 @@ def test_every_live_spot_strategy_has_stop_trailing_and_partial_profit_protectio
         assert row["protection_trailing_drawdown_pct"] > 0
         assert row["protection_partial_profit_trigger_pct"] > 0
         assert 0 < row["protection_partial_profit_fraction"] < 1
+
+
+def test_aggressive_safe_bitvavo_profile_keeps_hard_risk_floor():
+    cfg = _config()
+    gate = cfg["live_evidence_gate"]
+    auto = cfg["autonomous_execution"]
+    fund = cfg["fund"]
+    grid = cfg["strategies"]["grid"]
+
+    assert auto["min_score"] == 85.0
+    assert gate["recovery_min_score"] > 85.0
+    assert gate["recovery_min_score"] == 86.0
+    assert gate["recovery_order_eur"] <= 6.0
+    assert gate["recovery_cooldown_seconds"] == 900
+    assert gate["recovery_min_confidence"] >= 0.65
+    assert gate["recovery_min_signal_strength"] >= 65.0
+    assert gate["recovery_min_winrate_pct"] >= 45.0
+    assert gate["recovery_max_net_deficit_eur"] <= 0.75
+
+    assert auto["instrument_scope"] == "spot_only"
+    assert auto["allow_margin"] is False
+    assert auto["allow_futures"] is False
+    assert auto["allow_borrowing"] is False
+    assert fund["max_portfolio_drawdown_pct"] == 10.0
+    assert fund["max_daily_loss_pct"] == 3.0
+    assert fund["max_single_trade_pct"] == 20.0
+    assert fund["min_cash_reserve_pct"] == 20.0
+
+    assert auto["switch_cooldown_seconds"] == 45
+    assert auto["max_size_score"] == 90.0
+    assert auto["max_size_confidence"] == 0.70
+    assert auto["high_volatility_size_multiplier"] == 0.65
+    assert grid["cycle_cooldown_seconds"] == 30
+    assert grid["failure_cooldown_seconds"] == 10
+
+
+def test_all_research_agents_participate_and_learning_runs_faster():
+    cfg = _config()
+    weights = cfg["fund"]["agent_weights"]
+    for name in (
+        "market_research",
+        "trend_detection",
+        "onchain_analysis",
+        "whale_tracking",
+        "sentiment",
+        "risk",
+        "portfolio_allocation",
+    ):
+        assert float(weights[name]) > 0.0
+
+    assert cfg["autonomous_fund"]["enabled"] is True
+    assert cfg["autonomous_fund"]["research_interval_seconds"] <= 3600
+    assert cfg["autonomous_fund"]["research_top_markets"] >= 5
+    assert cfg["adaptive_learning"]["enabled"] is True
+    assert cfg["adaptive_learning"]["min_samples"] <= 6
+    assert cfg["adaptive_learning"]["change_cooldown"] <= 3
+    assert cfg["shadow_lab"]["enabled"] is True
+    assert cfg["shadow_lab"]["dynamic_markets_per_strategy"] >= 16
