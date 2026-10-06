@@ -20,21 +20,19 @@ def test_research_pack_config_uses_80_eur_live_capital_policy():
         for key, value in cfg["strategies"].items()
         if value.get("enabled") and value.get("live_capable")
     }
-    assert sum(float(row.get("allocation_eur", 0)) for row in live.values()) == 50
-    assert cfg["strategies"]["market_maker"]["enabled"] is False
-    assert cfg["strategies"]["market_maker"]["live_capable"] is False
-    assert cfg["strategies"]["market_maker"]["allocation_eur"] == 0
+    assert sum(float(row.get("allocation_eur", 0)) for row in live.values()) == 72
+    assert live["market_maker"]["allocation_eur"] == 8
+    assert live["market_maker"]["max_order_eur"] == 5
     assert live["grid"]["allocation_eur"] == 44
     assert live["grid"]["max_order_eur"] == 12
     assert live["grid"]["order_value_eur"] == 10.0
     assert live["grid"]["exit_markup_pct"] == 1.00
-    assert cfg["strategies"]["grid_eth"]["enabled"] is False
-    assert cfg["strategies"]["grid_eth"]["live_capable"] is False
-    assert cfg["strategies"]["grid_eth"]["allocation_eur"] == 0
+    assert live["grid_eth"]["allocation_eur"] == 8
+    assert live["grid_eth"]["max_order_eur"] == 5
     assert live["shadow_canary"]["allocation_eur"] == 6
     assert live["shadow_canary"]["max_order_eur"] == 6
-    assert cfg["strategies"]["sniper"]["live_capable"] is False
-    assert cfg["strategies"]["sniper"]["allocation_eur"] == 0
+    assert live["sniper"]["allocation_eur"] == 6
+    assert live["sniper"]["max_order_eur"] == 5
     assert cfg["live_evidence_gate"]["min_completed_exits"] == 4
     assert cfg["live_evidence_gate"]["minimum_net_pnl_eur"] == 0.0
     assert live["grid"]["symbol"] == "SOL-EUR"
