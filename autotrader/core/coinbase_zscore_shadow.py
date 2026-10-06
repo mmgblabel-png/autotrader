@@ -35,7 +35,7 @@ def _normal_cdf(value: float) -> float:
 @dataclass(frozen=True)
 class CoinbaseZScoreConfig:
     product_id: str = "BTC-EUR"
-    durations_seconds: tuple[int, ...] = (300, 900)
+    durations_seconds: tuple[int, ...] = (300, 900, 1800, 3600)
     interval_seconds: float = 5.0
     volatility_lookback_seconds: float = 3600.0
     drift_lookback_seconds: float = 90.0
@@ -69,9 +69,9 @@ class CoinbaseZScoreConfig:
         cfg = raw or {}
         durations = tuple(
             int(value)
-            for value in cfg.get("durations_seconds", [300, 900])
-            if int(value) in {300, 900}
-        ) or (300, 900)
+            for value in cfg.get("durations_seconds", [300, 900, 1800, 3600])
+            if int(value) in {300, 900, 1800, 3600}
+        ) or (300, 900, 1800, 3600)
         return cls(
             product_id=str(cfg.get("product_id", "BTC-EUR")).upper(),
             durations_seconds=durations,
@@ -515,13 +515,32 @@ class CoinbaseZScoreShadowEngine:
             self.state.max_drawdown_eur / max(self.state.peak_equity_eur, 1e-9) * 100.0
         )
         winrate_pct = self.state.wins / trades * 100.0 if trades else 0.0
-        promotion_ready = bool(
-            trades >= self.config.promotion_min_settled_trades
-            and winrate_pct >= self.config.promotion_min_winrate_pct
-            and self.state.realized_pnl_eur >= self.config.promotion_min_net_pnl_eur
-            and profit_factor >= self.config.promotion_min_profit_factor
-            and drawdown_pct <= self.config.promotion_max_drawdown_pct
-        )
+        promotion_gates = {
+            "settled_trades": trades >= self.config.promotion_min_settled_trades,
+            "winrate": winrate_pct >= self.config.promotion_min_winrate_pct,
+            "net_pnl": self.state.realized_pnl_eur >= self.config.promotion_min_net_pnl_eur,
+            "profit_factor": profit_factor >= self.config.promotion_min_profit_factor,
+            "drawdown": drawdown_pct <= self.config.promotion_max_drawdown_pct,
+        }
+        promotion_ready = all(promotion_gates.values())
+        promotion_blockers = [name for name, passed in promotion_gates.items() if not passed]
+        promotion_progress = {
+            "settled_trades_remaining": max(
+                0, self.config.promotion_min_settled_trades - trades
+            ),
+            "winrate_gap_pct": round(
+                max(0.0, self.config.promotion_min_winrate_pct - winrate_pct), 4
+            ),
+            "net_pnl_gap_eur": round(
+                max(0.0, self.config.promotion_min_net_pnl_eur - self.state.realized_pnl_eur), 8
+            ),
+            "profit_factor_gap": round(
+                max(0.0, self.config.promotion_min_profit_factor - profit_factor), 6
+            ) if math.isfinite(profit_factor) else 0.0,
+            "drawdown_headroom_pct": round(
+                self.config.promotion_max_drawdown_pct - drawdown_pct, 6
+            ),
+        }
         return {
             "venue": "coinbase_advanced",
             "product_id": self.config.product_id,
@@ -548,6 +567,9 @@ class CoinbaseZScoreShadowEngine:
             "last_signal": self.last_signal,
             "last_error": self.last_error,
             "promotion_ready": promotion_ready,
+            "promotion_gates": promotion_gates,
+            "promotion_blockers": promotion_blockers,
+            "promotion_progress": promotion_progress,
             "promotion_policy": {
                 "min_settled_trades": self.config.promotion_min_settled_trades,
                 "min_winrate_pct": self.config.promotion_min_winrate_pct,
