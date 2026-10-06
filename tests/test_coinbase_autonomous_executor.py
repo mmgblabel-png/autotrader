@@ -433,6 +433,40 @@ def test_full_capacity_uses_hard_twenty_percent_cap_not_legacy_order_cap(tmp_pat
     assert float(fake.created[0]["quote_size"]) == 6.0
 
 
+
+def test_risktrader_mapping_can_use_full_isolated_six_euro_budget(tmp_path, monkeypatch):
+    _set_live_env(monkeypatch)
+    fake = FakeCoinbase()
+    fake.eur = 6.0
+    fake.btc = 0.0
+    cfg = CoinbaseAutonomousConfig.from_mapping({
+        "portfolio_id": "agent-portfolio",
+        "require_isolated_portfolio": True,
+        "require_shadow_promotion": False,
+        "full_capacity": True,
+        "supported_products": ["BTC-EUR"],
+        "managed_capital_pct": 100.0,
+        "cash_reserve_pct": 0.0,
+        "max_single_trade_pct": 100.0,
+        "max_order_eur": 1.0,
+        "state_path": str(tmp_path / "risktrader-full-six.json"),
+    })
+    executor = CoinbaseAutonomousExecutor(cfg, client=fake)
+    status = executor.tick(
+        armed=True,
+        shadow_status={
+            "promotion_ready": False,
+            "last_signal": {"decisions": [_long_decision("BTC:300:risk-full-six")]},
+        },
+    )
+    assert status["readiness"]["required_cash_reserve_eur"] == 0.0
+    assert status["readiness"]["managed_sleeve_target_eur"] == 6.0
+    assert status["readiness"]["max_single_trade_eur"] == 6.0
+    assert status["live_orders_sent"] == 1
+    assert float(fake.created[0]["quote_size"]) == 6.0
+    assert fake.created[0]["portfolio_id"] == "agent-portfolio"
+
+
 def test_usdc_route_is_used_only_from_isolated_agent_balance(tmp_path, monkeypatch):
     _set_live_env(monkeypatch)
     fake = FakeCoinbase()
