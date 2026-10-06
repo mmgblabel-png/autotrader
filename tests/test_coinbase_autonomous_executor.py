@@ -11,9 +11,12 @@ from autotrader.core.coinbase_autonomous_executor import (
 class FakeCoinbase:
     def __init__(self):
         self.eur = 0.0
+        self.usdc = 0.0
         self.btc = 0.00030103
         self.bid = 75350.0
         self.ask = 75360.0
+        self.usdc_eur_bid = 0.90
+        self.usdc_eur_ask = 0.901
         self.created = []
         self.orders = {}
         self.balance_portfolio_ids = []
@@ -37,6 +40,13 @@ class FakeCoinbase:
                 "hold": "0",
                 "total": str(self.eur),
             })
+        if self.usdc > 0:
+            rows.append({
+                "currency": "USDC",
+                "available": str(self.usdc),
+                "hold": "0",
+                "total": str(self.usdc),
+            })
         if self.btc > 0:
             rows.append({
                 "currency": "BTC",
@@ -47,17 +57,25 @@ class FakeCoinbase:
         return {"authenticated": True, "assets": rows}
 
     def top_of_book(self, product_id):
+        if product_id == "USDC-EUR":
+            bid, ask = self.usdc_eur_bid, self.usdc_eur_ask
+        elif product_id == "BTC-USDC":
+            bid = self.bid / self.usdc_eur_bid
+            ask = self.ask / self.usdc_eur_bid
+        else:
+            bid, ask = self.bid, self.ask
         return CoinbaseTopOfBook(
             product_id=product_id,
-            bid_price=Decimal(str(self.bid)),
+            bid_price=Decimal(str(bid)),
             bid_size=Decimal("1"),
-            ask_price=Decimal(str(self.ask)),
+            ask_price=Decimal(str(ask)),
             ask_size=Decimal("1"),
         )
 
     def preview_spot_market_order(self, *, product_id, side, quote_size=None, base_size=None, portfolio_id=None):
         self.preview_portfolio_ids.append(portfolio_id)
-        reference = self.ask if side == "BUY" else self.bid
+        book = self.top_of_book(product_id)
+        reference = float(book.ask_price if side == "BUY" else book.bid_price)
         notional = float(quote_size) if quote_size else float(base_size) * reference
         return {
             "preview_id": "preview-1",
@@ -88,11 +106,12 @@ class FakeCoinbase:
             "portfolio_id": portfolio_id,
         }
         self.created.append(row)
+        book = self.top_of_book(product_id)
         if side == "SELL":
             size = float(base_size)
-            price = self.bid
+            price = float(book.bid_price)
         else:
-            price = self.ask
+            price = float(book.ask_price)
             size = float(quote_size) / price
         self.orders[order_id] = {
             "status": "FILLED",
@@ -105,6 +124,19 @@ class FakeCoinbase:
 
     def get_order(self, order_id):
         return dict(self.orders[order_id])
+
+
+def _long_decision(window_key="BTC:300:test", seconds_remaining=120):
+    return {
+        "decision": "LONG",
+        "window_key": window_key,
+        "duration_seconds": 300,
+        "seconds_remaining": seconds_remaining,
+        "forecast_move_bps": 180.0,
+        "required_move_bps": 118.0,
+        "probability_up": 0.68,
+        "reference_z": 0.4,
+    }
 
 
 def _set_live_env(monkeypatch):
@@ -172,12 +204,7 @@ def test_shadow_gate_blocks_new_buy_but_not_reserve_seeding(tmp_path, monkeypatc
         shadow_status={
             "promotion_ready": False,
             "last_signal": {
-                "decisions": [{
-                    "decision": "LONG",
-                    "window_key": "BTC-EUR:300:1",
-                    "duration_seconds": 300,
-                    "seconds_remaining": 120,
-                }]
+                "decisions": [_long_decision("BTC-EUR:300:1")]
             },
         },
     )
@@ -204,12 +231,7 @@ def test_promoted_signal_can_submit_bounded_buy(tmp_path, monkeypatch):
         shadow_status={
             "promotion_ready": True,
             "last_signal": {
-                "decisions": [{
-                    "decision": "LONG",
-                    "window_key": "BTC-EUR:300:2",
-                    "duration_seconds": 300,
-                    "seconds_remaining": 120,
-                }]
+                "decisions": [_long_decision("BTC-EUR:300:2")]
             },
         },
     )
@@ -269,12 +291,7 @@ def test_live_submission_is_persisted_in_audit_trail(tmp_path, monkeypatch):
         shadow_status={
             "promotion_ready": True,
             "last_signal": {
-                "decisions": [{
-                    "decision": "LONG",
-                    "window_key": "BTC-EUR:300:audit",
-                    "duration_seconds": 300,
-                    "seconds_remaining": 120,
-                }]
+                "decisions": [_long_decision("BTC-EUR:300:audit")]
             },
         },
     )
@@ -336,12 +353,7 @@ def test_isolated_agent_portfolio_adopts_manual_eur_and_never_uses_default(tmp_p
         shadow_status={
             "promotion_ready": True,
             "last_signal": {
-                "decisions": [{
-                    "decision": "LONG",
-                    "window_key": "BTC-EUR:3600:agent",
-                    "duration_seconds": 3600,
-                    "seconds_remaining": 1800,
-                }]
+                "decisions": [_long_decision("BTC-EUR:3600:agent", 1800)]
             },
         },
     )
@@ -361,3 +373,118 @@ def test_isolated_agent_portfolio_adopts_manual_eur_and_never_uses_default(tmp_p
         and row.get("managed_cash_eur") == 6.0
         for row in status["order_audit"]
     )
+
+
+
+def test_risktrader_does_not_require_shadow_promotion_when_disabled(tmp_path, monkeypatch):
+    _set_live_env(monkeypatch)
+    fake = FakeCoinbase()
+    fake.eur = 6.0
+    fake.btc = 0.0
+    cfg = CoinbaseAutonomousConfig(
+        state_path=str(tmp_path / "risktrader.json"),
+        portfolio_id="agent-portfolio",
+        require_isolated_portfolio=True,
+        require_shadow_promotion=False,
+        full_capacity=True,
+        supported_products=("BTC-EUR",),
+        max_single_trade_pct=20.0,
+        cash_reserve_pct=20.0,
+    )
+    executor = CoinbaseAutonomousExecutor(cfg, client=fake)
+    status = executor.tick(
+        armed=True,
+        shadow_status={
+            "promotion_ready": False,
+            "last_signal": {"decisions": [_long_decision("BTC:300:risk")]},
+        },
+    )
+    assert status["live_orders_sent"] == 1
+    assert status["readiness"]["gates"]["shadow_promotion_ready"] is True
+    assert fake.created[0]["product_id"] == "BTC-EUR"
+    assert float(fake.created[0]["quote_size"]) == 1.2
+
+
+def test_full_capacity_uses_hard_twenty_percent_cap_not_legacy_order_cap(tmp_path, monkeypatch):
+    _set_live_env(monkeypatch)
+    fake = FakeCoinbase()
+    fake.eur = 30.0
+    fake.btc = 0.0
+    cfg = CoinbaseAutonomousConfig(
+        state_path=str(tmp_path / "full-capacity.json"),
+        portfolio_id="agent-portfolio",
+        require_isolated_portfolio=True,
+        require_shadow_promotion=False,
+        full_capacity=True,
+        supported_products=("BTC-EUR",),
+        max_order_eur=1.0,
+        max_single_trade_pct=20.0,
+        cash_reserve_pct=20.0,
+    )
+    executor = CoinbaseAutonomousExecutor(cfg, client=fake)
+    status = executor.tick(
+        armed=True,
+        shadow_status={
+            "promotion_ready": False,
+            "last_signal": {"decisions": [_long_decision("BTC:300:full")]},
+        },
+    )
+    assert status["readiness"]["max_single_trade_eur"] == 6.0
+    assert float(fake.created[0]["quote_size"]) == 6.0
+
+
+def test_usdc_route_is_used_only_from_isolated_agent_balance(tmp_path, monkeypatch):
+    _set_live_env(monkeypatch)
+    fake = FakeCoinbase()
+    fake.eur = 0.0
+    fake.usdc = 10.0
+    fake.btc = 0.0
+    cfg = CoinbaseAutonomousConfig(
+        state_path=str(tmp_path / "usdc.json"),
+        portfolio_id="agent-portfolio",
+        require_isolated_portfolio=True,
+        require_shadow_promotion=False,
+        full_capacity=True,
+        supported_products=("BTC-EUR", "BTC-USDC"),
+        max_single_trade_pct=20.0,
+        cash_reserve_pct=20.0,
+    )
+    executor = CoinbaseAutonomousExecutor(cfg, client=fake)
+    status = executor.tick(
+        armed=True,
+        shadow_status={
+            "promotion_ready": False,
+            "last_signal": {"decisions": [_long_decision("BTC:300:usdc")]},
+        },
+    )
+    assert status["live_orders_sent"] == 1
+    assert fake.created[0]["product_id"] == "BTC-USDC"
+    assert fake.created[0]["portfolio_id"] == "agent-portfolio"
+    assert status["last_action"]["quote_currency"] == "USDC"
+    assert status["hard_rules"]["supported_products"] == ["BTC-EUR", "BTC-USDC"]
+
+
+def test_usdc_in_default_is_never_visible_without_agent_portfolio_balance(tmp_path, monkeypatch):
+    _set_live_env(monkeypatch)
+    fake = FakeCoinbase()
+    fake.eur = 6.0
+    fake.usdc = 0.0
+    fake.btc = 0.0
+    cfg = CoinbaseAutonomousConfig(
+        state_path=str(tmp_path / "no-default-usdc.json"),
+        portfolio_id="agent-portfolio",
+        require_isolated_portfolio=True,
+        require_shadow_promotion=False,
+        full_capacity=True,
+        supported_products=("BTC-EUR", "BTC-USDC"),
+    )
+    executor = CoinbaseAutonomousExecutor(cfg, client=fake)
+    executor.tick(
+        armed=True,
+        shadow_status={
+            "promotion_ready": False,
+            "last_signal": {"decisions": [_long_decision("BTC:300:no-default")]},
+        },
+    )
+    assert fake.created[0]["product_id"] == "BTC-EUR"
+    assert all(pid == "agent-portfolio" for pid in fake.balance_portfolio_ids)

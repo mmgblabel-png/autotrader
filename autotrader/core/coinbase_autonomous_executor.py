@@ -33,6 +33,7 @@ def _env_true(name: str, default: bool = False) -> bool:
 class CoinbaseAutonomousConfig:
     enabled: bool = True
     product_id: str = "BTC-EUR"
+    supported_products: tuple[str, ...] = ("BTC-EUR", "BTC-USDC")
     portfolio_id: str = ""
     require_isolated_portfolio: bool = True
     allow_existing_btc_seed: bool = False
@@ -42,12 +43,18 @@ class CoinbaseAutonomousConfig:
     max_single_trade_pct: float = 20.0
     max_order_eur: float = 5.0
     min_order_eur: float = 1.0
+    full_capacity: bool = False
     max_daily_loss_pct: float = 3.0
     max_drawdown_pct: float = 10.0
     stop_loss_pct: float = 1.0
     take_profit_pct: float = 1.5
     max_preview_fee_bps: float = 60.0
     max_preview_slippage_bps: float = 25.0
+    assumed_exit_fee_bps: float = 50.0
+    min_live_net_edge_bps: float = 10.0
+    max_spread_bps: float = 25.0
+    trailing_activate_pct: float = 0.8
+    trailing_stop_pct: float = 0.5
     require_shadow_promotion: bool = True
     state_path: str = "/data/coinbase_autonomous_canary.json"
 
@@ -57,6 +64,11 @@ class CoinbaseAutonomousConfig:
         return cls(
             enabled=bool(cfg.get("enabled", True)),
             product_id=str(cfg.get("product_id", "BTC-EUR")).upper(),
+            supported_products=tuple(
+                str(value).upper()
+                for value in cfg.get("supported_products", ["BTC-EUR", "BTC-USDC"])
+                if str(value).upper() in {"BTC-EUR", "BTC-USDC"}
+            ) or ("BTC-EUR",),
             portfolio_id=str(os.getenv("COINBASE_AGENT_PORTFOLIO_ID", cfg.get("portfolio_id", "")) or "").strip(),
             require_isolated_portfolio=bool(cfg.get("require_isolated_portfolio", True)),
             allow_existing_btc_seed=_env_true(
@@ -69,12 +81,18 @@ class CoinbaseAutonomousConfig:
             max_single_trade_pct=min(20.0, max(1.0, float(cfg.get("max_single_trade_pct", 20.0)))),
             max_order_eur=max(1.0, float(cfg.get("max_order_eur", 5.0))),
             min_order_eur=max(1.0, float(cfg.get("min_order_eur", 1.0))),
+            full_capacity=bool(cfg.get("full_capacity", False)),
             max_daily_loss_pct=min(3.0, max(0.1, float(cfg.get("max_daily_loss_pct", 3.0)))),
             max_drawdown_pct=min(10.0, max(0.1, float(cfg.get("max_drawdown_pct", 10.0)))),
             stop_loss_pct=max(0.1, float(cfg.get("stop_loss_pct", 1.0))),
             take_profit_pct=max(0.1, float(cfg.get("take_profit_pct", 1.5))),
             max_preview_fee_bps=max(0.0, float(cfg.get("max_preview_fee_bps", 60.0))),
             max_preview_slippage_bps=max(0.0, float(cfg.get("max_preview_slippage_bps", 25.0))),
+            assumed_exit_fee_bps=max(0.0, float(cfg.get("assumed_exit_fee_bps", 50.0))),
+            min_live_net_edge_bps=max(0.0, float(cfg.get("min_live_net_edge_bps", 10.0))),
+            max_spread_bps=max(0.0, float(cfg.get("max_spread_bps", 25.0))),
+            trailing_activate_pct=max(0.1, float(cfg.get("trailing_activate_pct", 0.8))),
+            trailing_stop_pct=max(0.1, float(cfg.get("trailing_stop_pct", 0.5))),
             require_shadow_promotion=bool(cfg.get("require_shadow_promotion", True)),
             state_path=str(cfg.get("state_path", "/data/coinbase_autonomous_canary.json")),
         )
@@ -88,6 +106,10 @@ class ManagedPosition:
     window_key: str
     window_end: float
     opened_at: float
+    product_id: str = "BTC-EUR"
+    quote_currency: str = "EUR"
+    quote_to_eur: float = 1.0
+    peak_price: float = 0.0
 
 
 @dataclass
@@ -99,6 +121,9 @@ class PendingOrder:
     submitted_at: float
     window_key: str = ""
     window_end: float = 0.0
+    product_id: str = "BTC-EUR"
+    quote_currency: str = "EUR"
+    quote_to_eur: float = 1.0
 
 @dataclass
 class SubmissionIntent:
@@ -111,6 +136,9 @@ class SubmissionIntent:
     window_key: str = ""
     window_end: float = 0.0
     retry_count: int = 0
+    product_id: str = "BTC-EUR"
+    quote_currency: str = "EUR"
+    quote_to_eur: float = 1.0
 
 
 @dataclass
@@ -236,7 +264,7 @@ class CoinbaseAutonomousExecutor:
             if self.config.portfolio_id
             else self.client.account_balances()
         )
-        result = {"EUR": 0.0, "BTC": 0.0}
+        result = {"EUR": 0.0, "USDC": 0.0, "BTC": 0.0}
         for row in payload.get("assets", []) if isinstance(payload, dict) else []:
             if not isinstance(row, dict):
                 continue
@@ -249,9 +277,24 @@ class CoinbaseAutonomousExecutor:
                 pass
         return result
 
+    def _usdc_to_eur(self) -> float:
+        """Conservative EUR value for one USDC using the executable bid."""
+        try:
+            book = self.client.top_of_book("USDC-EUR")
+            rate = float(book.bid_price)
+        except Exception:
+            return 0.0
+        return rate if rate > 0 else 0.0
+
     def _account_nav(self, bid: float) -> tuple[float, dict[str, float]]:
         balances = self._balances()
-        nav = balances["EUR"] + balances["BTC"] * bid
+        usdc_to_eur = self._usdc_to_eur() if balances.get("USDC", 0.0) > 0 else 0.0
+        balances["_USDC_TO_EUR"] = usdc_to_eur
+        nav = (
+            balances["EUR"]
+            + balances["USDC"] * usdc_to_eur
+            + balances["BTC"] * bid
+        )
         return max(0.0, nav), balances
 
     def _managed_equity(self, bid: float) -> float:
@@ -259,13 +302,7 @@ class CoinbaseAutonomousExecutor:
         return max(0.0, self.state.managed_cash_eur + position_value)
 
     def _reconcile_isolated_cash(self, balances: dict[str, float], now: float) -> None:
-        """Adopt EUR only from the configured isolated agent portfolio.
-
-        Manual funding of the dedicated Coinbase portfolio must become managed
-        cash without ever reading from or spending the default portfolio.
-        Reconciliation is intentionally limited to flat/no-pending state so an
-        in-flight order or managed BTC position cannot be double-counted.
-        """
+        """Adopt EUR + USDC cash only from the configured isolated portfolio."""
         if not self.config.portfolio_id:
             return
         if (
@@ -274,7 +311,12 @@ class CoinbaseAutonomousExecutor:
             or self.state.submission_intent is not None
         ):
             return
-        available_eur = max(0.0, float(balances.get("EUR") or 0.0))
+        usdc_to_eur = max(0.0, float(balances.get("_USDC_TO_EUR") or 0.0))
+        available_eur = max(
+            0.0,
+            float(balances.get("EUR") or 0.0)
+            + float(balances.get("USDC") or 0.0) * usdc_to_eur,
+        )
         if abs(self.state.managed_cash_eur - available_eur) < 1e-8:
             return
         previous = self.state.managed_cash_eur
@@ -284,6 +326,9 @@ class CoinbaseAutonomousExecutor:
             "action": "ISOLATED_CASH_RECONCILED",
             "previous_managed_cash_eur": round(previous, 8),
             "managed_cash_eur": round(available_eur, 8),
+            "eur_available": round(float(balances.get("EUR") or 0.0), 8),
+            "usdc_available": round(float(balances.get("USDC") or 0.0), 8),
+            "usdc_to_eur": round(usdc_to_eur, 8),
         }
         self._audit(dict(self.state.last_action))
         self._save()
@@ -354,7 +399,7 @@ class CoinbaseAutonomousExecutor:
             return
         found = self.client.find_order_by_client_id(
             intent.client_order_id,
-            product_id=self.config.product_id,
+            product_id=intent.product_id,
             portfolio_id=self.config.portfolio_id or None,
         )
         if found is not None:
@@ -368,6 +413,9 @@ class CoinbaseAutonomousExecutor:
                     submitted_at=intent.created_at,
                     window_key=intent.window_key,
                     window_end=intent.window_end,
+                    product_id=intent.product_id,
+                    quote_currency=intent.quote_currency,
+                    quote_to_eur=intent.quote_to_eur,
                 )
                 self.state.submission_intent = None
                 self.state.live_orders_sent += 1
@@ -392,7 +440,7 @@ class CoinbaseAutonomousExecutor:
         self._save()
         response = self.client.create_spot_market_order(
             client_order_id=intent.client_order_id,
-            product_id=self.config.product_id,
+            product_id=intent.product_id,
             side=intent.side,
             quote_size=intent.quote_size or None,
             base_size=intent.base_size or None,
@@ -407,6 +455,9 @@ class CoinbaseAutonomousExecutor:
             submitted_at=now,
             window_key=intent.window_key,
             window_end=intent.window_end,
+            product_id=intent.product_id,
+            quote_currency=intent.quote_currency,
+            quote_to_eur=intent.quote_to_eur,
         )
         self.state.submission_intent = None
         self.state.live_orders_sent += 1
@@ -429,40 +480,57 @@ class CoinbaseAutonomousExecutor:
         if fill is None:
             return
         size, price, fees = fill
+        quote_to_eur = max(0.0, float(pending.quote_to_eur or 0.0))
+        if quote_to_eur <= 0:
+            quote_to_eur = 1.0 if pending.quote_currency == "EUR" else self._usdc_to_eur()
+        fees_eur = fees * quote_to_eur
+
         if pending.purpose == "seed":
-            proceeds = size * price - fees
-            self.state.managed_cash_eur += max(0.0, proceeds)
+            proceeds_eur = max(0.0, (size * price - fees) * quote_to_eur)
+            self.state.managed_cash_eur += proceeds_eur
             self.state.last_action = {
                 "at": now, "action": "SEED_FILLED", "base_size": size,
-                "price": price, "fees_eur": fees, "managed_cash_eur": self.state.managed_cash_eur,
+                "product_id": pending.product_id, "quote_currency": pending.quote_currency,
+                "price": price, "fees_eur": fees_eur,
+                "managed_cash_eur": self.state.managed_cash_eur,
             }
         elif pending.purpose == "entry":
-            spent = size * price + fees
-            self.state.managed_cash_eur = max(0.0, self.state.managed_cash_eur - spent)
+            spent_eur = max(0.0, (size * price + fees) * quote_to_eur)
+            self.state.managed_cash_eur = max(0.0, self.state.managed_cash_eur - spent_eur)
             self.state.position = ManagedPosition(
                 base_size=size,
                 entry_price=price,
-                entry_fee_eur=fees,
+                entry_fee_eur=fees_eur,
                 window_key=pending.window_key,
                 window_end=pending.window_end,
                 opened_at=now,
+                product_id=pending.product_id,
+                quote_currency=pending.quote_currency,
+                quote_to_eur=quote_to_eur,
+                peak_price=price,
             )
             self.state.last_action = {
                 "at": now, "action": "ENTRY_FILLED", "base_size": size,
-                "price": price, "fees_eur": fees,
+                "product_id": pending.product_id, "quote_currency": pending.quote_currency,
+                "price": price, "fees_eur": fees_eur,
             }
         elif pending.purpose == "exit" and self.state.position is not None:
-            proceeds = size * price - fees
-            cost = self.state.position.base_size * self.state.position.entry_price + self.state.position.entry_fee_eur
-            pnl = proceeds - cost
-            self.state.managed_cash_eur += max(0.0, proceeds)
+            proceeds_eur = max(0.0, (size * price - fees) * quote_to_eur)
+            pos = self.state.position
+            cost_eur = (
+                pos.base_size * pos.entry_price * max(pos.quote_to_eur, 0.0)
+                + pos.entry_fee_eur
+            )
+            pnl = proceeds_eur - cost_eur
+            self.state.managed_cash_eur += proceeds_eur
             self.state.realized_pnl_eur += pnl
             self.state.day_pnl_eur += pnl
             self.state.settled_trades += 1
             self.state.position = None
             self.state.last_action = {
                 "at": now, "action": "EXIT_FILLED", "base_size": size,
-                "price": price, "fees_eur": fees, "realized_pnl_eur": pnl,
+                "product_id": pending.product_id, "quote_currency": pending.quote_currency,
+                "price": price, "fees_eur": fees_eur, "realized_pnl_eur": pnl,
             }
         if self.state.last_action is not None:
             self._audit({
@@ -473,6 +541,7 @@ class CoinbaseAutonomousExecutor:
                 "purpose": pending.purpose,
             })
         self.state.pending = None
+
 
     @staticmethod
     def _preview_costs(preview: dict[str, Any], reference: float, notional: float) -> tuple[float, float]:
@@ -485,18 +554,29 @@ class CoinbaseAutonomousExecutor:
         slip_bps = abs(avg - reference) / reference * 10_000.0 if avg > 0 and reference > 0 else math.inf
         return fee_bps, slip_bps
 
-    def _submit_sell(self, *, base_size: float, purpose: str, now: float, reference_bid: float) -> dict[str, Any]:
+    def _submit_sell(
+        self,
+        *,
+        base_size: float,
+        purpose: str,
+        now: float,
+        reference_bid: float,
+        product_id: str | None = None,
+        quote_currency: str | None = None,
+        quote_to_eur: float | None = None,
+    ) -> dict[str, Any]:
+        product = str(product_id or self.config.product_id).upper()
+        quote = str(quote_currency or product.rsplit("-", 1)[-1]).upper()
+        rate = float(quote_to_eur or (1.0 if quote == "EUR" else self._usdc_to_eur()))
         size_text = f"{base_size:.8f}".rstrip("0").rstrip(".")
         preview = self.client.preview_spot_market_order(
-            product_id=self.config.product_id,
+            product_id=product,
             side="SELL",
             base_size=size_text,
             portfolio_id=self.config.portfolio_id or None,
         )
-        notional = base_size * reference_bid
-        fee_bps, slip_bps = self._preview_costs(preview, reference_bid, notional)
-        # Exits and reserve-building sells are risk-reducing, so preview costs
-        # are recorded but do not prevent liquidation when a hard risk gate fires.
+        notional_quote = base_size * reference_bid
+        fee_bps, slip_bps = self._preview_costs(preview, reference_bid, notional_quote)
         client_id = str(uuid.uuid4())
         self.state.submission_intent = SubmissionIntent(
             client_order_id=client_id,
@@ -504,11 +584,14 @@ class CoinbaseAutonomousExecutor:
             purpose=purpose,
             created_at=now,
             base_size=size_text,
+            product_id=product,
+            quote_currency=quote,
+            quote_to_eur=rate,
         )
         self._save()
         response = self.client.create_spot_market_order(
             client_order_id=client_id,
-            product_id=self.config.product_id,
+            product_id=product,
             side="SELL",
             base_size=size_text,
             portfolio_id=self.config.portfolio_id or None,
@@ -517,14 +600,27 @@ class CoinbaseAutonomousExecutor:
         order_id = self._order_id(response)
         self.state.live_orders_sent += 1
         self.state.pending = PendingOrder(
-            order_id=order_id, side="SELL", purpose=purpose,
-            client_order_id=client_id, submitted_at=now,
+            order_id=order_id,
+            side="SELL",
+            purpose=purpose,
+            client_order_id=client_id,
+            submitted_at=now,
+            product_id=product,
+            quote_currency=quote,
+            quote_to_eur=rate,
         )
         self.state.submission_intent = None
         action = {
-            "at": now, "action": f"{purpose.upper()}_SUBMITTED",
-            "order_id": order_id, "client_order_id": client_id,
-            "side": "SELL", "purpose": purpose, "base_size": base_size,
+            "at": now,
+            "action": f"{purpose.upper()}_SUBMITTED",
+            "order_id": order_id,
+            "client_order_id": client_id,
+            "product_id": product,
+            "quote_currency": quote,
+            "side": "SELL",
+            "purpose": purpose,
+            "base_size": base_size,
+            "notional_eur": round(notional_quote * rate, 8),
             "preview_fee_bps": round(fee_bps, 4),
             "preview_slippage_bps": round(slip_bps, 4),
         }
@@ -533,26 +629,111 @@ class CoinbaseAutonomousExecutor:
         self._save()
         return action
 
+    def _best_entry_route(
+        self,
+        *,
+        decision: dict[str, Any],
+        balances: dict[str, float],
+        spendable_eur: float,
+        max_trade_eur: float,
+    ) -> dict[str, Any] | None:
+        forecast_move_bps = max(0.0, float(decision.get("forecast_move_bps") or 0.0))
+        probability_up = float(decision.get("probability_up") or 0.0)
+        reference_z = abs(float(decision.get("reference_z") or 0.0))
+        if forecast_move_bps <= 0:
+            return None
+
+        best: dict[str, Any] | None = None
+        for product in self.config.supported_products:
+            product = str(product).upper()
+            if "-" not in product:
+                continue
+            quote = product.rsplit("-", 1)[-1]
+            if quote not in {"EUR", "USDC"}:
+                continue
+
+            quote_to_eur = 1.0 if quote == "EUR" else max(
+                0.0, float(balances.get("_USDC_TO_EUR") or 0.0)
+            )
+            if quote_to_eur <= 0:
+                continue
+            quote_balance = max(0.0, float(balances.get(quote) or 0.0))
+            route_available_eur = quote_balance * quote_to_eur
+            target_eur = min(route_available_eur, spendable_eur, max_trade_eur)
+            if target_eur + 1e-9 < self.config.min_order_eur:
+                continue
+
+            quote_size = target_eur / quote_to_eur
+            book = self.client.top_of_book(product)
+            bid = float(book.bid_price)
+            ask = float(book.ask_price)
+            if bid <= 0 or ask <= 0 or ask < bid:
+                continue
+            mid = (bid + ask) / 2.0
+            spread_bps = (ask - bid) / mid * 10_000.0 if mid > 0 else math.inf
+            if spread_bps > self.config.max_spread_bps:
+                continue
+
+            quote_text = f"{quote_size:.6f}".rstrip("0").rstrip(".")
+            preview = self.client.preview_spot_market_order(
+                product_id=product,
+                side="BUY",
+                quote_size=quote_text,
+                portfolio_id=self.config.portfolio_id or None,
+            )
+            fee_bps, slip_bps = self._preview_costs(preview, ask, quote_size)
+            if fee_bps > self.config.max_preview_fee_bps:
+                continue
+            if slip_bps > self.config.max_preview_slippage_bps:
+                continue
+
+            after_cost_edge_bps = (
+                forecast_move_bps
+                - fee_bps
+                - slip_bps
+                - self.config.assumed_exit_fee_bps
+                - spread_bps
+            )
+            if after_cost_edge_bps < self.config.min_live_net_edge_bps:
+                continue
+
+            score = (
+                after_cost_edge_bps
+                + max(0.0, probability_up - 0.5) * 25.0
+                - reference_z * 2.0
+            )
+            candidate = {
+                "product_id": product,
+                "quote_currency": quote,
+                "quote_to_eur": quote_to_eur,
+                "quote_size": quote_size,
+                "quote_text": quote_text,
+                "notional_eur": target_eur,
+                "reference_bid": bid,
+                "reference_ask": ask,
+                "spread_bps": spread_bps,
+                "preview_fee_bps": fee_bps,
+                "preview_slippage_bps": slip_bps,
+                "after_cost_edge_bps": after_cost_edge_bps,
+                "score": score,
+                "preview": preview,
+            }
+            if best is None or float(candidate["score"]) > float(best["score"]):
+                best = candidate
+        return best
+
     def _submit_buy(
         self,
         *,
-        quote_eur: float,
+        route: dict[str, Any],
         decision: dict[str, Any],
         now: float,
-        reference_ask: float,
     ) -> dict[str, Any]:
-        quote_text = f"{quote_eur:.2f}"
-        preview = self.client.preview_spot_market_order(
-            product_id=self.config.product_id,
-            side="BUY",
-            quote_size=quote_text,
-            portfolio_id=self.config.portfolio_id or None,
-        )
-        fee_bps, slip_bps = self._preview_costs(preview, reference_ask, quote_eur)
-        if fee_bps > self.config.max_preview_fee_bps:
-            return {"at": now, "action": "HOLD", "reason": "preview_fee_too_high", "fee_bps": fee_bps}
-        if slip_bps > self.config.max_preview_slippage_bps:
-            return {"at": now, "action": "HOLD", "reason": "preview_slippage_too_high", "slippage_bps": slip_bps}
+        product = str(route["product_id"])
+        quote = str(route["quote_currency"])
+        quote_to_eur = float(route["quote_to_eur"])
+        quote_text = str(route["quote_text"])
+        preview = dict(route["preview"])
         client_id = str(uuid.uuid4())
         window_key = str(decision.get("window_key") or "")
         remaining = max(0.0, float(decision.get("seconds_remaining") or 0.0))
@@ -564,11 +745,14 @@ class CoinbaseAutonomousExecutor:
             quote_size=quote_text,
             window_key=window_key,
             window_end=now + remaining,
+            product_id=product,
+            quote_currency=quote,
+            quote_to_eur=quote_to_eur,
         )
         self._save()
         response = self.client.create_spot_market_order(
             client_order_id=client_id,
-            product_id=self.config.product_id,
+            product_id=product,
             side="BUY",
             quote_size=quote_text,
             portfolio_id=self.config.portfolio_id or None,
@@ -577,24 +761,44 @@ class CoinbaseAutonomousExecutor:
         order_id = self._order_id(response)
         self.state.live_orders_sent += 1
         self.state.pending = PendingOrder(
-            order_id=order_id, side="BUY", purpose="entry",
-            client_order_id=client_id, submitted_at=now,
-            window_key=window_key, window_end=now + remaining,
+            order_id=order_id,
+            side="BUY",
+            purpose="entry",
+            client_order_id=client_id,
+            submitted_at=now,
+            window_key=window_key,
+            window_end=now + remaining,
+            product_id=product,
+            quote_currency=quote,
+            quote_to_eur=quote_to_eur,
         )
         self.state.submission_intent = None
         self.state.seen_windows.append(window_key)
         self.state.seen_windows = self.state.seen_windows[-5000:]
         action = {
-            "at": now, "action": "ENTRY_SUBMITTED", "order_id": order_id,
-            "client_order_id": client_id, "side": "BUY", "purpose": "entry",
-            "quote_eur": quote_eur, "window_key": window_key,
-            "preview_fee_bps": round(fee_bps, 4),
-            "preview_slippage_bps": round(slip_bps, 4),
+            "at": now,
+            "action": "ENTRY_SUBMITTED",
+            "order_id": order_id,
+            "client_order_id": client_id,
+            "product_id": product,
+            "quote_currency": quote,
+            "side": "BUY",
+            "purpose": "entry",
+            "quote_amount": float(route["quote_size"]),
+            "notional_eur": round(float(route["notional_eur"]), 8),
+            "window_key": window_key,
+            "forecast_move_bps": round(float(decision.get("forecast_move_bps") or 0.0), 4),
+            "probability_up": round(float(decision.get("probability_up") or 0.0), 6),
+            "after_cost_edge_bps": round(float(route["after_cost_edge_bps"]), 4),
+            "spread_bps": round(float(route["spread_bps"]), 4),
+            "preview_fee_bps": round(float(route["preview_fee_bps"]), 4),
+            "preview_slippage_bps": round(float(route["preview_slippage_bps"]), 4),
         }
         self.state.last_action = action
         self._audit(dict(action))
         self._save()
         return action
+
 
     def readiness(self, *, armed: bool, shadow_status: dict[str, Any]) -> dict[str, Any]:
         book = self.client.top_of_book(self.config.product_id)
@@ -676,7 +880,19 @@ class CoinbaseAutonomousExecutor:
 
             if self.state.pending is None and self.state.position is not None:
                 pos = self.state.position
-                ret_pct = (bid - pos.entry_price) / pos.entry_price * 100.0
+                pos_book = (
+                    self.client.top_of_book(pos.product_id)
+                    if pos.product_id != self.config.product_id
+                    else None
+                )
+                pos_bid = float(pos_book.bid_price) if pos_book is not None else bid
+                pos.peak_price = max(float(pos.peak_price or pos.entry_price), pos_bid)
+                ret_pct = (pos_bid - pos.entry_price) / pos.entry_price * 100.0
+                peak_ret_pct = (pos.peak_price - pos.entry_price) / pos.entry_price * 100.0
+                trail_from_peak_pct = (
+                    (pos_bid - pos.peak_price) / pos.peak_price * 100.0
+                    if pos.peak_price > 0 else 0.0
+                )
                 reason = ""
                 if day_stop:
                     reason = "daily_loss_limit"
@@ -686,11 +902,24 @@ class CoinbaseAutonomousExecutor:
                     reason = "stop_loss"
                 elif ret_pct >= self.config.take_profit_pct:
                     reason = "take_profit"
+                elif (
+                    peak_ret_pct >= self.config.trailing_activate_pct
+                    and trail_from_peak_pct <= -self.config.trailing_stop_pct
+                ):
+                    reason = "trailing_profit_lock"
                 elif ts >= pos.window_end:
                     reason = "signal_horizon"
                 if reason:
                     action = self._submit_sell(
-                        base_size=pos.base_size, purpose="exit", now=ts, reference_bid=bid
+                        base_size=pos.base_size,
+                        purpose="exit",
+                        now=ts,
+                        reference_bid=pos_bid,
+                        product_id=pos.product_id,
+                        quote_currency=pos.quote_currency,
+                        quote_to_eur=(
+                            1.0 if pos.quote_currency == "EUR" else self._usdc_to_eur()
+                        ),
                     )
                     action["reason"] = reason
 
@@ -715,8 +944,17 @@ class CoinbaseAutonomousExecutor:
                 and float(balances.get("EUR") or 0.0) + 1e-9 < total_cash_target
                 and float(balances.get("BTC") or 0.0) > 0
             ):
-                gap = total_cash_target - float(balances.get("EUR") or 0.0)
-                max_trade = min(self.config.max_order_eur, float(ready["max_single_trade_eur"]))
+                gap = total_cash_target - (
+                    float(balances.get("EUR") or 0.0)
+                    + float(balances.get("USDC") or 0.0)
+                    * float(balances.get("_USDC_TO_EUR") or 0.0)
+                )
+                hard_max_trade = float(ready["max_single_trade_eur"])
+                max_trade = (
+                    hard_max_trade
+                    if self.config.full_capacity
+                    else min(self.config.max_order_eur, hard_max_trade)
+                )
                 seed_eur = min(gap, max_trade)
                 if seed_eur >= self.config.min_order_eur:
                     base_size = min(float(balances["BTC"]), seed_eur / bid)
@@ -733,14 +971,23 @@ class CoinbaseAutonomousExecutor:
                 and not day_stop
                 and not drawdown_stop
             ):
-                spendable = max(
-                    0.0,
-                    min(self.state.managed_cash_eur, float(balances.get("EUR") or 0.0) - reserve_target),
+                usdc_to_eur = max(0.0, float(balances.get("_USDC_TO_EUR") or 0.0))
+                total_quote_cash_eur = (
+                    float(balances.get("EUR") or 0.0)
+                    + float(balances.get("USDC") or 0.0) * usdc_to_eur
                 )
-                spendable = min(
-                    spendable,
-                    self.config.max_order_eur,
-                    float(ready["max_single_trade_eur"]),
+                spendable_eur = max(
+                    0.0,
+                    min(
+                        self.state.managed_cash_eur,
+                        total_quote_cash_eur - reserve_target,
+                    ),
+                )
+                hard_max_trade = float(ready["max_single_trade_eur"])
+                max_trade_eur = (
+                    hard_max_trade
+                    if self.config.full_capacity
+                    else min(self.config.max_order_eur, hard_max_trade)
                 )
                 decisions = ((shadow.get("last_signal") or {}).get("decisions") or [])
                 longs = [
@@ -749,11 +996,24 @@ class CoinbaseAutonomousExecutor:
                     and row.get("decision") == "LONG"
                     and str(row.get("window_key") or "") not in self.state.seen_windows
                 ]
-                if longs and spendable >= self.config.min_order_eur:
-                    decision = min(longs, key=lambda row: int(row.get("duration_seconds") or 999999))
-                    action = self._submit_buy(
-                        quote_eur=spendable, decision=decision, now=ts, reference_ask=ask
+                best_pair: tuple[dict[str, Any], dict[str, Any]] | None = None
+                for decision in longs:
+                    route = self._best_entry_route(
+                        decision=decision,
+                        balances=balances,
+                        spendable_eur=spendable_eur,
+                        max_trade_eur=max_trade_eur,
                     )
+                    if route is None:
+                        continue
+                    if (
+                        best_pair is None
+                        or float(route["score"]) > float(best_pair[1]["score"])
+                    ):
+                        best_pair = (decision, route)
+                if best_pair is not None:
+                    decision, route = best_pair
+                    action = self._submit_buy(route=route, decision=decision, now=ts)
 
             self.state.last_error = None
             self._save()
@@ -782,7 +1042,7 @@ class CoinbaseAutonomousExecutor:
     ) -> dict[str, Any]:
         return {
             "venue": "coinbase_advanced",
-            "mode": "autonomous_spot_canary",
+            "mode": "coinbase_risktrader",
             "enabled": self.config.enabled,
             "product_id": self.config.product_id,
             "live_orders_sent": int(self.state.live_orders_sent),
@@ -831,5 +1091,10 @@ class CoinbaseAutonomousExecutor:
                 "withdrawals": False,
                 "isolated_portfolio_required": self.config.require_isolated_portfolio,
                 "existing_btc_auto_seed": self.config.allow_existing_btc_seed,
+                "supported_products": list(self.config.supported_products),
+                "full_capacity": self.config.full_capacity,
+                "min_live_net_edge_bps": self.config.min_live_net_edge_bps,
+                "max_spread_bps": self.config.max_spread_bps,
+                "shadow_promotion_required": self.config.require_shadow_promotion,
             },
         }

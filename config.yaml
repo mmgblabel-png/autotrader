@@ -602,6 +602,7 @@ coinbase_zscore_shadow:
 coinbase_autonomous_execution:
   enabled: true
   product_id: BTC-EUR
+  supported_products: [BTC-EUR, BTC-USDC]
   # Set COINBASE_AGENT_PORTFOLIO_ID to an isolated Advanced portfolio UUID.
   # Empty keeps current default-portfolio behavior until that portfolio/key is provisioned.
   portfolio_id: ""
@@ -615,13 +616,24 @@ coinbase_autonomous_execution:
   managed_capital_pct: 100.0
   cash_reserve_pct: 20.0
   max_single_trade_pct: 20.0
+  # In full-capacity mode max_order_eur is not an extra cap; the hard 20%
+  # single-position rule and available isolated quote balance determine sizing.
   max_order_eur: 5.0
   min_order_eur: 1.0
+  full_capacity: true
   max_daily_loss_pct: 3.0
   max_drawdown_pct: 10.0
   stop_loss_pct: 1.0
   take_profit_pct: 1.5
   max_preview_fee_bps: 60.0
   max_preview_slippage_bps: 25.0
-  require_shadow_promotion: true
+  assumed_exit_fee_bps: 50.0
+  min_live_net_edge_bps: 8.0
+  max_spread_bps: 20.0
+  trailing_activate_pct: 0.8
+  trailing_stop_pct: 0.5
+  # RiskTrader does not wait for a shadow-promotion quota. Each live setup is
+  # gated by current forecast edge, authenticated preview fees/slippage, spread,
+  # portfolio risk, daily loss and drawdown.
+  require_shadow_promotion: false
   state_path: /data/coinbase_autonomous_canary.json
