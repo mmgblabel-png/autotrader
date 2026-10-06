@@ -399,7 +399,7 @@ class CoinbaseAutonomousExecutor:
             return
         found = self.client.find_order_by_client_id(
             intent.client_order_id,
-            product_id=self.config.product_id,
+            product_id=intent.product_id,
             portfolio_id=self.config.portfolio_id or None,
         )
         if found is not None:
@@ -413,6 +413,9 @@ class CoinbaseAutonomousExecutor:
                     submitted_at=intent.created_at,
                     window_key=intent.window_key,
                     window_end=intent.window_end,
+                    product_id=intent.product_id,
+                    quote_currency=intent.quote_currency,
+                    quote_to_eur=intent.quote_to_eur,
                 )
                 self.state.submission_intent = None
                 self.state.live_orders_sent += 1
@@ -437,7 +440,7 @@ class CoinbaseAutonomousExecutor:
         self._save()
         response = self.client.create_spot_market_order(
             client_order_id=intent.client_order_id,
-            product_id=self.config.product_id,
+            product_id=intent.product_id,
             side=intent.side,
             quote_size=intent.quote_size or None,
             base_size=intent.base_size or None,
@@ -452,6 +455,9 @@ class CoinbaseAutonomousExecutor:
             submitted_at=now,
             window_key=intent.window_key,
             window_end=intent.window_end,
+            product_id=intent.product_id,
+            quote_currency=intent.quote_currency,
+            quote_to_eur=intent.quote_to_eur,
         )
         self.state.submission_intent = None
         self.state.live_orders_sent += 1
@@ -474,40 +480,57 @@ class CoinbaseAutonomousExecutor:
         if fill is None:
             return
         size, price, fees = fill
+        quote_to_eur = max(0.0, float(pending.quote_to_eur or 0.0))
+        if quote_to_eur <= 0:
+            quote_to_eur = 1.0 if pending.quote_currency == "EUR" else self._usdc_to_eur()
+        fees_eur = fees * quote_to_eur
+
         if pending.purpose == "seed":
-            proceeds = size * price - fees
-            self.state.managed_cash_eur += max(0.0, proceeds)
+            proceeds_eur = max(0.0, (size * price - fees) * quote_to_eur)
+            self.state.managed_cash_eur += proceeds_eur
             self.state.last_action = {
                 "at": now, "action": "SEED_FILLED", "base_size": size,
-                "price": price, "fees_eur": fees, "managed_cash_eur": self.state.managed_cash_eur,
+                "product_id": pending.product_id, "quote_currency": pending.quote_currency,
+                "price": price, "fees_eur": fees_eur,
+                "managed_cash_eur": self.state.managed_cash_eur,
             }
         elif pending.purpose == "entry":
-            spent = size * price + fees
-            self.state.managed_cash_eur = max(0.0, self.state.managed_cash_eur - spent)
+            spent_eur = max(0.0, (size * price + fees) * quote_to_eur)
+            self.state.managed_cash_eur = max(0.0, self.state.managed_cash_eur - spent_eur)
             self.state.position = ManagedPosition(
                 base_size=size,
                 entry_price=price,
-                entry_fee_eur=fees,
+                entry_fee_eur=fees_eur,
                 window_key=pending.window_key,
                 window_end=pending.window_end,
                 opened_at=now,
+                product_id=pending.product_id,
+                quote_currency=pending.quote_currency,
+                quote_to_eur=quote_to_eur,
+                peak_price=price,
             )
             self.state.last_action = {
                 "at": now, "action": "ENTRY_FILLED", "base_size": size,
-                "price": price, "fees_eur": fees,
+                "product_id": pending.product_id, "quote_currency": pending.quote_currency,
+                "price": price, "fees_eur": fees_eur,
             }
         elif pending.purpose == "exit" and self.state.position is not None:
-            proceeds = size * price - fees
-            cost = self.state.position.base_size * self.state.position.entry_price + self.state.position.entry_fee_eur
-            pnl = proceeds - cost
-            self.state.managed_cash_eur += max(0.0, proceeds)
+            proceeds_eur = max(0.0, (size * price - fees) * quote_to_eur)
+            pos = self.state.position
+            cost_eur = (
+                pos.base_size * pos.entry_price * max(pos.quote_to_eur, 0.0)
+                + pos.entry_fee_eur
+            )
+            pnl = proceeds_eur - cost_eur
+            self.state.managed_cash_eur += proceeds_eur
             self.state.realized_pnl_eur += pnl
             self.state.day_pnl_eur += pnl
             self.state.settled_trades += 1
             self.state.position = None
             self.state.last_action = {
                 "at": now, "action": "EXIT_FILLED", "base_size": size,
-                "price": price, "fees_eur": fees, "realized_pnl_eur": pnl,
+                "product_id": pending.product_id, "quote_currency": pending.quote_currency,
+                "price": price, "fees_eur": fees_eur, "realized_pnl_eur": pnl,
             }
         if self.state.last_action is not None:
             self._audit({
@@ -518,6 +541,7 @@ class CoinbaseAutonomousExecutor:
                 "purpose": pending.purpose,
             })
         self.state.pending = None
+
 
     @staticmethod
     def _preview_costs(preview: dict[str, Any], reference: float, notional: float) -> tuple[float, float]:
