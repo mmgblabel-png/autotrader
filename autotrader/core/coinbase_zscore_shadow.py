@@ -56,7 +56,7 @@ class CoinbaseZScoreConfig:
     max_total_shadow_exposure_pct: float = 20.0
     min_notional_eur: float = 1.0
     max_notional_eur: float = 5.0
-    promotion_min_settled_trades: int = 50
+    promotion_min_settled_trades: int = 30
     promotion_min_winrate_pct: float = 52.0
     promotion_min_net_pnl_eur: float = 0.10
     promotion_min_profit_factor: float = 1.25
@@ -95,7 +95,7 @@ class CoinbaseZScoreConfig:
             max_total_shadow_exposure_pct=min(20.0, max(1.0, float(cfg.get("max_total_shadow_exposure_pct", 20.0)))),
             min_notional_eur=max(0.50, float(cfg.get("min_notional_eur", 1.0))),
             max_notional_eur=max(1.0, float(cfg.get("max_notional_eur", 5.0))),
-            promotion_min_settled_trades=max(50, int(cfg.get("promotion_min_settled_trades", 50))),
+            promotion_min_settled_trades=max(30, int(cfg.get("promotion_min_settled_trades", 30))),
             promotion_min_winrate_pct=min(100.0, max(0.0, float(cfg.get("promotion_min_winrate_pct", 52.0)))),
             promotion_min_net_pnl_eur=max(0.0, float(cfg.get("promotion_min_net_pnl_eur", 0.10))),
             promotion_min_profit_factor=max(1.0, float(cfg.get("promotion_min_profit_factor", 1.25))),

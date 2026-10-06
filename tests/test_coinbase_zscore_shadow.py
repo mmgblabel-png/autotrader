@@ -178,3 +178,19 @@ def test_promotion_status_exposes_exact_blockers_and_progress(tmp_path):
     assert status["promotion_progress"]["net_pnl_gap_eur"] == 0.16
     assert status["promotion_progress"]["profit_factor_gap"] == 0.85
     assert status["promotion_gates"]["drawdown"] is True
+
+
+def test_aggressive_coinbase_promotion_floor_allows_thirty_but_not_less(tmp_path):
+    cfg = CoinbaseZScoreConfig.from_mapping({
+        "promotion_min_settled_trades": 30,
+        "state_path": str(tmp_path / "state.json"),
+        "status_path": str(tmp_path / "status.json"),
+    })
+    assert cfg.promotion_min_settled_trades == 30
+
+    clamped = CoinbaseZScoreConfig.from_mapping({
+        "promotion_min_settled_trades": 10,
+        "state_path": str(tmp_path / "state2.json"),
+        "status_path": str(tmp_path / "status2.json"),
+    })
+    assert clamped.promotion_min_settled_trades == 30
