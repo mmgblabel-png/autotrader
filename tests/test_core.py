@@ -371,6 +371,10 @@ def test_api_strategy_status_compatibility(api_client):
 
 
 def test_api_start_disabled_strategy_stays_disabled(api_client):
+    from autotrader.api.deps import get_agent
+
+    strategy = get_agent()._strategies["market_maker"]
+    strategy._enabled = False
     r = api_client.post("/api/strategies/start", json={"name": "market_maker"})
     assert r.status_code == 200
     assert r.json()["status"] == "disabled"

@@ -232,11 +232,14 @@ live_evidence_gate:
   recovery_enabled: true
   recovery_strategies:
     - GridRunner
-  recovery_order_eur: 6.00
-  recovery_cooldown_seconds: 900
-  recovery_min_score: 86.0
-  recovery_min_confidence: 0.65
-  recovery_min_signal_strength: 65.0
+    - GridRunnerETH
+    - MarketMaker
+    - SniperBot
+  recovery_order_eur: 5.00
+  recovery_cooldown_seconds: 600
+  recovery_min_score: 85.0
+  recovery_min_confidence: 0.62
+  recovery_min_signal_strength: 62.0
   recovery_min_winrate_pct: 45.0
   recovery_max_net_deficit_eur: 0.75
 
@@ -270,7 +273,7 @@ autonomous_execution:
   high_volatility_size_multiplier: 0.65
   max_size_confidence: 0.70
   exposure_safety_buffer_eur: 0.10
-  switch_cooldown_seconds: 45
+  switch_cooldown_seconds: 30
   strategy_markets:
     market_maker:
       - "*"
@@ -328,7 +331,7 @@ market_universe:
 
 opportunity_router:
   enabled: true
-  interval_seconds: 10
+  interval_seconds: 5
   history_size: 48
   min_top_depth_eur: 25
   max_spread_bps: 35
@@ -390,21 +393,21 @@ profit_policy:
 
 strategies:
   market_maker:
-    enabled: false
-    live_capable: false
-    allocation_eur: 0
-    max_order_eur: 12
+    enabled: true
+    live_capable: true
+    allocation_eur: 8
+    max_order_eur: 5
     max_open_orders: 1
     exclusive_symbol: true
     symbol: BTC-EUR
     exchange: bitvavo
-    order_value_eur: 8.0
+    order_value_eur: 5.0
     order_size: 0.0001
     min_order_size: 0.00000001
     max_order_size: 1000000000
     target_spread: 0.80
     quote_refresh_seconds: 5
-    cycle_cooldown_seconds: 60
+    cycle_cooldown_seconds: 30
     adaptive_enabled: true
     adaptive_ema_alpha: 0.18
     adaptive_min_samples: 6
@@ -422,14 +425,14 @@ strategies:
     max_position_size: 500.0
     max_slippage_pct: 0.5
     max_consecutive_errors: 5
-    protection_stop_loss_pct: 2.0
+    protection_stop_loss_pct: 1.25
     protection_trailing_activation_pct: 0.90
-    protection_trailing_drawdown_pct: 1.25
+    protection_trailing_drawdown_pct: 0.75
     protection_partial_profit_trigger_pct: 0.75
     protection_partial_profit_fraction: 0.50
 
   arbitrage:
-    enabled: false
+    enabled: true
     live_capable: false
     allocation_eur: 10
     max_order_eur: 7
@@ -460,9 +463,9 @@ strategies:
     order_size: 0.0
     entry_offset_pct: 0.60
     exit_markup_pct: 1.00
-    cycle_cooldown_seconds: 30
-    failure_cooldown_seconds: 10
-    allocation_failure_cooldown_seconds: 3
+    cycle_cooldown_seconds: 20
+    failure_cooldown_seconds: 5
+    allocation_failure_cooldown_seconds: 2
     max_daily_loss: 25.0
     max_position_size: 300.0
     max_slippage_pct: 0.5
@@ -474,29 +477,29 @@ strategies:
     protection_partial_profit_fraction: 0.50
 
   grid_eth:
-    enabled: false
-    live_capable: false
+    enabled: true
+    live_capable: true
     strategy_name: GridRunnerETH
-    allocation_eur: 0
-    max_order_eur: 9
+    allocation_eur: 8
+    max_order_eur: 5
     max_open_orders: 1
     exclusive_symbol: true
     symbol: ETH-EUR
     exchange: bitvavo
-    order_value_eur: 8.0
+    order_value_eur: 5.0
     order_size: 0.0
     entry_offset_pct: 0.60
     exit_markup_pct: 0.80
-    cycle_cooldown_seconds: 60
-    failure_cooldown_seconds: 15
-    allocation_failure_cooldown_seconds: 5
-    max_daily_loss: 20.0
+    cycle_cooldown_seconds: 30
+    failure_cooldown_seconds: 7
+    allocation_failure_cooldown_seconds: 3
+    max_daily_loss: 10.0
     max_position_size: 300.0
     max_slippage_pct: 0.5
     max_consecutive_errors: 5
-    protection_stop_loss_pct: 2.0
+    protection_stop_loss_pct: 1.25
     protection_trailing_activation_pct: 0.90
-    protection_trailing_drawdown_pct: 1.25
+    protection_trailing_drawdown_pct: 0.75
     protection_partial_profit_trigger_pct: 0.75
     protection_partial_profit_fraction: 0.50
 
@@ -522,19 +525,19 @@ strategies:
 
   sniper:
     enabled: true
-    live_capable: false
-    allocation_eur: 0
-    max_order_eur: 10
+    live_capable: true
+    allocation_eur: 6
+    max_order_eur: 5
     max_open_orders: 1
     exclusive_symbol: true
     symbol: XRP-EUR
     exchange: bitvavo
-    order_value_eur: 6.0
+    order_value_eur: 5.0
     order_size: 0.0
     momentum_pct: 0.5
     take_profit_pct: 1.5
     stop_loss_pct: 0.35
-    cooldown_seconds: 600
+    cooldown_seconds: 180
     autonomous_min_score: 82
     autonomous_min_signal_strength: 80
     autonomous_min_confidence: 0.75
@@ -544,11 +547,11 @@ strategies:
     autonomous_min_liquidity_eur: 100.0
     autonomous_max_expected_slippage_bps: 5.0
     entry_max_slippage_pct: 0.12
-    entry_attempt_cooldown_seconds: 30
+    entry_attempt_cooldown_seconds: 15
     ema_fast: 9
     ema_slow: 21
     max_slippage_pct: 0.12
-    max_daily_loss: 0.25
+    max_daily_loss: 0.20
     max_position_size: 200.0
     max_consecutive_errors: 3
     protection_stop_loss_pct: 2.0
