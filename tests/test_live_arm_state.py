@@ -104,3 +104,22 @@ def test_activate_live_persists_before_arming(monkeypatch, tmp_path):
         server.app.state.live_armed = old_armed
         server.app.state.live_arm_intent = old_intent
         server.app.state.live_arm_auto_resume_eligible = old_eligible
+
+
+def test_cross_release_resume_can_be_enabled_for_coinbase_only(tmp_path):
+    path = tmp_path / "coinbase-live-arm.json"
+    LiveArmIntentStore(path, release_id="deploy-1").write(True)
+
+    default_policy = LiveArmIntentStore(path, release_id="deploy-2")
+    assert default_policy.should_resume() is False
+
+    coinbase_policy = LiveArmIntentStore(
+        path,
+        release_id="deploy-2",
+        allow_cross_release_resume=True,
+    )
+    assert coinbase_policy.should_resume() is True
+    status = coinbase_policy.status()
+    assert status["release_match"] is False
+    assert status["auto_resume_eligible"] is True
+    assert status["cross_release_resume_enabled"] is True
