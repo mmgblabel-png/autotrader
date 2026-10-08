@@ -964,7 +964,13 @@ def _apply_strategy_evidence_gate(agent: AutoTrader) -> dict[str, object]:
         winrate = float(row.get("winrate_pct") or 0.0)
         evidence_blocked = bool(enabled and exits >= min_exits and net < min_net)
 
-        score = float(strategy._config.get("_autonomous_score", 0.0) or 0.0)
+        score = float(
+            strategy._config.get(
+                "_autonomous_market_score",
+                strategy._config.get("_autonomous_score", 0.0),
+            )
+            or 0.0
+        )
         confidence = float(
             strategy._config.get("_autonomous_confidence", 0.0) or 0.0
         )
