@@ -1,0 +1,66 @@
+coinbase_zscore_shadow:
+  enabled: true
+  product_id: BTC-EUR
+  durations_seconds: [300, 900, 1800, 3600]
+  interval_seconds: 5
+  volatility_lookback_seconds: 3600
+  drift_lookback_seconds: 60
+  min_vol_observations: 12
+  min_sigma_annual: 0.10
+  max_sigma_annual: 3.00
+  min_seconds_to_window_end: 20
+  strike_capture_grace_seconds: 45
+  min_probability_long: 0.58
+  max_entry_reference_z: 2.5
+  max_forecast_z: 3.0
+  fee_bps_each_leg: 50
+  slippage_bps_each_leg: 5
+  safety_margin_bps: 5
+  min_after_cost_edge_bps: 10
+  shadow_capital_eur: 80
+  position_fraction: 0.05
+  max_total_shadow_exposure_pct: 100
+  min_notional_eur: 1
+  max_notional_eur: 25
+  state_path: /data/coinbase_zscore_shadow.json
+  status_path: /data/coinbase_zscore_status.json
+  promotion_min_settled_trades: 30
+  promotion_min_winrate_pct: 51.0
+  promotion_min_net_pnl_eur: 0.05
+  promotion_min_profit_factor: 1.15
+  promotion_max_drawdown_pct: 10.0
+
+coinbase_autonomous_execution:
+  enabled: true
+  product_id: BTC-EUR
+  supported_products: [BTC-EUR, BTC-USDC]
+  portfolio_id: ""
+  require_isolated_portfolio: true
+  allow_existing_btc_seed: false
+  interval_seconds: 5
+
+  # RiskTrader: the complete isolated agent portfolio is bot-owned capital.
+  # Funds in any other Coinbase portfolio are never adopted or traded.
+  managed_capital_pct: 100.0
+  cash_reserve_pct: 0.0
+  max_single_trade_pct: 100.0
+  full_capacity: true
+  max_order_eur: 1000.0
+  min_order_eur: 1.0
+
+  max_daily_loss_pct: 3.0
+  max_drawdown_pct: 10.0
+  stop_loss_pct: 1.0
+  take_profit_pct: 1.5
+  trailing_activate_pct: 0.8
+  trailing_stop_pct: 0.5
+
+  max_preview_fee_bps: 60.0
+  max_preview_slippage_bps: 25.0
+  assumed_exit_fee_bps: 50.0
+  min_live_net_edge_bps: 8.0
+  max_spread_bps: 20.0
+
+  # RiskTrader evaluates each current setup directly; no historical promotion quota.
+  require_shadow_promotion: false
+  state_path: /data/coinbase_autonomous_canary.json
