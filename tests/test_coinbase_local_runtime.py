@@ -32,6 +32,7 @@ def test_coinbase_local_compose_is_loopback_only_and_hardened():
     assert service["ports"] == ["127.0.0.1:8787:8000"]
     assert service["read_only"] is True
     assert service["cap_drop"] == ["ALL"]
+    assert service["cap_add"] == ["CHOWN"]
     assert "no-new-privileges:true" in service["security_opt"]
     assert service["env_file"] == [".env.coinbase.local"]
     command = " ".join(service["command"])
