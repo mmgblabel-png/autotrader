@@ -115,12 +115,31 @@ if ($Start) {
     }
 
     & docker info | Out-Null
+    if ($LASTEXITCODE -ne 0) {
+        throw "Docker daemon is niet bereikbaar. Start Docker Desktop en probeer opnieuw."
+    }
+
     & docker compose --env-file $EnvPath -f docker-compose.coinbase.local.yml up -d --build
+    if ($LASTEXITCODE -ne 0) {
+        throw "Docker build/start is mislukt. De healthcheck wordt niet uitgevoerd."
+    }
+
     & docker compose --env-file $EnvPath -f docker-compose.coinbase.local.yml ps
 
-    $health = Invoke-RestMethod -Uri "http://127.0.0.1:8787/api/health" -TimeoutSec 10
-    if ($health.status -ne "ok" -or -not $health.coinbase_only) {
-        throw "Container draait, maar de Coinbase-only healthcheck is niet groen."
+    $health = $null
+    for ($attempt = 1; $attempt -le 20; $attempt++) {
+        try {
+            $health = Invoke-RestMethod -Uri "http://127.0.0.1:8787/api/health" -TimeoutSec 5
+            if ($health.status -eq "ok" -and $health.coinbase_only) {
+                break
+            }
+        } catch {
+            Start-Sleep -Seconds 2
+        }
+    }
+    if ($null -eq $health -or $health.status -ne "ok" -or -not $health.coinbase_only) {
+        & docker compose --env-file $EnvPath -f docker-compose.coinbase.local.yml logs --tail 100
+        throw "Container is gestart, maar de Coinbase-only healthcheck werd niet groen."
     }
 
     Write-Host "Coinbase RiskTrader draait lokaal en Coinbase-only op http://127.0.0.1:8787/"
