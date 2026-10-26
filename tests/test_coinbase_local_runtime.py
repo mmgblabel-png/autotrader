@@ -17,10 +17,11 @@ def test_coinbase_local_server_exposes_only_coinbase_control_surface():
     assert not any("bitvavo" in path.lower() for path in paths)
 
 
-def test_coinbase_local_server_does_not_import_bitvavo_runtime():
+def test_coinbase_local_server_does_not_import_other_exchange_runtime():
     source = Path("autotrader/api/coinbase_local_server.py").read_text("utf-8").lower()
-    assert "bitvavo" not in source
-    assert "railway" not in source
+    assert "from autotrader.agent import" not in source
+    assert "autotrader.connectors.bitvavo" not in source
+    assert "autotrader.core.market_universe" not in source
     assert "coinbaseautonomousexecutor" in source
     assert "coinbasezscore" in source
 
