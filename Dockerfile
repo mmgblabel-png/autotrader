@@ -6,7 +6,7 @@ ENV PIP_DISABLE_PIP_VERSION_CHECK=1 \
 
 WORKDIR /build
 
-COPY pyproject.toml README.md config.yaml config.coinbase.local.yaml docker-compose.coinbase.local.yml .env.coinbase.local.example ./
+COPY pyproject.toml README.md config.yaml config.coinbase.local.yaml docker-compose.coinbase.local.yml ./
 COPY autotrader ./autotrader
 COPY tests ./tests
 
