@@ -2,7 +2,7 @@ name: CI
 
 on:
   push:
-    branches: ["main", "production", "coinbase-hardening-20261005"]
+    branches: ["main", "production", "coinbase-hardening-20261005", "coinbase-local"]
   pull_request:
     branches: ["main", "production"]
 
