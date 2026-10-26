@@ -33,6 +33,8 @@ services:
       - /tmp:size=64m,noexec,nosuid,nodev
     cap_drop:
       - ALL
+    cap_add:
+      - CHOWN
     security_opt:
       - no-new-privileges:true
     pids_limit: 256
