@@ -50,7 +50,8 @@ COPY --chown=autotrader:autotrader config.yaml /app/config.yaml
 COPY --chown=autotrader:autotrader config.coinbase.local.yaml /app/config.coinbase.local.yaml
 COPY docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
 COPY docker-entrypoint-coinbase-local.sh /usr/local/bin/docker-entrypoint-coinbase-local.sh
-RUN chmod 0755 /usr/local/bin/docker-entrypoint.sh /usr/local/bin/docker-entrypoint-coinbase-local.sh
+RUN sed -i 's/\r$//' /usr/local/bin/docker-entrypoint.sh /usr/local/bin/docker-entrypoint-coinbase-local.sh \
+    && chmod 0755 /usr/local/bin/docker-entrypoint.sh /usr/local/bin/docker-entrypoint-coinbase-local.sh
 
 EXPOSE 8000
 
