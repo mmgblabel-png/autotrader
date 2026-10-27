@@ -31,6 +31,11 @@ class CoinbaseOpportunityConfig:
     decision_window_seconds: int = 300
     daily_trade_target: int = 10
     daily_profit_target_eur: float = 1.0
+    high_risk_enabled: bool = True
+    high_risk_min_samples: int = 3
+    high_risk_min_recent_momentum_bps: float = 8.0
+    high_risk_max_spread_bps: float = 35.0
+    high_risk_min_24h_quote_volume: float = 5_000.0
 
     @classmethod
     def from_mapping(cls, raw: dict[str, Any] | None) -> "CoinbaseOpportunityConfig":
@@ -55,6 +60,11 @@ class CoinbaseOpportunityConfig:
             decision_window_seconds=max(60, int(cfg.get("decision_window_seconds", 300))),
             daily_trade_target=max(1, int(cfg.get("daily_trade_target", 10))),
             daily_profit_target_eur=max(0.0, float(cfg.get("daily_profit_target_eur", 1.0))),
+            high_risk_enabled=bool(cfg.get("high_risk_enabled", True)),
+            high_risk_min_samples=max(2, int(cfg.get("high_risk_min_samples", 3))),
+            high_risk_min_recent_momentum_bps=max(0.0, float(cfg.get("high_risk_min_recent_momentum_bps", 8.0))),
+            high_risk_max_spread_bps=max(1.0, float(cfg.get("high_risk_max_spread_bps", 35.0))),
+            high_risk_min_24h_quote_volume=max(0.0, float(cfg.get("high_risk_min_24h_quote_volume", 5_000.0))),
         )
 
 
@@ -155,7 +165,10 @@ class CoinbaseOpportunityEngine:
             change_pct = self._float(row.get("price_change_24h_pct"))
             volume_base = self._float(row.get("volume_24h"))
             quote_volume = price * volume_base if price > 0 and volume_base > 0 else 0.0
-            if price <= 0 or quote_volume < self.config.min_24h_quote_volume:
+            if price <= 0 or quote_volume < min(
+                self.config.min_24h_quote_volume,
+                self.config.high_risk_min_24h_quote_volume if self.config.high_risk_enabled else self.config.min_24h_quote_volume,
+            ):
                 continue
             # Long-only SPOT: positive regime gets priority, but negative names
             # remain scanned and simply do not become LONG decisions.
@@ -200,27 +213,44 @@ class CoinbaseOpportunityEngine:
             }
             candidates.append(candidate)
 
-            if (
+            normal_setup = (
                 sample_count >= self.config.min_samples
                 and recent_bps >= self.config.min_recent_momentum_bps
                 and day_bps > 0
                 and spread_bps <= self.config.max_spread_bps
+                and quote_volume >= self.config.min_24h_quote_volume
                 and forecast_bps > 0
-            ):
+            )
+            high_risk_setup = (
+                self.config.high_risk_enabled
+                and not normal_setup
+                and sample_count >= self.config.high_risk_min_samples
+                and recent_bps >= self.config.high_risk_min_recent_momentum_bps
+                and day_bps > -50.0
+                and spread_bps <= self.config.high_risk_max_spread_bps
+                and quote_volume >= self.config.high_risk_min_24h_quote_volume
+                and forecast_bps > 0
+            )
+            if normal_setup or high_risk_setup:
+                risk_tier = "normal" if normal_setup else "high"
                 window = self.config.decision_window_seconds
                 bucket = int(ts // window)
                 window_end = float((bucket + 1) * window)
                 decisions.append({
                     "decision": "LONG",
                     "product_id": product_id,
-                    "window_key": f"{product_id}:{window}:{bucket}",
+                    "window_key": f"{product_id}:{window}:{bucket}:{risk_tier}",
                     "duration_seconds": window,
                     "seconds_remaining": max(1.0, window_end - ts),
                     "forecast_move_bps": forecast_bps,
                     "required_move_bps": 0.0,
                     "probability_up": probability_up,
                     "reference_z": reference_z,
-                    "reason": "multi_market_positive_momentum",
+                    "risk_tier": risk_tier,
+                    "reason": (
+                        "multi_market_positive_momentum"
+                        if normal_setup else "high_risk_positive_momentum_fallback"
+                    ),
                 })
 
         decisions.sort(
@@ -247,7 +277,9 @@ class CoinbaseOpportunityEngine:
             "top_candidates": candidates[:10],
             "daily_trade_target": self.config.daily_trade_target,
             "daily_profit_target_eur": self.config.daily_profit_target_eur,
-            "target_policy": "targets_only_never_force_negative_edge",
+            "high_risk_enabled": self.config.high_risk_enabled,
+            "high_risk_policy": "fallback_only_when_normal_route_unavailable",
+            "target_policy": "aggregate_realized_pnl_target_never_force_negative_edge",
             "generated_at": ts,
         }
         return dict(self.last_status)
