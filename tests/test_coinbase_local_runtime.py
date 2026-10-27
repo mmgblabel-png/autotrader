@@ -53,6 +53,8 @@ def test_coinbase_local_config_is_risktrader_and_portfolio_isolated():
     assert auto["require_shadow_promotion"] is False
     assert auto["allow_dynamic_products"] is True
     assert auto["maker_first"] is True
+    assert auto["maker_first_exit"] is True
+    assert auto["assumed_exit_fee_bps"] == 30.0
     assert auto["daily_trade_target"] == 10
     assert auto["daily_profit_target_eur"] == 1.0
     assert auto["stop_after_daily_profit_target"] is False
