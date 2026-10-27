@@ -34,6 +34,7 @@ class CoinbaseAutonomousConfig:
     enabled: bool = True
     product_id: str = "BTC-EUR"
     supported_products: tuple[str, ...] = ("BTC-EUR", "BTC-USDC")
+    allow_dynamic_products: bool = False
     portfolio_id: str = ""
     require_isolated_portfolio: bool = True
     allow_existing_btc_seed: bool = False
@@ -56,6 +57,10 @@ class CoinbaseAutonomousConfig:
     trailing_activate_pct: float = 0.8
     trailing_stop_pct: float = 0.5
     require_shadow_promotion: bool = True
+    maker_first: bool = False
+    maker_order_age_seconds: float = 25.0
+    daily_trade_target: int = 10
+    daily_profit_target_eur: float = 1.0
     state_path: str = "/data/coinbase_autonomous_canary.json"
 
     @classmethod
@@ -67,8 +72,9 @@ class CoinbaseAutonomousConfig:
             supported_products=tuple(
                 str(value).upper()
                 for value in cfg.get("supported_products", ["BTC-EUR", "BTC-USDC"])
-                if str(value).upper() in {"BTC-EUR", "BTC-USDC"}
+                if "-" in str(value)
             ) or ("BTC-EUR",),
+            allow_dynamic_products=bool(cfg.get("allow_dynamic_products", False)),
             portfolio_id=str(os.getenv("COINBASE_AGENT_PORTFOLIO_ID", cfg.get("portfolio_id", "")) or "").strip(),
             require_isolated_portfolio=bool(cfg.get("require_isolated_portfolio", True)),
             allow_existing_btc_seed=_env_true(
@@ -94,6 +100,10 @@ class CoinbaseAutonomousConfig:
             trailing_activate_pct=max(0.1, float(cfg.get("trailing_activate_pct", 0.8))),
             trailing_stop_pct=max(0.1, float(cfg.get("trailing_stop_pct", 0.5))),
             require_shadow_promotion=bool(cfg.get("require_shadow_promotion", True)),
+            maker_first=bool(cfg.get("maker_first", False)),
+            maker_order_age_seconds=max(5.0, float(cfg.get("maker_order_age_seconds", 25.0))),
+            daily_trade_target=max(1, int(cfg.get("daily_trade_target", 10))),
+            daily_profit_target_eur=max(0.0, float(cfg.get("daily_profit_target_eur", 1.0))),
             state_path=str(cfg.get("state_path", "/data/coinbase_autonomous_canary.json")),
         )
 
@@ -124,6 +134,8 @@ class PendingOrder:
     product_id: str = "BTC-EUR"
     quote_currency: str = "EUR"
     quote_to_eur: float = 1.0
+    order_type: str = "market"
+    limit_price: str = ""
 
 @dataclass
 class SubmissionIntent:
@@ -139,6 +151,9 @@ class SubmissionIntent:
     product_id: str = "BTC-EUR"
     quote_currency: str = "EUR"
     quote_to_eur: float = 1.0
+    order_type: str = "market"
+    limit_price: str = ""
+    post_only: bool = False
 
 
 @dataclass
@@ -153,6 +168,7 @@ class CoinbaseAutonomousState:
     day_key: str = ""
     day_start_managed_equity_eur: float = 0.0
     day_pnl_eur: float = 0.0
+    day_settled_trades: int = 0
     peak_managed_equity_eur: float = 0.0
     max_drawdown_pct: float = 0.0
     seen_windows: list[str] = None
@@ -226,7 +242,7 @@ class CoinbaseAutonomousExecutor:
         for key in (
             "managed_cash_eur", "live_orders_sent", "settled_trades",
             "realized_pnl_eur", "day_key", "day_start_managed_equity_eur",
-            "day_pnl_eur", "peak_managed_equity_eur", "max_drawdown_pct",
+            "day_pnl_eur", "day_settled_trades", "peak_managed_equity_eur", "max_drawdown_pct",
             "seen_windows", "order_audit", "last_action", "last_error",
         ):
             if key in raw:
@@ -264,12 +280,12 @@ class CoinbaseAutonomousExecutor:
             if self.config.portfolio_id
             else self.client.account_balances()
         )
-        result = {"EUR": 0.0, "USDC": 0.0, "BTC": 0.0}
+        result: dict[str, float] = {"EUR": 0.0, "USDC": 0.0, "BTC": 0.0}
         for row in payload.get("assets", []) if isinstance(payload, dict) else []:
             if not isinstance(row, dict):
                 continue
             asset = str(row.get("currency") or "").upper()
-            if asset not in result:
+            if not asset:
                 continue
             try:
                 result[asset] = max(0.0, float(row.get("available") or 0.0))
@@ -339,6 +355,7 @@ class CoinbaseAutonomousExecutor:
             self.state.day_key = key
             self.state.day_start_managed_equity_eur = managed_equity
             self.state.day_pnl_eur = 0.0
+            self.state.day_settled_trades = 0
 
     def _global_gates(self, *, armed: bool, shadow_status: dict[str, Any]) -> dict[str, bool]:
         auth = (
@@ -526,6 +543,7 @@ class CoinbaseAutonomousExecutor:
             self.state.realized_pnl_eur += pnl
             self.state.day_pnl_eur += pnl
             self.state.settled_trades += 1
+            self.state.day_settled_trades += 1
             self.state.position = None
             self.state.last_action = {
                 "at": now, "action": "EXIT_FILLED", "base_size": size,
