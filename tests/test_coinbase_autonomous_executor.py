@@ -83,6 +83,68 @@ class FakeCoinbase:
             "est_average_filled_price": str(reference),
         }
 
+    def preview_spot_limit_order(
+        self,
+        *,
+        product_id,
+        side,
+        limit_price,
+        quote_size=None,
+        base_size=None,
+        portfolio_id=None,
+        post_only=True,
+    ):
+        self.preview_portfolio_ids.append(portfolio_id)
+        notional = float(quote_size) if quote_size else float(base_size) * float(limit_price)
+        return {
+            "preview_id": "preview-limit-1",
+            "commission_total": str(notional * 0.0025),
+            "est_average_filled_price": str(limit_price),
+        }
+
+    def create_spot_limit_order(
+        self,
+        *,
+        client_order_id,
+        product_id,
+        side,
+        limit_price,
+        quote_size=None,
+        base_size=None,
+        portfolio_id=None,
+        post_only=True,
+        preview_id=None,
+    ):
+        order_id = f"order-{len(self.created) + 1}"
+        row = {
+            "order_id": order_id,
+            "client_order_id": client_order_id,
+            "product_id": product_id,
+            "side": side,
+            "quote_size": quote_size,
+            "base_size": base_size,
+            "limit_price": limit_price,
+            "post_only": post_only,
+            "preview_id": preview_id,
+            "portfolio_id": portfolio_id,
+            "order_type": "limit",
+        }
+        self.created.append(row)
+        self.orders[order_id] = {
+            "status": "OPEN",
+            "filled_size": "0",
+            "average_filled_price": "0",
+            "total_fees": "0",
+            "settled": False,
+        }
+        return {"success": True, "success_response": {"order_id": order_id}}
+
+    def cancel_orders(self, order_ids):
+        for order_id in order_ids:
+            if order_id in self.orders:
+                self.orders[order_id]["status"] = "CANCELLED"
+        return {"results": [{"order_id": order_id, "success": True} for order_id in order_ids]}
+
     def create_spot_market_order(
         self,
         *,
@@ -522,3 +584,89 @@ def test_usdc_in_default_is_never_visible_without_agent_portfolio_balance(tmp_pa
     )
     assert fake.created[0]["product_id"] == "BTC-EUR"
     assert all(pid == "agent-portfolio" for pid in fake.balance_portfolio_ids)
+
+
+def test_dynamic_product_signal_uses_maker_first_entry(tmp_path, monkeypatch):
+    _set_live_env(monkeypatch)
+    fake = FakeCoinbase()
+    fake.eur = 6.0
+    fake.btc = 0.0
+    cfg = CoinbaseAutonomousConfig(
+        state_path=str(tmp_path / "dynamic-maker.json"),
+        portfolio_id="agent-portfolio",
+        require_isolated_portfolio=True,
+        require_shadow_promotion=False,
+        full_capacity=True,
+        allow_dynamic_products=True,
+        maker_first=True,
+        max_preview_fee_bps=35.0,
+        supported_products=("BTC-EUR",),
+        managed_capital_pct=100.0,
+        cash_reserve_pct=0.0,
+        max_single_trade_pct=100.0,
+        daily_trade_target=10,
+        daily_profit_target_eur=1.0,
+    )
+    executor = CoinbaseAutonomousExecutor(cfg, client=fake)
+    executor.state.managed_cash_eur = 6.0
+    status = executor.tick(
+        armed=True,
+        shadow_status={
+            "promotion_ready": False,
+            "last_signal": {
+                "decisions": [{
+                    **_long_decision("XRP-EUR:300:dynamic"),
+                    "product_id": "XRP-EUR",
+                }]
+            },
+        },
+    )
+    assert status["live_orders_sent"] == 1
+    assert fake.created[0]["product_id"] == "XRP-EUR"
+    assert fake.created[0]["order_type"] == "limit"
+    assert fake.created[0]["post_only"] is True
+    assert float(fake.created[0]["quote_size"]) < 6.0
+    assert status["pending_order"]["order_type"] == "limit"
+    assert status["daily_targets"]["trade_target"] == 10
+    assert status["daily_targets"]["profit_target_eur"] == 1.0
+    assert status["hard_rules"]["dynamic_products_enabled"] is True
+    assert status["hard_rules"]["maker_first_entries"] is True
+
+
+def test_stale_maker_entry_is_cancelled_without_fake_fill(tmp_path, monkeypatch):
+    _set_live_env(monkeypatch)
+    fake = FakeCoinbase()
+    fake.eur = 6.0
+    fake.btc = 0.0
+    cfg = CoinbaseAutonomousConfig(
+        state_path=str(tmp_path / "stale-maker.json"),
+        portfolio_id="agent-portfolio",
+        require_isolated_portfolio=True,
+        require_shadow_promotion=False,
+        full_capacity=True,
+        allow_dynamic_products=True,
+        maker_first=True,
+        maker_order_age_seconds=5.0,
+        supported_products=("BTC-EUR",),
+        managed_capital_pct=100.0,
+        cash_reserve_pct=0.0,
+        max_single_trade_pct=100.0,
+    )
+    executor = CoinbaseAutonomousExecutor(cfg, client=fake)
+    executor.state.managed_cash_eur = 6.0
+    first = executor.tick(
+        armed=True,
+        now=1000.0,
+        shadow_status={
+            "promotion_ready": False,
+            "last_signal": {"decisions": [{**_long_decision("XRP-EUR:300:stale", 120), "product_id": "XRP-EUR"}]},
+        },
+    )
+    assert first["pending_order"] is not None
+    second = executor.tick(
+        armed=True,
+        now=1006.0,
+        shadow_status={"promotion_ready": False, "last_signal": {"decisions": []}},
+    )
+    assert second["pending_order"] is None
+    assert any(row.get("action") == "MAKER_ORDER_EXPIRED" for row in second["order_audit"])
