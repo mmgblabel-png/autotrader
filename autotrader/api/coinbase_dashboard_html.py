@@ -44,7 +44,7 @@ button,.btn{border:0;border-radius:10px;padding:11px 15px;font-weight:850;cursor
 <div id="notice" class="notice">Coinbase-data laden…</div>
 
 <section class="section hero">
-  <div class="card hero-main"><div class="label">Agent portfolio</div><div id="agentcash" class="value big">—</div><div id="portfolioscope" class="sub">Dedicated isolated Coinbase portfolio</div><div class="gates"><span class="gate">20% max / trade</span><span class="gate">20% cash reserve</span><span class="gate">3% daily loss</span><span class="gate">10% drawdown</span></div></div>
+  <div class="card hero-main"><div class="label">Agent portfolio</div><div id="agentcash" class="value big">—</div><div id="portfolioscope" class="sub">Dedicated isolated Coinbase portfolio</div><div class="gates"><span class="gate">100% assigned capacity</span><span class="gate">0% extra reserve</span><span class="gate">3% daily loss</span><span class="gate">10% drawdown</span></div></div>
   <div class="card"><div class="label">Live status</div><div id="armed" class="value">—</div><div id="armedsub" class="sub">—</div></div>
   <div class="card"><div class="label">Evidence</div><div id="evidence" class="value blue">—</div><div id="evidencesub" class="sub">settled shadow trades</div></div>
   <div class="card"><div class="label">Execution scope</div><div id="scope" class="value">BTC-EUR</div><div class="sub">SPOT only · geen leverage/margin/futures</div></div>
@@ -52,7 +52,7 @@ button,.btn{border:0;border-radius:10px;padding:11px 15px;font-weight:850;cursor
 
 <div class="section-title"><h2>Execution & risk</h2><div class="line"></div><span id="readybadge" class="badge">READINESS</span></div>
 <section class="grid4">
-  <div class="card"><div class="label">Max entry nu</div><div id="maxtrade" class="value">—</div><div class="sub">20% van geïsoleerde NAV</div></div>
+  <div class="card"><div class="label">Max entry nu</div><div id="maxtrade" class="value">—</div><div class="sub">Tot 100% van toegewezen Agent-capaciteit wanneer gates groen zijn</div></div>
   <div class="card"><div class="label">Cash reserve</div><div id="reserve" class="value">—</div><div class="sub">blijft buiten nieuwe entries</div></div>
   <div class="card"><div class="label">Live orders sent</div><div id="orderssent" class="value">—</div><div id="legacyorders" class="sub">—</div></div>
   <div class="card"><div class="label">Runtime error</div><div id="runtimeerror" class="value">—</div><div class="sub">Coinbase autonomous executor</div></div>
@@ -118,21 +118,22 @@ button,.btn{border:0;border-radius:10px;padding:11px 15px;font-weight:850;cursor
 </div></div>
 
 <script>
-let token="", apiKey="";
+let token=sessionStorage.getItem("coinbase_dashboard_token")||"", apiKey=sessionStorage.getItem("coinbase_dashboard_api_key")||"";
 const euro=v=>Number(v||0).toLocaleString("nl-NL",{style:"currency",currency:"EUR",minimumFractionDigits:2,maximumFractionDigits:4});
 const pct=v=>Number(v||0).toLocaleString("nl-NL",{minimumFractionDigits:2,maximumFractionDigits:2})+"%";
 const num=v=>Number(v||0).toLocaleString("nl-NL",{maximumFractionDigits:4});
 function headers(extra={}){const h={"Content-Type":"application/json",...extra};if(token)h.Authorization="Bearer "+token;if(apiKey)h["X-API-Key"]=apiKey;return h}
-async function api(path,opt={}){const r=await fetch(path,{...opt,headers:headers(opt.headers||{})});let data={};try{data=await r.json()}catch{}if(!r.ok)throw new Error(typeof data.detail==="string"?data.detail:JSON.stringify(data.detail||data));return data}
+function showLogin(message=""){document.getElementById("app").classList.add("hidden");document.getElementById("login").classList.remove("hidden");document.getElementById("loginerr").textContent=message}
+async function api(path,opt={}){const r=await fetch(path,{...opt,headers:headers(opt.headers||{})});let data={};try{data=await r.json()}catch{}if(r.status===401){token="";apiKey="";sessionStorage.removeItem("coinbase_dashboard_token");sessionStorage.removeItem("coinbase_dashboard_api_key");showLogin("Sessie verlopen of API-key ongeldig. Vul je lokale PUBLIC_API_KEY opnieuw in.");throw new Error("Unauthorized")}if(!r.ok)throw new Error(typeof data.detail==="string"?data.detail:JSON.stringify(data.detail||data));return data}
 async function login(){
   document.getElementById("loginerr").textContent="";
   apiKey=document.getElementById("apikey").value.trim();
   try{
-    if(!apiKey){const x=await api("/api/auth/login",{method:"POST",body:JSON.stringify({username:document.getElementById("username").value,password:document.getElementById("password").value})});token=x.access_token}
-    document.getElementById("login").classList.add("hidden");document.getElementById("app").classList.remove("hidden");await refresh();setInterval(refresh,10000)
+    if(apiKey){sessionStorage.setItem("coinbase_dashboard_api_key",apiKey)}else{const x=await api("/api/auth/login",{method:"POST",body:JSON.stringify({username:document.getElementById("username").value,password:document.getElementById("password").value})});token=x.access_token;sessionStorage.setItem("coinbase_dashboard_token",token)}
+    document.getElementById("login").classList.add("hidden");document.getElementById("app").classList.remove("hidden");await refresh();window.dashboardTimer=setInterval(refresh,10000)
   }catch(e){document.getElementById("loginerr").textContent=e.message}
 }
-function logout(){token="";apiKey="";location.reload()}
+function logout(){token="";apiKey="";sessionStorage.removeItem("coinbase_dashboard_token");sessionStorage.removeItem("coinbase_dashboard_api_key");if(window.dashboardTimer)clearInterval(window.dashboardTimer);location.reload()}
 function yes(v){return v?'<span class="green">JA</span>':'<span class="red">NEE</span>'}
 function setText(id,v){document.getElementById(id).textContent=v}
 function auditRows(rows){
@@ -203,6 +204,15 @@ async function deactivateLive(){
     await refresh();
   }catch(e){alert("Coinbase Live niet gestopt: "+e.message)}
 }
+async function boot(){
+  if(apiKey||token){
+    document.getElementById("login").classList.add("hidden");
+    document.getElementById("app").classList.remove("hidden");
+    try{await refresh();window.dashboardTimer=setInterval(refresh,10000);return}catch(e){}
+  }
+  showLogin("");
+}
+boot();
 </script>
 </body></html>'''
 
