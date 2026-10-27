@@ -250,7 +250,15 @@ async def startup() -> None:
     app.state.shadow_engine = CoinbaseZScoreShadowEngine(shadow_cfg)
     app.state.executor = CoinbaseAutonomousExecutor(auto_cfg)
     app.state.realtime_orderflow = CoinbaseRealtimeOrderflowEngine(realtime_cfg)
-    await asyncio.to_thread(app.state.realtime_orderflow.start)
+    app.state.realtime_error = None
+    try:
+        await asyncio.to_thread(app.state.realtime_orderflow.start)
+    except Exception as exc:
+        app.state.realtime_error = type(exc).__name__
+        log.warning(
+            "Coinbase realtime orderflow unavailable; continuing with REST fallback: %s",
+            type(exc).__name__,
+        )
     app.state.opportunity_engine = CoinbaseOpportunityEngine(
         opportunity_cfg,
         market_data=app.state.market,
@@ -265,7 +273,6 @@ async def startup() -> None:
     app.state.executor_status = app.state.executor.status()
     app.state.shadow_error = None
     app.state.opportunity_error = None
-    app.state.realtime_error = None
     app.state.executor_error = None
     app.state.universe = {}
     app.state.universe_error = None
@@ -336,6 +343,7 @@ def health() -> dict[str, Any]:
         "shadow_error": getattr(app.state, "shadow_error", None),
         "executor_error": getattr(app.state, "executor_error", None),
         "opportunity_error": getattr(app.state, "opportunity_error", None),
+        "realtime_error": getattr(app.state, "realtime_error", None),
         "realtime_orderflow": (
             app.state.realtime_orderflow.status()
             if getattr(app.state, "realtime_orderflow", None) is not None
