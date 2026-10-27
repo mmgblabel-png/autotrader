@@ -809,3 +809,52 @@ def test_profit_target_locks_new_entries_for_rest_of_day(tmp_path, monkeypatch):
     assert fake.created == []
     assert status["daily_targets"]["profit_target_met"] is True
     assert status["daily_targets"]["stop_after_profit_target"] is True
+
+
+def test_take_profit_exit_uses_post_only_limit(tmp_path):
+    fake = FakeCoinbase()
+    cfg = CoinbaseAutonomousConfig(
+        state_path=str(tmp_path / "maker-exit.json"),
+        portfolio_id="agent-portfolio",
+        maker_first_exit=True,
+    )
+    executor = CoinbaseAutonomousExecutor(cfg, client=fake)
+    action = executor._submit_sell(
+        base_size=0.0001,
+        purpose="exit",
+        now=1000.0,
+        reference_bid=fake.bid,
+        product_id="BTC-EUR",
+        quote_currency="EUR",
+        quote_to_eur=1.0,
+        exit_reason="take_profit",
+    )
+    assert action["order_type"] == "limit"
+    assert action["reason"] == "take_profit"
+    assert fake.created[-1]["side"] == "SELL"
+    assert fake.created[-1]["order_type"] == "limit"
+    assert fake.created[-1]["post_only"] is True
+
+
+def test_stop_loss_exit_stays_market(tmp_path):
+    fake = FakeCoinbase()
+    cfg = CoinbaseAutonomousConfig(
+        state_path=str(tmp_path / "risk-exit.json"),
+        portfolio_id="agent-portfolio",
+        maker_first_exit=True,
+    )
+    executor = CoinbaseAutonomousExecutor(cfg, client=fake)
+    action = executor._submit_sell(
+        base_size=0.0001,
+        purpose="exit",
+        now=1000.0,
+        reference_bid=fake.bid,
+        product_id="BTC-EUR",
+        quote_currency="EUR",
+        quote_to_eur=1.0,
+        exit_reason="stop_loss",
+    )
+    assert action["order_type"] == "market"
+    assert action["reason"] == "stop_loss"
+    assert fake.created[-1]["side"] == "SELL"
+    assert fake.created[-1].get("order_type") != "limit"
