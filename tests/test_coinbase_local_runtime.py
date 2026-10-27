@@ -54,10 +54,10 @@ def test_coinbase_local_config_is_risktrader_and_portfolio_isolated():
     assert auto["maker_first"] is True
     assert auto["daily_trade_target"] == 10
     assert auto["daily_profit_target_eur"] == 1.0
-    assert auto["stop_after_daily_profit_target"] is True
+    assert auto["stop_after_daily_profit_target"] is False
     assert auto["high_risk_fallback"] is True
     assert auto["high_risk_min_live_net_edge_bps"] == 0.0
-    assert auto["high_risk_max_spread_bps"] == 35.0
+    assert auto["high_risk_max_spread_bps"] == 45.0
     assert auto["day_timezone"] == "Europe/Amsterdam"
     assert auto["max_daily_loss_pct"] == 3.0
     assert auto["max_drawdown_pct"] == 10.0
@@ -66,8 +66,8 @@ def test_coinbase_local_config_is_risktrader_and_portfolio_isolated():
     assert opportunity["daily_trade_target"] == 10
     assert opportunity["daily_profit_target_eur"] == 1.0
     assert opportunity["high_risk_enabled"] is True
-    assert opportunity["high_risk_min_recent_momentum_bps"] == 8
-    assert opportunity["high_risk_max_spread_bps"] == 35
+    assert opportunity["high_risk_min_recent_momentum_bps"] == 3
+    assert opportunity["high_risk_max_spread_bps"] == 45
     assert "EUR" in opportunity["quote_currencies"]
 
 
