@@ -85,3 +85,38 @@ def test_opportunity_engine_scans_full_universe_but_only_fundable_quotes_trade()
     assert status["daily_trade_target"] == 10
     assert status["daily_profit_target_eur"] == 1.0
     assert status["target_policy"] == "targets_only_never_force_negative_edge"
+
+
+def test_opportunity_engine_emits_high_risk_fallback_tier():
+    market = FakeMarket()
+    engine = CoinbaseOpportunityEngine(
+        {
+            "interval_seconds": 10,
+            "universe_refresh_seconds": 60,
+            "candidate_limit": 10,
+            "sample_lookback_seconds": 600,
+            "min_samples": 4,
+            "min_recent_momentum_bps": 50,
+            "max_spread_bps": 20,
+            "min_24h_quote_volume": 1000,
+            "quote_currencies": ["EUR"],
+            "high_risk_enabled": True,
+            "high_risk_min_samples": 3,
+            "high_risk_min_recent_momentum_bps": 8,
+            "high_risk_max_spread_bps": 35,
+            "high_risk_min_24h_quote_volume": 1000,
+        },
+        market_data=market,
+        portfolio_id="agent-portfolio",
+    )
+
+    status = None
+    for i in range(3):
+        market.step = i
+        status = engine.tick(now=2000.0 + i * 20.0)
+
+    assert status is not None
+    decisions = status["last_signal"]["decisions"]
+    assert decisions
+    assert all(row["risk_tier"] == "high" for row in decisions)
+    assert all(row["reason"] == "high_risk_positive_momentum_fallback" for row in decisions)
