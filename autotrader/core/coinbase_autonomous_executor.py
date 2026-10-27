@@ -62,6 +62,10 @@ class CoinbaseAutonomousConfig:
     maker_order_age_seconds: float = 25.0
     daily_trade_target: int = 10
     daily_profit_target_eur: float = 1.0
+    stop_after_daily_profit_target: bool = True
+    high_risk_fallback: bool = True
+    high_risk_min_live_net_edge_bps: float = 0.0
+    high_risk_max_spread_bps: float = 35.0
     state_path: str = "/data/coinbase_autonomous_canary.json"
 
     @classmethod
@@ -105,6 +109,10 @@ class CoinbaseAutonomousConfig:
             maker_order_age_seconds=max(5.0, float(cfg.get("maker_order_age_seconds", 25.0))),
             daily_trade_target=max(1, int(cfg.get("daily_trade_target", 10))),
             daily_profit_target_eur=max(0.0, float(cfg.get("daily_profit_target_eur", 1.0))),
+            stop_after_daily_profit_target=bool(cfg.get("stop_after_daily_profit_target", True)),
+            high_risk_fallback=bool(cfg.get("high_risk_fallback", True)),
+            high_risk_min_live_net_edge_bps=max(0.0, float(cfg.get("high_risk_min_live_net_edge_bps", 0.0))),
+            high_risk_max_spread_bps=max(0.0, float(cfg.get("high_risk_max_spread_bps", 35.0))),
             state_path=str(cfg.get("state_path", "/data/coinbase_autonomous_canary.json")),
         )
 
@@ -794,6 +802,15 @@ class CoinbaseAutonomousExecutor:
         forecast_move_bps = max(0.0, float(decision.get("forecast_move_bps") or 0.0))
         probability_up = float(decision.get("probability_up") or 0.0)
         reference_z = abs(float(decision.get("reference_z") or 0.0))
+        risk_tier = str(decision.get("risk_tier") or "normal").lower()
+        max_spread_bps = (
+            self.config.high_risk_max_spread_bps
+            if risk_tier == "high" else self.config.max_spread_bps
+        )
+        min_live_net_edge_bps = (
+            self.config.high_risk_min_live_net_edge_bps
+            if risk_tier == "high" else self.config.min_live_net_edge_bps
+        )
         if forecast_move_bps <= 0:
             return None
 
@@ -838,7 +855,7 @@ class CoinbaseAutonomousExecutor:
                 continue
             mid = (bid + ask) / 2.0
             spread_bps = (ask - bid) / mid * 10_000.0 if mid > 0 else math.inf
-            if spread_bps > self.config.max_spread_bps:
+            if spread_bps > max_spread_bps:
                 continue
 
             _, quote_increment = self._product_increments(product)
@@ -880,7 +897,7 @@ class CoinbaseAutonomousExecutor:
                 - self.config.assumed_exit_fee_bps
                 - spread_bps
             )
-            if after_cost_edge_bps < self.config.min_live_net_edge_bps:
+            if after_cost_edge_bps < min_live_net_edge_bps:
                 continue
 
             score = (
@@ -905,6 +922,7 @@ class CoinbaseAutonomousExecutor:
                 "preview": preview,
                 "order_type": order_type,
                 "limit_price": limit_text,
+                "risk_tier": risk_tier,
             }
             if best is None or float(candidate["score"]) > float(best["score"]):
                 best = candidate
@@ -1000,6 +1018,7 @@ class CoinbaseAutonomousExecutor:
             "preview_slippage_bps": round(float(route["preview_slippage_bps"]), 4),
             "order_type": order_type,
             "limit_price": limit_price or None,
+            "risk_tier": str(decision.get("risk_tier") or "normal"),
         }
         self.state.last_action = action
         self._audit(dict(action))
@@ -1196,31 +1215,55 @@ class CoinbaseAutonomousExecutor:
                     if self.config.full_capacity
                     else min(self.config.max_order_eur, hard_max_trade)
                 )
-                decisions = ((shadow.get("last_signal") or {}).get("decisions") or [])
-                longs = [
-                    row for row in decisions
-                    if isinstance(row, dict)
-                    and row.get("decision") == "LONG"
-                    and str(row.get("window_key") or "") not in self.state.seen_windows
-                ]
-                best_pair: tuple[dict[str, Any], dict[str, Any]] | None = None
-                for decision in longs:
-                    route = self._best_entry_route(
-                        decision=decision,
-                        balances=balances,
-                        spendable_eur=spendable_eur,
-                        max_trade_eur=max_trade_eur,
-                    )
-                    if route is None:
-                        continue
+                profit_target_met = (
+                    self.config.daily_profit_target_eur > 0
+                    and self.state.day_pnl_eur >= self.config.daily_profit_target_eur
+                )
+                if not (profit_target_met and self.config.stop_after_daily_profit_target):
+                    decisions = ((shadow.get("last_signal") or {}).get("decisions") or [])
+                    longs = [
+                        row for row in decisions
+                        if isinstance(row, dict)
+                        and row.get("decision") == "LONG"
+                        and str(row.get("window_key") or "") not in self.state.seen_windows
+                    ]
+                    normal_longs = [
+                        row for row in longs
+                        if str(row.get("risk_tier") or "normal").lower() != "high"
+                    ]
+                    high_longs = [
+                        row for row in longs
+                        if str(row.get("risk_tier") or "").lower() == "high"
+                    ]
+
+                    def best_route(rows: list[dict[str, Any]]) -> tuple[dict[str, Any], dict[str, Any]] | None:
+                        best_pair: tuple[dict[str, Any], dict[str, Any]] | None = None
+                        for decision in rows:
+                            route = self._best_entry_route(
+                                decision=decision,
+                                balances=balances,
+                                spendable_eur=spendable_eur,
+                                max_trade_eur=max_trade_eur,
+                            )
+                            if route is None:
+                                continue
+                            if (
+                                best_pair is None
+                                or float(route["score"]) > float(best_pair[1]["score"])
+                            ):
+                                best_pair = (decision, route)
+                        return best_pair
+
+                    best_pair = best_route(normal_longs)
                     if (
                         best_pair is None
-                        or float(route["score"]) > float(best_pair[1]["score"])
+                        and self.config.high_risk_fallback
+                        and not profit_target_met
                     ):
-                        best_pair = (decision, route)
-                if best_pair is not None:
-                    decision, route = best_pair
-                    action = self._submit_buy(route=route, decision=decision, now=ts)
+                        best_pair = best_route(high_longs)
+                    if best_pair is not None:
+                        decision, route = best_pair
+                        action = self._submit_buy(route=route, decision=decision, now=ts)
 
             self.state.last_error = None
             self._save()
@@ -1284,7 +1327,13 @@ class CoinbaseAutonomousExecutor:
                 "profit_target_eur": round(self.config.daily_profit_target_eur, 8),
                 "profit_eur": round(self.state.day_pnl_eur, 8),
                 "profit_remaining_eur": round(max(0.0, self.config.daily_profit_target_eur - self.state.day_pnl_eur), 8),
-                "policy": "targets_only_never_force_negative_edge",
+                "profit_target_met": bool(
+                    self.config.daily_profit_target_eur > 0
+                    and self.state.day_pnl_eur >= self.config.daily_profit_target_eur
+                ),
+                "stop_after_profit_target": self.config.stop_after_daily_profit_target,
+                "high_risk_fallback_enabled": self.config.high_risk_fallback,
+                "policy": "aggregate_realized_pnl_target_high_risk_fallback_no_negative_edge",
             },
             "max_drawdown_pct": round(self.state.max_drawdown_pct, 6),
             "daily_loss_stop": day_stop,
@@ -1312,6 +1361,10 @@ class CoinbaseAutonomousExecutor:
                 "dynamic_products_enabled": self.config.allow_dynamic_products,
                 "maker_first_entries": self.config.maker_first,
                 "maker_order_age_seconds": self.config.maker_order_age_seconds,
+                "high_risk_fallback": self.config.high_risk_fallback,
+                "high_risk_min_live_net_edge_bps": self.config.high_risk_min_live_net_edge_bps,
+                "high_risk_max_spread_bps": self.config.high_risk_max_spread_bps,
+                "stop_after_daily_profit_target": self.config.stop_after_daily_profit_target,
                 "full_capacity": self.config.full_capacity,
                 "min_live_net_edge_bps": self.config.min_live_net_edge_bps,
                 "max_spread_bps": self.config.max_spread_bps,
