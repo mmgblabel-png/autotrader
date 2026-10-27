@@ -24,6 +24,7 @@ def test_coinbase_local_server_does_not_import_other_exchange_runtime():
     assert "autotrader.core.market_universe" not in source
     assert "coinbaseautonomousexecutor" in source
     assert "coinbasezscore" in source
+    assert "coinbaserealtimeorderflowengine" in source
 
 
 def test_coinbase_local_compose_is_loopback_only_and_hardened():
@@ -61,6 +62,11 @@ def test_coinbase_local_config_is_risktrader_and_portfolio_isolated():
     assert auto["day_timezone"] == "Europe/Amsterdam"
     assert auto["max_daily_loss_pct"] == 3.0
     assert auto["max_drawdown_pct"] == 10.0
+    realtime = cfg["coinbase_realtime_orderflow"]
+    assert realtime["enabled"] is True
+    assert realtime["max_products"] == 20
+    assert realtime["depth_levels"] == 10
+    assert realtime["trade_window_seconds"] == 60
     opportunity = cfg["coinbase_opportunity_engine"]
     assert opportunity["enabled"] is True
     assert opportunity["daily_trade_target"] == 10
@@ -68,6 +74,10 @@ def test_coinbase_local_config_is_risktrader_and_portfolio_isolated():
     assert opportunity["high_risk_enabled"] is True
     assert opportunity["high_risk_min_recent_momentum_bps"] == 3
     assert opportunity["high_risk_max_spread_bps"] == 45
+    assert opportunity["realtime_product_limit"] == 20
+    assert opportunity["realtime_min_edge_bps"] == 4
+    assert opportunity["orderbook_imbalance_weight_bps"] == 22
+    assert opportunity["trade_flow_weight_bps"] == 15
     assert "EUR" in opportunity["quote_currencies"]
 
 
