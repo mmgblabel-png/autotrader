@@ -1016,6 +1016,11 @@ def test_expired_maker_seed_falls_back_to_market_once(tmp_path, monkeypatch):
     assert fake.created[-1]["side"] == "SELL"
     assert fake.created[-1].get("order_type") != "limit"
 
+    # Simulate Coinbase balances after the market fallback fill.
+    fallback_size = float(second["pending_order"]["base_size"])
+    fake.btc = max(0.0, fake.btc - fallback_size)
+    fake.eur += fallback_size * fake.bid * 0.995
+
     # Next tick consumes the filled market fallback and clears the blocker.
     third = executor.tick(
         armed=True,
