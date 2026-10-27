@@ -404,18 +404,23 @@ class CoinbaseAutonomousExecutor:
         raise CoinbaseTradingError("Coinbase order response omitted order_id", category="unexpected_response")
 
     @staticmethod
-    def _fill(order: dict[str, Any]) -> tuple[float, float, float] | None:
-        status = str(order.get("status") or "").upper()
+    def _executed_fill(order: dict[str, Any]) -> tuple[float, float, float] | None:
         try:
             size = float(order.get("filled_size") or 0.0)
             price = float(order.get("average_filled_price") or 0.0)
             fees = max(0.0, float(order.get("total_fees") or 0.0))
         except (TypeError, ValueError):
             return None
-        if size <= 0 or price <= 0:
+        return (size, price, fees) if size > 0 and price > 0 else None
+
+    @staticmethod
+    def _fill(order: dict[str, Any]) -> tuple[float, float, float] | None:
+        status = str(order.get("status") or "").upper()
+        executed = CoinbaseAutonomousExecutor._executed_fill(order)
+        if executed is None:
             return None
         if status in {"FILLED", "DONE", "COMPLETED"} or bool(order.get("settled")):
-            return size, price, fees
+            return executed
         return None
 
     def _recover_submission_intent(self, now: float) -> None:
@@ -517,24 +522,31 @@ class CoinbaseAutonomousExecutor:
         pending = self.state.pending
         if pending is None:
             return
+
         order = self.client.get_order(pending.order_id)
         fill = self._fill(order)
         if fill is None:
             status = str(order.get("status") or "").upper()
+
+            # Terminal limit orders may contain a partial execution. Never drop
+            # that inventory from state: adopt the executed amount as the position.
             if status in {"CANCELLED", "CANCELED", "EXPIRED", "FAILED"}:
-                self._audit({
-                    "at": now,
-                    "action": "PENDING_TERMINAL",
-                    "order_id": pending.order_id,
-                    "product_id": pending.product_id,
-                    "side": pending.side,
-                    "purpose": pending.purpose,
-                    "status": status,
-                })
-                self.state.pending = None
-                self._save()
-                return
-            if (
+                fill = self._executed_fill(order)
+                if fill is None:
+                    self._audit({
+                        "at": now,
+                        "action": "PENDING_TERMINAL",
+                        "order_id": pending.order_id,
+                        "product_id": pending.product_id,
+                        "side": pending.side,
+                        "purpose": pending.purpose,
+                        "status": status,
+                    })
+                    self.state.pending = None
+                    self._save()
+                    return
+
+            elif (
                 pending.order_type == "limit"
                 and now - float(pending.submitted_at) >= self.config.maker_order_age_seconds
             ):
@@ -546,7 +558,12 @@ class CoinbaseAutonomousExecutor:
                     and bool(row.get("success"))
                     for row in (results or [])
                 )
-                if cancelled:
+                if not cancelled:
+                    return
+
+                final_order = self.client.get_order(pending.order_id)
+                fill = self._executed_fill(final_order)
+                if fill is None:
                     self._audit({
                         "at": now,
                         "action": "MAKER_ORDER_EXPIRED",
@@ -561,8 +578,21 @@ class CoinbaseAutonomousExecutor:
                         self.state.seen_windows = self.state.seen_windows[-5000:]
                     self.state.pending = None
                     self._save()
+                    return
+
+                self._audit({
+                    "at": now,
+                    "action": "MAKER_PARTIAL_ADOPTED",
+                    "order_id": pending.order_id,
+                    "product_id": pending.product_id,
+                    "side": pending.side,
+                    "purpose": pending.purpose,
+                    "filled_size": fill[0],
+                    "average_filled_price": fill[1],
+                })
+            else:
                 return
-            return
+
         size, price, fees = fill
         quote_to_eur = max(0.0, float(pending.quote_to_eur or 0.0))
         if quote_to_eur <= 0:
@@ -604,22 +634,29 @@ class CoinbaseAutonomousExecutor:
         elif pending.purpose == "exit" and self.state.position is not None:
             proceeds_eur = max(0.0, (size * price - fees) * quote_to_eur)
             pos = self.state.position
+            sold_fraction = min(1.0, size / max(pos.base_size, 1e-12))
             cost_eur = (
-                pos.base_size * pos.entry_price * max(pos.quote_to_eur, 0.0)
-                + pos.entry_fee_eur
+                size * pos.entry_price * max(pos.quote_to_eur, 0.0)
+                + pos.entry_fee_eur * sold_fraction
             )
             pnl = proceeds_eur - cost_eur
             self.state.managed_cash_eur += proceeds_eur
             self.state.realized_pnl_eur += pnl
             self.state.day_pnl_eur += pnl
-            self.state.settled_trades += 1
-            self.state.day_settled_trades += 1
-            self.state.position = None
+            if sold_fraction >= 0.999999:
+                self.state.settled_trades += 1
+                self.state.day_settled_trades += 1
+                self.state.position = None
+            else:
+                pos.base_size = max(0.0, pos.base_size - size)
+                pos.entry_fee_eur = max(0.0, pos.entry_fee_eur * (1.0 - sold_fraction))
             self.state.last_action = {
                 "at": now, "action": "EXIT_FILLED", "base_size": size,
                 "product_id": pending.product_id, "quote_currency": pending.quote_currency,
                 "price": price, "fees_eur": fees_eur, "realized_pnl_eur": pnl,
+                "position_closed": sold_fraction >= 0.999999,
             }
+
         if self.state.last_action is not None:
             self._audit({
                 **self.state.last_action,
@@ -629,6 +666,7 @@ class CoinbaseAutonomousExecutor:
                 "purpose": pending.purpose,
             })
         self.state.pending = None
+        self._save()
 
 
     @staticmethod
