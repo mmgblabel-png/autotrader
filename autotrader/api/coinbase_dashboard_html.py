@@ -46,15 +46,15 @@ button,.btn{border:0;border-radius:10px;padding:11px 15px;font-weight:850;cursor
 <section class="section hero">
   <div class="card hero-main"><div class="label">Agent portfolio</div><div id="agentcash" class="value big">—</div><div id="portfolioscope" class="sub">Dedicated isolated Coinbase portfolio</div><div class="gates"><span class="gate">100% assigned capacity</span><span class="gate">0% extra reserve</span><span class="gate">3% daily loss</span><span class="gate">10% drawdown</span></div></div>
   <div class="card"><div class="label">Live status</div><div id="armed" class="value">—</div><div id="armedsub" class="sub">—</div></div>
-  <div class="card"><div class="label">Evidence</div><div id="evidence" class="value blue">—</div><div id="evidencesub" class="sub">settled shadow trades</div></div>
-  <div class="card"><div class="label">Execution scope</div><div id="scope" class="value">BTC-EUR</div><div class="sub">SPOT only · geen leverage/margin/futures</div></div>
+  <div class="card"><div class="label">Dagdoel trades</div><div id="evidence" class="value blue">—</div><div id="evidencesub" class="sub">target · nooit geforceerd bij negatieve edge</div></div>
+  <div class="card"><div class="label">Execution scope</div><div id="scope" class="value">MULTI-MARKET</div><div class="sub">Coinbase SPOT · dynamische EUR/USDC opportunity routing</div></div>
 </section>
 
 <div class="section-title"><h2>Execution & risk</h2><div class="line"></div><span id="readybadge" class="badge">READINESS</span></div>
 <section class="grid4">
   <div class="card"><div class="label">Max entry nu</div><div id="maxtrade" class="value">—</div><div class="sub">Tot 100% van toegewezen Agent-capaciteit wanneer gates groen zijn</div></div>
   <div class="card"><div class="label">Cash reserve</div><div id="reserve" class="value">—</div><div class="sub">blijft buiten nieuwe entries</div></div>
-  <div class="card"><div class="label">Live orders sent</div><div id="orderssent" class="value">—</div><div id="legacyorders" class="sub">—</div></div>
+  <div class="card"><div class="label">Dag PnL target</div><div id="orderssent" class="value">—</div><div id="legacyorders" class="sub">—</div></div>
   <div class="card"><div class="label">Runtime error</div><div id="runtimeerror" class="value">—</div><div class="sub">Coinbase autonomous executor</div></div>
 </section>
 
@@ -151,7 +151,7 @@ function gateChips(failed){
 async function refresh(){
   try{
     const d=await api("/api/coinbase/dashboard/snapshot");
-    const a=d.autonomous||{}, r=d.readiness||{}, s=d.shadow||{}, b=d.balances||{}, u=d.universe||{};
+    const a=d.autonomous||{}, r=d.readiness||{}, s=d.shadow||{}, o=d.opportunity||{}, b=d.balances||{}, u=d.universe||{};
     const rd=a.readiness||{}; const assets=b.assets||[]; const eur=assets.find(x=>x.currency==="EUR");
     setText("agentcash",euro(eur?eur.total:rd.portfolio_nav_eur||0));
     setText("portfolioscope",b.portfolio_scoped?"Dedicated isolated Coinbase portfolio":"PORTFOLIO SCOPE NIET BEVESTIGD");
@@ -159,10 +159,11 @@ async function refresh(){
     setText("armedsub",armed?"Agent mag handelen zodra evidence + risk gates groen zijn":"Live execution is gedeactiveerd");
     document.getElementById("statusdot").className="dot "+(armed?"":"off");setText("topstatus",armed?"COINBASE LIVE":"COINBASE OFF");
     document.getElementById("livebtn").disabled=armed||!r.ready_to_arm;document.getElementById("stopbtn").classList.toggle("hidden",!armed);
+    const targets=a.daily_targets||{}; const dayTrades=Number(targets.trades_completed||0), tradeTarget=Number(targets.trade_target||10);
+    setText("evidence",dayTrades+" / "+tradeTarget);setText("evidencesub","afgeronde trades vandaag · positive-edge only");
     const settled=Number(s.settled_trades||0), min=Number((s.promotion_policy||{}).min_settled_trades||30);
-    setText("evidence",settled+" / "+min);setText("evidencesub","settled shadow trades · "+(s.promotion_ready?"PROMOTED":"evidence verzamelen"));
     setText("maxtrade",euro(rd.max_single_trade_eur||0));setText("reserve",euro(rd.required_cash_reserve_eur||0));
-    setText("orderssent",a.live_orders_sent??0);setText("legacyorders",(a.unattributed_legacy_live_orders||0)+" legacy unattributed");
+    setText("orderssent",euro(targets.profit_eur||0)+" / "+euro(targets.profit_target_eur||1));setText("legacyorders","nog "+euro(targets.profit_remaining_eur||0)+" naar dagtarget · geen winstgarantie");
     setText("runtimeerror",a.runtime_error||"GEEN");document.getElementById("runtimeerror").className="value "+(a.runtime_error?"red":"green");
     document.getElementById("gatechips").innerHTML=gateChips(r.execution_failed_gates||r.failed_gates||[]);
     setText("readytoarm",r.ready_to_arm?"JA":"NEE");setText("execnow",r.execution_ready_now?"JA":"NEE");
@@ -176,12 +177,12 @@ async function refresh(){
     const progress=Math.min(100,min?settled/min*100:0);document.getElementById("evidencebar").style.width=progress+"%";setText("evidenceprogress",settled+" / "+min+" ("+progress.toFixed(0)+"%)");
     const blockers=s.promotion_blockers||[];document.getElementById("blockers").innerHTML=(blockers.length?blockers:["geen blockers"]).map(x=>'<span class="gate '+(blockers.length?"fail":"pass")+'">'+x+'</span>').join("");
     const pol=s.promotion_policy||{};setText("minsettled",pol.min_settled_trades??"—");setText("minwinrate",pct(pol.min_winrate_pct));setText("minpnl",euro(pol.min_net_pnl_eur));setText("minpf",num(pol.min_profit_factor));setText("maxshadowdd",pct(pol.max_drawdown_pct));
-    setText("markets",u.all??0);setText("tradable",u.tradable??0);setText("cryptocrypto",u.crypto_crypto??0);setText("eurquote",u.eur_quote??0);
+    setText("markets",o.scanned_markets??u.all??0);setText("tradable",o.tradable_markets??u.tradable??0);setText("cryptocrypto",u.crypto_crypto??0);setText("eurquote",o.fundable_markets??u.eur_quote??0);
     document.getElementById("auditrows").innerHTML=auditRows(a.order_audit||[]);
     const ready=!!r.execution_ready_now, promote=!!s.promotion_ready;
     document.getElementById("readybadge").className="badge "+(ready?"ok":"warn");setText("readybadge",ready?"EXECUTION READY":"GATED");
     document.getElementById("shadowbadge").className="badge "+(promote?"ok":"warn");setText("shadowbadge",promote?"PROMOTION READY":"BUILDING EVIDENCE");
-    const msg=armed?(ready?"Coinbase Agent is armed en execution-ready.":"Coinbase Agent is armed; nieuwe entries wachten nog op: "+(r.execution_failed_gates||[]).join(", ")):"Coinbase Live staat uit. De shadow engine blijft evidence verzamelen.";
+    const msg=armed?(ready?"Coinbase Agent is armed en multi-market execution-ready. Dagtargets: "+dayTrades+"/"+tradeTarget+" trades en "+euro(targets.profit_eur||0)+" / "+euro(targets.profit_target_eur||1)+".":"Coinbase Agent is armed; nieuwe entries wachten nog op: "+(r.execution_failed_gates||[]).join(", ")):"Coinbase Live staat uit. Market scan en shadow research blijven actief.";
     document.getElementById("notice").textContent=msg;document.getElementById("notice").className="notice "+((armed&&!ready)||!armed?"warn":"");
     setText("updated","Bijgewerkt "+new Date().toLocaleTimeString("nl-NL"));
   }catch(e){document.getElementById("notice").textContent="Dashboard update mislukt: "+e.message;document.getElementById("notice").className="notice warn"}
