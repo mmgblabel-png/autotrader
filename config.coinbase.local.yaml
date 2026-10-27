@@ -1,23 +1,23 @@
 coinbase_opportunity_engine:
   enabled: true
-  interval_seconds: 20
+  interval_seconds: 10
   universe_refresh_seconds: 120
-  candidate_limit: 40
+  candidate_limit: 60
   sample_lookback_seconds: 600
-  min_samples: 4
-  min_recent_momentum_bps: 20
+  min_samples: 3
+  min_recent_momentum_bps: 8
   max_spread_bps: 20
   min_quote_balance: 1
-  min_24h_quote_volume: 10000
+  min_24h_quote_volume: 5000
   quote_currencies: [EUR, USDC]
   decision_window_seconds: 300
   daily_trade_target: 10
   daily_profit_target_eur: 1.0
   high_risk_enabled: true
-  high_risk_min_samples: 3
-  high_risk_min_recent_momentum_bps: 8
-  high_risk_max_spread_bps: 35
-  high_risk_min_24h_quote_volume: 5000
+  high_risk_min_samples: 2
+  high_risk_min_recent_momentum_bps: 3
+  high_risk_max_spread_bps: 45
+  high_risk_min_24h_quote_volume: 1000
 
 coinbase_zscore_shadow:
   enabled: true
@@ -90,10 +90,10 @@ coinbase_autonomous_execution:
   # Activity/profit objectives are cumulative realized-day targets.
   daily_trade_target: 10
   daily_profit_target_eur: 1.0
-  stop_after_daily_profit_target: true
+  stop_after_daily_profit_target: false
   high_risk_fallback: true
   high_risk_min_live_net_edge_bps: 0.0
-  high_risk_max_spread_bps: 35.0
+  high_risk_max_spread_bps: 45.0
   day_timezone: Europe/Amsterdam
 
   # RiskTrader evaluates each current setup directly; no historical promotion quota.
