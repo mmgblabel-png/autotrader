@@ -185,6 +185,7 @@ class CoinbaseAutonomousState:
     max_drawdown_pct: float = 0.0
     seen_windows: list[str] = None
     order_audit: list[dict[str, Any]] = None
+    market_learning: dict[str, dict[str, Any]] = None
     last_action: dict[str, Any] | None = None
     last_error: str | None = None
 
@@ -193,6 +194,8 @@ class CoinbaseAutonomousState:
             self.seen_windows = []
         if self.order_audit is None:
             self.order_audit = []
+        if self.market_learning is None:
+            self.market_learning = {}
 
 
 class CoinbaseAutonomousExecutor:
@@ -255,7 +258,7 @@ class CoinbaseAutonomousExecutor:
             "managed_cash_eur", "live_orders_sent", "settled_trades",
             "realized_pnl_eur", "day_key", "day_start_managed_equity_eur",
             "day_pnl_eur", "day_settled_trades", "peak_managed_equity_eur", "max_drawdown_pct",
-            "seen_windows", "order_audit", "last_action", "last_error",
+            "seen_windows", "order_audit", "market_learning", "last_action", "last_error",
         ):
             if key in raw:
                 setattr(self.state, key, raw[key])
@@ -263,6 +266,11 @@ class CoinbaseAutonomousExecutor:
         self.state.order_audit = [
             dict(x) for x in (self.state.order_audit or []) if isinstance(x, dict)
         ][-200:]
+        self.state.market_learning = {
+            str(k).upper(): dict(v)
+            for k, v in (self.state.market_learning or {}).items()
+            if isinstance(v, dict)
+        }
 
     def _audit(self, event: dict[str, Any]) -> None:
         self.state.order_audit.append({
@@ -309,6 +317,43 @@ class CoinbaseAutonomousExecutor:
             str(info.get("base_increment") or "0.00000001"),
             str(info.get("quote_increment") or "0.01"),
         )
+
+    def _market_learning_adjustment(self, product_id: str) -> tuple[float, dict[str, Any]]:
+        row = dict(self.state.market_learning.get(str(product_id).upper(), {}) or {})
+        trades = max(0, int(row.get("trades") or 0))
+        wins = max(0, int(row.get("wins") or 0))
+        losses = max(0, int(row.get("losses") or 0))
+        pnl = float(row.get("realized_pnl_eur") or 0.0)
+        if trades <= 0:
+            return 0.0, {"trades": 0, "wins": 0, "losses": 0, "realized_pnl_eur": 0.0, "score_bps": 0.0}
+        confidence = min(1.0, trades / 6.0)
+        winrate = wins / max(trades, 1)
+        pnl_component = math.tanh(pnl / 0.25) * 18.0
+        win_component = (winrate - 0.5) * 24.0 * confidence
+        score = pnl_component + win_component
+        return score, {
+            "trades": trades,
+            "wins": wins,
+            "losses": losses,
+            "realized_pnl_eur": round(pnl, 8),
+            "winrate_pct": round(winrate * 100.0, 2),
+            "score_bps": round(score, 4),
+        }
+
+    def _record_market_outcome(self, product_id: str, pnl_eur: float, now: float) -> None:
+        key = str(product_id).upper()
+        row = dict(self.state.market_learning.get(key, {}) or {})
+        row["trades"] = int(row.get("trades") or 0) + 1
+        if pnl_eur > 0:
+            row["wins"] = int(row.get("wins") or 0) + 1
+        elif pnl_eur < 0:
+            row["losses"] = int(row.get("losses") or 0) + 1
+        row["realized_pnl_eur"] = float(row.get("realized_pnl_eur") or 0.0) + float(pnl_eur)
+        previous_ema = float(row.get("ema_pnl_eur") or 0.0)
+        row["ema_pnl_eur"] = (0.30 * float(pnl_eur)) + (0.70 * previous_ema)
+        row["last_pnl_eur"] = float(pnl_eur)
+        row["last_closed_at"] = float(now)
+        self.state.market_learning[key] = row
 
     def _balances(self) -> dict[str, float]:
         payload = (
@@ -683,6 +728,7 @@ class CoinbaseAutonomousExecutor:
             self.state.managed_cash_eur += proceeds_eur
             self.state.realized_pnl_eur += pnl
             self.state.day_pnl_eur += pnl
+            self._record_market_outcome(pending.product_id, pnl, now)
             if sold_fraction >= 0.999999:
                 self.state.settled_trades += 1
                 self.state.day_settled_trades += 1
@@ -907,10 +953,12 @@ class CoinbaseAutonomousExecutor:
             if after_cost_edge_bps < min_live_net_edge_bps:
                 continue
 
+            learning_adjustment_bps, learning = self._market_learning_adjustment(product)
             score = (
                 after_cost_edge_bps
                 + max(0.0, probability_up - 0.5) * 25.0
                 - reference_z * 2.0
+                + learning_adjustment_bps
             )
             candidate = {
                 "product_id": product,
@@ -930,6 +978,8 @@ class CoinbaseAutonomousExecutor:
                 "order_type": order_type,
                 "limit_price": limit_text,
                 "risk_tier": risk_tier,
+                "learning_adjustment_bps": learning_adjustment_bps,
+                "learning": learning,
             }
             if best is None or float(candidate["score"]) > float(best["score"]):
                 best = candidate
@@ -1323,6 +1373,13 @@ class CoinbaseAutonomousExecutor:
             "submission_intent": asdict(self.state.submission_intent) if self.state.submission_intent else None,
             "portfolio_id": self.config.portfolio_id or None,
             "portfolio_isolated": bool(self.config.portfolio_id),
+            "market_learning": {
+                product: {
+                    **dict(row),
+                    "score_bps": self._market_learning_adjustment(product)[0],
+                }
+                for product, row in self.state.market_learning.items()
+            },
             "settled_trades": int(self.state.settled_trades),
             "realized_pnl_eur": round(self.state.realized_pnl_eur, 8),
             "day_pnl_eur": round(self.state.day_pnl_eur, 8),
@@ -1339,6 +1396,7 @@ class CoinbaseAutonomousExecutor:
                     and self.state.day_pnl_eur >= self.config.daily_profit_target_eur
                 ),
                 "stop_after_profit_target": self.config.stop_after_daily_profit_target,
+                "continuous_after_target": not self.config.stop_after_daily_profit_target,
                 "high_risk_fallback_enabled": self.config.high_risk_fallback,
                 "policy": "aggregate_realized_pnl_target_high_risk_fallback_no_negative_edge",
             },
