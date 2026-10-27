@@ -84,7 +84,7 @@ def test_opportunity_engine_scans_full_universe_but_only_fundable_quotes_trade()
     assert not any(row["product_id"] == "SOL-USDC" for row in decisions)
     assert status["daily_trade_target"] == 10
     assert status["daily_profit_target_eur"] == 1.0
-    assert status["target_policy"] == "targets_only_never_force_negative_edge"
+    assert status["target_policy"] == "aggregate_realized_pnl_target_never_force_negative_edge"
 
 
 def test_opportunity_engine_emits_high_risk_fallback_tier():
