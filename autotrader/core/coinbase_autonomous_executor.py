@@ -15,6 +15,7 @@ import time
 import uuid
 from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
+from decimal import Decimal, ROUND_DOWN
 from pathlib import Path
 from typing import Any
 
@@ -272,6 +273,30 @@ class CoinbaseAutonomousExecutor:
                 "borrowing": False,
                 "state": asdict(self.state),
             },
+        )
+
+    @staticmethod
+    def _floor_to_increment(value: float, increment: str, *, fallback_decimals: int = 8) -> str:
+        try:
+            inc = Decimal(str(increment))
+            raw = Decimal(str(value))
+            if inc <= 0 or raw <= 0:
+                raise ValueError
+            units = (raw / inc).to_integral_value(rounding=ROUND_DOWN)
+            sized = units * inc
+            text = format(sized, "f").rstrip("0").rstrip(".")
+            return text or "0"
+        except Exception:
+            return f"{max(0.0, float(value)):.{fallback_decimals}f}".rstrip("0").rstrip(".")
+
+    def _product_increments(self, product_id: str) -> tuple[str, str]:
+        try:
+            info = self.client.product_info(product_id)
+        except Exception:
+            return "0.00000001", "0.01"
+        return (
+            str(info.get("base_increment") or "0.00000001"),
+            str(info.get("quote_increment") or "0.01"),
         )
 
     def _balances(self) -> dict[str, float]:
@@ -694,7 +719,10 @@ class CoinbaseAutonomousExecutor:
         product = str(product_id or self.config.product_id).upper()
         quote = str(quote_currency or product.rsplit("-", 1)[-1]).upper()
         rate = float(quote_to_eur or (1.0 if quote == "EUR" else self._usdc_to_eur()))
-        size_text = f"{base_size:.8f}".rstrip("0").rstrip(".")
+        base_increment, _ = self._product_increments(product)
+        size_text = self._floor_to_increment(base_size, base_increment, fallback_decimals=8)
+        if float(size_text or 0.0) <= 0:
+            raise CoinbaseTradingError("Rounded sell size is zero", category="invalid_order_size")
         preview = self.client.preview_spot_market_order(
             product_id=product,
             side="SELL",
@@ -813,7 +841,10 @@ class CoinbaseAutonomousExecutor:
             if spread_bps > self.config.max_spread_bps:
                 continue
 
-            quote_text = f"{quote_size:.6f}".rstrip("0").rstrip(".")
+            _, quote_increment = self._product_increments(product)
+            quote_text = self._floor_to_increment(quote_size, quote_increment, fallback_decimals=6)
+            if float(quote_text or 0.0) <= 0:
+                continue
             if self.config.maker_first:
                 limit_text = format(book.bid_price, "f")
                 preview = self.client.preview_spot_limit_order(
