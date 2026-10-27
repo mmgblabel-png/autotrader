@@ -773,6 +773,13 @@ class CoinbaseAdvancedMarketData:
         products.sort(key=lambda row: str(row["product_id"]))
         return products
 
+    def product_info(self, symbol: str) -> dict[str, Any]:
+        product_id = self.normalize_product_id(symbol)
+        payload = self._get(f"{self.PRODUCTS_PATH}/{product_id}")
+        if not isinstance(payload, dict):
+            raise CoinbaseMarketDataError("Unexpected Coinbase product response")
+        return dict(payload)
+
     def top_of_book(self, symbol: str) -> CoinbaseTopOfBook:
         product_id = self.normalize_product_id(symbol)
         payload = self._get(
