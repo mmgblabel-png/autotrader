@@ -13,6 +13,11 @@ coinbase_opportunity_engine:
   decision_window_seconds: 300
   daily_trade_target: 10
   daily_profit_target_eur: 1.0
+  high_risk_enabled: true
+  high_risk_min_samples: 3
+  high_risk_min_recent_momentum_bps: 8
+  high_risk_max_spread_bps: 35
+  high_risk_min_24h_quote_volume: 5000
 
 coinbase_zscore_shadow:
   enabled: true
@@ -82,9 +87,14 @@ coinbase_autonomous_execution:
   maker_first: true
   maker_order_age_seconds: 25
 
-  # Activity/profit objectives are targets, never reasons to force negative-edge trades.
+  # Activity/profit objectives are cumulative realized-day targets.
   daily_trade_target: 10
   daily_profit_target_eur: 1.0
+  stop_after_daily_profit_target: true
+  high_risk_fallback: true
+  high_risk_min_live_net_edge_bps: 0.0
+  high_risk_max_spread_bps: 35.0
+  day_timezone: Europe/Amsterdam
 
   # RiskTrader evaluates each current setup directly; no historical promotion quota.
   require_shadow_promotion: false
