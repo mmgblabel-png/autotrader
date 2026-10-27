@@ -18,6 +18,7 @@ from datetime import datetime, timezone
 from decimal import Decimal, ROUND_DOWN
 from pathlib import Path
 from typing import Any
+from zoneinfo import ZoneInfo
 
 from autotrader.connectors.coinbase_advanced import (
     CoinbaseAdvancedMarketData,
@@ -66,6 +67,7 @@ class CoinbaseAutonomousConfig:
     high_risk_fallback: bool = True
     high_risk_min_live_net_edge_bps: float = 0.0
     high_risk_max_spread_bps: float = 35.0
+    day_timezone: str = "Europe/Amsterdam"
     state_path: str = "/data/coinbase_autonomous_canary.json"
 
     @classmethod
@@ -113,6 +115,7 @@ class CoinbaseAutonomousConfig:
             high_risk_fallback=bool(cfg.get("high_risk_fallback", True)),
             high_risk_min_live_net_edge_bps=max(0.0, float(cfg.get("high_risk_min_live_net_edge_bps", 0.0))),
             high_risk_max_spread_bps=max(0.0, float(cfg.get("high_risk_max_spread_bps", 35.0))),
+            day_timezone=str(cfg.get("day_timezone", "Europe/Amsterdam") or "Europe/Amsterdam"),
             state_path=str(cfg.get("state_path", "/data/coinbase_autonomous_canary.json")),
         )
 
@@ -392,7 +395,11 @@ class CoinbaseAutonomousExecutor:
         self._save()
 
     def _roll_day(self, now: float, managed_equity: float) -> None:
-        key = datetime.fromtimestamp(now, tz=timezone.utc).strftime("%Y-%m-%d")
+        try:
+            tz = ZoneInfo(self.config.day_timezone)
+        except Exception:
+            tz = timezone.utc
+        key = datetime.fromtimestamp(now, tz=tz).strftime("%Y-%m-%d")
         if key != self.state.day_key:
             self.state.day_key = key
             self.state.day_start_managed_equity_eur = managed_equity
@@ -1365,6 +1372,7 @@ class CoinbaseAutonomousExecutor:
                 "high_risk_min_live_net_edge_bps": self.config.high_risk_min_live_net_edge_bps,
                 "high_risk_max_spread_bps": self.config.high_risk_max_spread_bps,
                 "stop_after_daily_profit_target": self.config.stop_after_daily_profit_target,
+                "day_timezone": self.config.day_timezone,
                 "full_capacity": self.config.full_capacity,
                 "min_live_net_edge_bps": self.config.min_live_net_edge_bps,
                 "max_spread_bps": self.config.max_spread_bps,
