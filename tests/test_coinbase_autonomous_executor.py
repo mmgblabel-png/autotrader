@@ -968,3 +968,59 @@ def test_high_risk_continues_after_daily_profit_target_when_always_on(tmp_path, 
     assert status["daily_targets"]["continuous_after_target"] is True
     assert status["live_orders_sent"] == 1
     assert fake.created[-1]["product_id"] == "XRP-EUR"
+
+
+def test_expired_maker_seed_falls_back_to_market_once(tmp_path, monkeypatch):
+    _set_live_env(monkeypatch)
+    fake = FakeCoinbase()
+    fake.eur = 6.0
+    fake.btc = 0.00013301
+    cfg = CoinbaseAutonomousConfig(
+        state_path=str(tmp_path / "seed-fallback.json"),
+        portfolio_id="agent-portfolio",
+        require_isolated_portfolio=True,
+        require_shadow_promotion=False,
+        allow_existing_btc_seed=True,
+        full_capacity=True,
+        maker_first=True,
+        maker_order_age_seconds=5.0,
+        managed_capital_pct=100.0,
+        cash_reserve_pct=0.0,
+        max_single_trade_pct=100.0,
+    )
+    executor = CoinbaseAutonomousExecutor(cfg, client=fake)
+
+    first = executor.tick(
+        armed=True,
+        now=1000.0,
+        shadow_status={"promotion_ready": False, "last_signal": {"decisions": []}},
+    )
+    assert first["pending_order"] is not None
+    assert first["pending_order"]["purpose"] == "seed"
+    assert first["pending_order"]["order_type"] == "limit"
+    first_order_id = first["pending_order"]["order_id"]
+
+    # Expire the maker seed without a fill.
+    fake.orders[first_order_id]["status"] = "OPEN"
+    second = executor.tick(
+        armed=True,
+        now=1006.0,
+        shadow_status={"promotion_ready": False, "last_signal": {"decisions": []}},
+    )
+
+    assert second["pending_order"] is not None
+    assert second["pending_order"]["purpose"] == "seed"
+    assert second["pending_order"]["order_type"] == "market"
+    assert second["pending_order"]["market_fallback_used"] is True
+    assert second["last_action"]["action"] == "SEED_MARKET_FALLBACK_SUBMITTED"
+    assert fake.created[-1]["side"] == "SELL"
+    assert fake.created[-1].get("order_type") != "limit"
+
+    # Next tick consumes the filled market fallback and clears the blocker.
+    third = executor.tick(
+        armed=True,
+        now=1007.0,
+        shadow_status={"promotion_ready": False, "last_signal": {"decisions": []}},
+    )
+    assert third["pending_order"] is None
+    assert any(row.get("action") == "SEED_FILLED" for row in third["order_audit"])
