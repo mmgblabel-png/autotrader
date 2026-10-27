@@ -353,6 +353,104 @@ class CoinbaseAdvancedMarketData:
             payload["attached_order_configuration"] = {"trigger_bracket_gtc": trigger}
         return payload
 
+    @staticmethod
+    def _spot_limit_payload(
+        *,
+        product_id: str,
+        side: str,
+        limit_price: str,
+        quote_size: str | None = None,
+        base_size: str | None = None,
+        portfolio_id: str | None = None,
+        post_only: bool = True,
+    ) -> dict[str, Any]:
+        side = side.upper().strip()
+        if side not in {"BUY", "SELL"}:
+            raise ValueError("side must be BUY or SELL")
+        if bool(quote_size) == bool(base_size):
+            raise ValueError("exactly one of quote_size or base_size is required")
+        if not str(limit_price or "").strip():
+            raise ValueError("limit_price is required")
+        cfg: dict[str, Any] = {
+            "limit_price": str(limit_price),
+            "post_only": bool(post_only),
+        }
+        if quote_size:
+            cfg["quote_size"] = str(quote_size)
+        if base_size:
+            cfg["base_size"] = str(base_size)
+        payload: dict[str, Any] = {
+            "product_id": CoinbaseAdvancedMarketData.normalize_product_id(product_id),
+            "side": side,
+            "order_configuration": {"limit_limit_gtc": cfg},
+        }
+        if portfolio_id:
+            payload["retail_portfolio_id"] = str(portfolio_id)
+        return payload
+
+    def preview_spot_limit_order(
+        self,
+        *,
+        product_id: str,
+        side: str,
+        limit_price: str,
+        quote_size: str | None = None,
+        base_size: str | None = None,
+        portfolio_id: str | None = None,
+        post_only: bool = True,
+    ) -> dict[str, Any]:
+        payload = self._spot_limit_payload(
+            product_id=product_id,
+            side=side,
+            limit_price=limit_price,
+            quote_size=quote_size,
+            base_size=base_size,
+            portfolio_id=portfolio_id,
+            post_only=post_only,
+        )
+        response = self._auth_request("POST", self.ORDER_PREVIEW_PATH, payload)
+        if not isinstance(response, dict):
+            raise CoinbaseTradingError("Unexpected Coinbase limit preview response", category="unexpected_response")
+        return response
+
+    def create_spot_limit_order(
+        self,
+        *,
+        client_order_id: str,
+        product_id: str,
+        side: str,
+        limit_price: str,
+        quote_size: str | None = None,
+        base_size: str | None = None,
+        portfolio_id: str | None = None,
+        post_only: bool = True,
+        preview_id: str | None = None,
+    ) -> dict[str, Any]:
+        payload = self._spot_limit_payload(
+            product_id=product_id,
+            side=side,
+            limit_price=limit_price,
+            quote_size=quote_size,
+            base_size=base_size,
+            portfolio_id=portfolio_id,
+            post_only=post_only,
+        )
+        payload["client_order_id"] = str(client_order_id)
+        if preview_id:
+            payload["preview_id"] = str(preview_id)
+        response = self._auth_request("POST", self.ORDERS_PATH, payload)
+        if not isinstance(response, dict):
+            raise CoinbaseTradingError("Unexpected Coinbase create-limit response", category="unexpected_response")
+        success = bool(response.get("success"))
+        if not success:
+            error_code, message = self._safe_coinbase_error(response)
+            raise CoinbaseTradingError(
+                "Coinbase create-limit order was rejected",
+                category=self._trading_error_category(None, error_code, message),
+                error_code=error_code,
+            )
+        return response
+
     def preview_spot_market_order(
         self,
         *,
