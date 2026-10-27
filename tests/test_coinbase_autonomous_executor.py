@@ -858,3 +858,113 @@ def test_stop_loss_exit_stays_market(tmp_path):
     assert action["reason"] == "stop_loss"
     assert fake.created[-1]["side"] == "SELL"
     assert fake.created[-1].get("order_type") != "limit"
+
+
+def test_seed_uses_maker_when_maker_first_enabled(tmp_path):
+    fake = FakeCoinbase()
+    cfg = CoinbaseAutonomousConfig(
+        state_path=str(tmp_path / "maker-seed.json"),
+        portfolio_id="agent-portfolio",
+        maker_first=True,
+    )
+    executor = CoinbaseAutonomousExecutor(cfg, client=fake)
+    action = executor._submit_sell(
+        base_size=0.0001,
+        purpose="seed",
+        now=1000.0,
+        reference_bid=fake.bid,
+        product_id="BTC-EUR",
+        quote_currency="EUR",
+        quote_to_eur=1.0,
+    )
+    assert action["order_type"] == "limit"
+    assert fake.created[-1]["order_type"] == "limit"
+    assert fake.created[-1]["post_only"] is True
+
+
+def test_account_nav_values_dynamic_altcoin_balances(tmp_path):
+    class AltCoinbase(FakeCoinbase):
+        def account_balances(self, portfolio_id=None):
+            payload = super().account_balances(portfolio_id)
+            payload["assets"].append({
+                "currency": "XRP",
+                "available": "10",
+                "hold": "0",
+                "total": "10",
+            })
+            return payload
+
+        def top_of_book(self, product_id):
+            if product_id == "XRP-EUR":
+                return CoinbaseTopOfBook(
+                    product_id=product_id,
+                    bid_price=Decimal("1.00"),
+                    bid_size=Decimal("1000"),
+                    ask_price=Decimal("1.01"),
+                    ask_size=Decimal("1000"),
+                )
+            return super().top_of_book(product_id)
+
+    fake = AltCoinbase()
+    fake.eur = 5.0
+    fake.btc = 0.0
+    cfg = CoinbaseAutonomousConfig(
+        state_path=str(tmp_path / "dynamic-nav.json"),
+        portfolio_id="agent-portfolio",
+    )
+    executor = CoinbaseAutonomousExecutor(cfg, client=fake)
+    nav, balances = executor._account_nav(fake.bid)
+    assert balances["XRP"] == 10.0
+    assert nav == 15.0
+
+
+def test_high_risk_continues_after_daily_profit_target_when_always_on(tmp_path, monkeypatch):
+    _set_live_env(monkeypatch)
+    fake = FakeCoinbase()
+    fake.eur = 6.0
+    fake.btc = 0.0
+    cfg = CoinbaseAutonomousConfig(
+        state_path=str(tmp_path / "always-on-high-risk.json"),
+        portfolio_id="agent-portfolio",
+        require_isolated_portfolio=True,
+        require_shadow_promotion=False,
+        full_capacity=True,
+        allow_dynamic_products=True,
+        maker_first=True,
+        managed_capital_pct=100.0,
+        cash_reserve_pct=0.0,
+        max_single_trade_pct=100.0,
+        daily_profit_target_eur=1.0,
+        stop_after_daily_profit_target=False,
+        high_risk_fallback=True,
+        high_risk_min_live_net_edge_bps=0.0,
+        high_risk_max_spread_bps=45.0,
+    )
+    executor = CoinbaseAutonomousExecutor(cfg, client=fake)
+    executor.state.managed_cash_eur = 6.0
+
+    executor.tick(
+        armed=True,
+        now=1000.0,
+        shadow_status={"promotion_ready": False, "last_signal": {"decisions": []}},
+    )
+    executor.state.day_pnl_eur = 1.25
+
+    status = executor.tick(
+        armed=True,
+        now=1001.0,
+        shadow_status={
+            "promotion_ready": False,
+            "last_signal": {
+                "decisions": [{
+                    **_long_decision("XRP-EUR:300:post-target", 120),
+                    "product_id": "XRP-EUR",
+                    "risk_tier": "high",
+                }]
+            },
+        },
+    )
+    assert status["daily_targets"]["profit_target_met"] is True
+    assert status["daily_targets"]["continuous_after_target"] is True
+    assert status["live_orders_sent"] == 1
+    assert fake.created[-1]["product_id"] == "XRP-EUR"
