@@ -4,6 +4,12 @@ param(
     [switch]$Start
 )
 
+# Default to starting the local Coinbase stack when no -Start value is supplied.
+# This keeps the common Windows command simple: .\setup-coinbase-local-windows.ps1
+if (-not $PSBoundParameters.ContainsKey("Start")) {
+    $Start = $true
+}
+
 $ErrorActionPreference = "Stop"
 Set-StrictMode -Version Latest
 
