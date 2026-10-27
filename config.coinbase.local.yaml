@@ -1,3 +1,19 @@
+coinbase_opportunity_engine:
+  enabled: true
+  interval_seconds: 20
+  universe_refresh_seconds: 120
+  candidate_limit: 24
+  sample_lookback_seconds: 600
+  min_samples: 4
+  min_recent_momentum_bps: 20
+  max_spread_bps: 20
+  min_quote_balance: 1
+  min_24h_quote_volume: 10000
+  quote_currencies: [EUR, USDC]
+  decision_window_seconds: 300
+  daily_trade_target: 10
+  daily_profit_target_eur: 1.0
+
 coinbase_zscore_shadow:
   enabled: true
   product_id: BTC-EUR
@@ -34,6 +50,7 @@ coinbase_autonomous_execution:
   enabled: true
   product_id: BTC-EUR
   supported_products: [BTC-EUR, BTC-USDC]
+  allow_dynamic_products: true
   portfolio_id: ""
   require_isolated_portfolio: true
   allow_existing_btc_seed: false
@@ -55,11 +72,19 @@ coinbase_autonomous_execution:
   trailing_activate_pct: 0.8
   trailing_stop_pct: 0.5
 
-  max_preview_fee_bps: 60.0
+  max_preview_fee_bps: 35.0
   max_preview_slippage_bps: 25.0
   assumed_exit_fee_bps: 50.0
   min_live_net_edge_bps: 8.0
   max_spread_bps: 20.0
+
+  # Multi-market entries rest post-only at the bid first to target maker fees.
+  maker_first: true
+  maker_order_age_seconds: 25
+
+  # Activity/profit objectives are targets, never reasons to force negative-edge trades.
+  daily_trade_target: 10
+  daily_profit_target_eur: 1.0
 
   # RiskTrader evaluates each current setup directly; no historical promotion quota.
   require_shadow_promotion: false
