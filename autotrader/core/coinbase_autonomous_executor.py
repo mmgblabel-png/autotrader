@@ -60,6 +60,7 @@ class CoinbaseAutonomousConfig:
     trailing_stop_pct: float = 0.5
     require_shadow_promotion: bool = True
     maker_first: bool = False
+    maker_first_exit: bool = True
     maker_order_age_seconds: float = 25.0
     daily_trade_target: int = 10
     daily_profit_target_eur: float = 1.0
@@ -108,6 +109,7 @@ class CoinbaseAutonomousConfig:
             trailing_stop_pct=max(0.1, float(cfg.get("trailing_stop_pct", 0.5))),
             require_shadow_promotion=bool(cfg.get("require_shadow_promotion", True)),
             maker_first=bool(cfg.get("maker_first", False)),
+            maker_first_exit=bool(cfg.get("maker_first_exit", True)),
             maker_order_age_seconds=max(5.0, float(cfg.get("maker_order_age_seconds", 25.0))),
             daily_trade_target=max(1, int(cfg.get("daily_trade_target", 10))),
             daily_profit_target_eur=max(0.0, float(cfg.get("daily_profit_target_eur", 1.0))),
@@ -776,6 +778,7 @@ class CoinbaseAutonomousExecutor:
         product_id: str | None = None,
         quote_currency: str | None = None,
         quote_to_eur: float | None = None,
+        exit_reason: str | None = None,
     ) -> dict[str, Any]:
         product = str(product_id or self.config.product_id).upper()
         quote = str(quote_currency or product.rsplit("-", 1)[-1]).upper()
@@ -784,14 +787,42 @@ class CoinbaseAutonomousExecutor:
         size_text = self._floor_to_increment(base_size, base_increment, fallback_decimals=8)
         if float(size_text or 0.0) <= 0:
             raise CoinbaseTradingError("Rounded sell size is zero", category="invalid_order_size")
-        preview = self.client.preview_spot_market_order(
-            product_id=product,
-            side="SELL",
-            base_size=size_text,
-            portfolio_id=self.config.portfolio_id or None,
+
+        maker_reasons = {"take_profit", "signal_horizon"}
+        use_maker = bool(
+            self.config.maker_first_exit
+            and purpose == "exit"
+            and str(exit_reason or "") in maker_reasons
         )
-        notional_quote = base_size * reference_bid
-        fee_bps, slip_bps = self._preview_costs(preview, reference_bid, notional_quote)
+        limit_text = ""
+        if use_maker:
+            book = self.client.top_of_book(product)
+            ask = float(book.ask_price)
+            if ask <= 0:
+                raise CoinbaseTradingError("Invalid ask for maker exit", category="invalid_market_data")
+            limit_text = format(book.ask_price, "f")
+            preview = self.client.preview_spot_limit_order(
+                product_id=product,
+                side="SELL",
+                limit_price=limit_text,
+                base_size=size_text,
+                portfolio_id=self.config.portfolio_id or None,
+                post_only=True,
+            )
+            cost_reference = ask
+            order_type = "limit"
+        else:
+            preview = self.client.preview_spot_market_order(
+                product_id=product,
+                side="SELL",
+                base_size=size_text,
+                portfolio_id=self.config.portfolio_id or None,
+            )
+            cost_reference = reference_bid
+            order_type = "market"
+
+        notional_quote = base_size * cost_reference
+        fee_bps, slip_bps = self._preview_costs(preview, cost_reference, notional_quote)
         client_id = str(uuid.uuid4())
         self.state.submission_intent = SubmissionIntent(
             client_order_id=client_id,
@@ -802,16 +833,33 @@ class CoinbaseAutonomousExecutor:
             product_id=product,
             quote_currency=quote,
             quote_to_eur=rate,
+            order_type=order_type,
+            limit_price=limit_text,
+            post_only=use_maker,
         )
         self._save()
-        response = self.client.create_spot_market_order(
-            client_order_id=client_id,
-            product_id=product,
-            side="SELL",
-            base_size=size_text,
-            portfolio_id=self.config.portfolio_id or None,
-            preview_id=str(preview.get("preview_id") or "") or None,
-        )
+
+        if use_maker:
+            response = self.client.create_spot_limit_order(
+                client_order_id=client_id,
+                product_id=product,
+                side="SELL",
+                limit_price=limit_text,
+                base_size=size_text,
+                portfolio_id=self.config.portfolio_id or None,
+                post_only=True,
+                preview_id=str(preview.get("preview_id") or "") or None,
+            )
+        else:
+            response = self.client.create_spot_market_order(
+                client_order_id=client_id,
+                product_id=product,
+                side="SELL",
+                base_size=size_text,
+                portfolio_id=self.config.portfolio_id or None,
+                preview_id=str(preview.get("preview_id") or "") or None,
+            )
+
         order_id = self._order_id(response)
         self.state.live_orders_sent += 1
         self.state.pending = PendingOrder(
@@ -823,6 +871,8 @@ class CoinbaseAutonomousExecutor:
             product_id=product,
             quote_currency=quote,
             quote_to_eur=rate,
+            order_type=order_type,
+            limit_price=limit_text,
         )
         self.state.submission_intent = None
         action = {
@@ -834,10 +884,13 @@ class CoinbaseAutonomousExecutor:
             "quote_currency": quote,
             "side": "SELL",
             "purpose": purpose,
+            "reason": exit_reason,
             "base_size": base_size,
             "notional_eur": round(notional_quote * rate, 8),
             "preview_fee_bps": round(fee_bps, 4),
             "preview_slippage_bps": round(slip_bps, 4),
+            "order_type": order_type,
+            "limit_price": limit_text or None,
         }
         self.state.last_action = action
         self._audit(dict(action))
@@ -1203,8 +1256,8 @@ class CoinbaseAutonomousExecutor:
                         quote_to_eur=(
                             1.0 if pos.quote_currency == "EUR" else self._usdc_to_eur()
                         ),
+                        exit_reason=reason,
                     )
-                    action["reason"] = reason
 
             env_ready = all(
                 bool(v) for k, v in ready["gates"].items()
@@ -1425,6 +1478,7 @@ class CoinbaseAutonomousExecutor:
                 "supported_products": list(self.config.supported_products),
                 "dynamic_products_enabled": self.config.allow_dynamic_products,
                 "maker_first_entries": self.config.maker_first,
+                "maker_first_exits": self.config.maker_first_exit,
                 "maker_order_age_seconds": self.config.maker_order_age_seconds,
                 "high_risk_fallback": self.config.high_risk_fallback,
                 "high_risk_min_live_net_edge_bps": self.config.high_risk_min_live_net_edge_bps,
