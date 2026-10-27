@@ -670,3 +670,49 @@ def test_stale_maker_entry_is_cancelled_without_fake_fill(tmp_path, monkeypatch)
     )
     assert second["pending_order"] is None
     assert any(row.get("action") == "MAKER_ORDER_EXPIRED" for row in second["order_audit"])
+
+
+def test_partial_maker_fill_is_adopted_after_cancel(tmp_path, monkeypatch):
+    _set_live_env(monkeypatch)
+    fake = FakeCoinbase()
+    fake.eur = 6.0
+    fake.btc = 0.0
+    cfg = CoinbaseAutonomousConfig(
+        state_path=str(tmp_path / "partial-maker.json"),
+        portfolio_id="agent-portfolio",
+        require_isolated_portfolio=True,
+        require_shadow_promotion=False,
+        full_capacity=True,
+        allow_dynamic_products=True,
+        maker_first=True,
+        maker_order_age_seconds=5.0,
+        supported_products=("BTC-EUR",),
+        managed_capital_pct=100.0,
+        cash_reserve_pct=0.0,
+        max_single_trade_pct=100.0,
+    )
+    executor = CoinbaseAutonomousExecutor(cfg, client=fake)
+    executor.state.managed_cash_eur = 6.0
+    first = executor.tick(
+        armed=True,
+        now=1000.0,
+        shadow_status={
+            "promotion_ready": False,
+            "last_signal": {"decisions": [{**_long_decision("XRP-EUR:300:partial", 120), "product_id": "XRP-EUR"}]},
+        },
+    )
+    order_id = first["pending_order"]["order_id"]
+    fake.orders[order_id].update({
+        "filled_size": "0.00002",
+        "average_filled_price": str(fake.bid),
+        "total_fees": "0.003",
+    })
+    second = executor.tick(
+        armed=True,
+        now=1006.0,
+        shadow_status={"promotion_ready": False, "last_signal": {"decisions": []}},
+    )
+    assert second["pending_order"] is None
+    assert second["managed_position"] is not None
+    assert second["managed_position"]["base_size"] == 0.00002
+    assert any(row.get("action") == "MAKER_PARTIAL_ADOPTED" for row in second["order_audit"])
