@@ -2,7 +2,7 @@ coinbase_opportunity_engine:
   enabled: true
   interval_seconds: 20
   universe_refresh_seconds: 120
-  candidate_limit: 24
+  candidate_limit: 40
   sample_lookback_seconds: 600
   min_samples: 4
   min_recent_momentum_bps: 20
