@@ -314,7 +314,16 @@ class CoinbaseAutonomousExecutor:
         return max(0.0, nav), balances
 
     def _managed_equity(self, bid: float) -> float:
-        position_value = self.state.position.base_size * bid if self.state.position else 0.0
+        position_value = 0.0
+        if self.state.position is not None:
+            pos = self.state.position
+            pos_bid = bid
+            if pos.product_id != self.config.product_id:
+                try:
+                    pos_bid = float(self.client.top_of_book(pos.product_id).bid_price)
+                except Exception:
+                    pos_bid = float(pos.entry_price)
+            position_value = pos.base_size * pos_bid * max(float(pos.quote_to_eur or 0.0), 0.0)
         return max(0.0, self.state.managed_cash_eur + position_value)
 
     def _reconcile_isolated_cash(self, balances: dict[str, float], now: float) -> None:
@@ -489,6 +498,8 @@ class CoinbaseAutonomousExecutor:
             product_id=intent.product_id,
             quote_currency=intent.quote_currency,
             quote_to_eur=intent.quote_to_eur,
+            order_type=intent.order_type,
+            limit_price=intent.limit_price,
         )
         self.state.submission_intent = None
         self.state.live_orders_sent += 1
@@ -751,6 +762,9 @@ class CoinbaseAutonomousExecutor:
                 continue
 
             quote_size = target_eur / quote_to_eur
+            if self.config.maker_first:
+                fee_headroom = 1.0 + self.config.max_preview_fee_bps / 10_000.0
+                quote_size = quote_size / max(fee_headroom, 1.0)
             book = self.client.top_of_book(product)
             bid = float(book.bid_price)
             ask = float(book.ask_price)
