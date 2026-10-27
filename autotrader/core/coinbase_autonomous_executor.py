@@ -150,6 +150,9 @@ class PendingOrder:
     quote_to_eur: float = 1.0
     order_type: str = "market"
     limit_price: str = ""
+    quote_size: str = ""
+    base_size: str = ""
+    market_fallback_used: bool = False
 
 @dataclass
 class SubmissionIntent:
@@ -576,6 +579,8 @@ class CoinbaseAutonomousExecutor:
                     quote_to_eur=intent.quote_to_eur,
                     order_type=intent.order_type,
                     limit_price=intent.limit_price,
+                    quote_size=intent.quote_size,
+                    base_size=intent.base_size,
                 )
                 self.state.submission_intent = None
                 self.state.live_orders_sent += 1
@@ -632,6 +637,8 @@ class CoinbaseAutonomousExecutor:
             quote_to_eur=intent.quote_to_eur,
             order_type=intent.order_type,
             limit_price=intent.limit_price,
+            quote_size=intent.quote_size,
+            base_size=intent.base_size,
         )
         self.state.submission_intent = None
         self.state.live_orders_sent += 1
@@ -700,6 +707,67 @@ class CoinbaseAutonomousExecutor:
                         "purpose": pending.purpose,
                         "age_seconds": round(now - float(pending.submitted_at), 3),
                     })
+
+                    # Seed conversion must never starve the actual strategy.
+                    # Give it one maker attempt, then convert the remaining BTC
+                    # immediately so the full isolated portfolio becomes usable.
+                    if (
+                        pending.purpose == "seed"
+                        and pending.side == "SELL"
+                        and pending.base_size
+                        and not pending.market_fallback_used
+                    ):
+                        fallback_client_id = str(uuid.uuid4())
+                        self.state.submission_intent = SubmissionIntent(
+                            client_order_id=fallback_client_id,
+                            side="SELL",
+                            purpose="seed",
+                            created_at=now,
+                            base_size=pending.base_size,
+                            product_id=pending.product_id,
+                            quote_currency=pending.quote_currency,
+                            quote_to_eur=pending.quote_to_eur,
+                            order_type="market",
+                        )
+                        self.state.pending = None
+                        self._save()
+                        response = self.client.create_spot_market_order(
+                            client_order_id=fallback_client_id,
+                            product_id=pending.product_id,
+                            side="SELL",
+                            base_size=pending.base_size,
+                            portfolio_id=self.config.portfolio_id or None,
+                        )
+                        fallback_order_id = self._order_id(response)
+                        self.state.live_orders_sent += 1
+                        self.state.pending = PendingOrder(
+                            order_id=fallback_order_id,
+                            side="SELL",
+                            purpose="seed",
+                            client_order_id=fallback_client_id,
+                            submitted_at=now,
+                            product_id=pending.product_id,
+                            quote_currency=pending.quote_currency,
+                            quote_to_eur=pending.quote_to_eur,
+                            order_type="market",
+                            base_size=pending.base_size,
+                            market_fallback_used=True,
+                        )
+                        self.state.submission_intent = None
+                        self.state.last_action = {
+                            "at": now,
+                            "action": "SEED_MARKET_FALLBACK_SUBMITTED",
+                            "order_id": fallback_order_id,
+                            "client_order_id": fallback_client_id,
+                            "product_id": pending.product_id,
+                            "side": "SELL",
+                            "purpose": "seed",
+                            "base_size": pending.base_size,
+                        }
+                        self._audit(dict(self.state.last_action))
+                        self._save()
+                        return
+
                     if pending.window_key and pending.window_end and now >= pending.window_end:
                         self.state.seen_windows.append(pending.window_key)
                         self.state.seen_windows = self.state.seen_windows[-5000:]
@@ -916,6 +984,7 @@ class CoinbaseAutonomousExecutor:
             quote_to_eur=rate,
             order_type=order_type,
             limit_price=limit_text,
+            base_size=size_text,
         )
         self.state.submission_intent = None
         action = {
@@ -1149,6 +1218,7 @@ class CoinbaseAutonomousExecutor:
             quote_to_eur=quote_to_eur,
             order_type=order_type,
             limit_price=limit_price,
+            quote_size=quote_text,
         )
         self.state.submission_intent = None
         action = {
