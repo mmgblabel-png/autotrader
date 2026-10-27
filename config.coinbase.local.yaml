@@ -58,7 +58,7 @@ coinbase_autonomous_execution:
   allow_dynamic_products: true
   portfolio_id: ""
   require_isolated_portfolio: true
-  allow_existing_btc_seed: false
+  allow_existing_btc_seed: true
   interval_seconds: 5
 
   # RiskTrader: the complete isolated agent portfolio is bot-owned capital.
