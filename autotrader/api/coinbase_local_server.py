@@ -28,6 +28,7 @@ from autotrader.connectors.coinbase_advanced import (
     CoinbaseAuthenticationError,
 )
 from autotrader.core.coinbase_autonomous_executor import CoinbaseAutonomousExecutor
+from autotrader.core.coinbase_opportunity_engine import CoinbaseOpportunityEngine
 from autotrader.core.coinbase_zscore_shadow import CoinbaseZScoreShadowEngine
 from autotrader.core.live_arm_state import LiveArmIntentStore
 from autotrader.core.logger import get_logger
@@ -95,10 +96,17 @@ def _shadow_status() -> dict[str, Any]:
     return dict(app.state.shadow_engine.status())
 
 
+def _opportunity_status() -> dict[str, Any]:
+    cached = getattr(app.state, "opportunity_status", None)
+    if isinstance(cached, dict):
+        return dict(cached)
+    return dict(app.state.opportunity_engine.status())
+
+
 def _executor_readiness(*, armed: bool | None = None) -> dict[str, Any]:
-    shadow = _shadow_status()
+    opportunity = _opportunity_status()
     value = app.state.live_armed if armed is None else bool(armed)
-    return dict(app.state.executor.readiness(armed=value, shadow_status=shadow))
+    return dict(app.state.executor.readiness(armed=value, shadow_status=opportunity))
 
 
 def _readiness_payload() -> dict[str, Any]:
@@ -141,7 +149,7 @@ async def _executor_loop() -> None:
             status = await asyncio.to_thread(
                 app.state.executor.tick,
                 armed=bool(app.state.live_armed),
-                shadow_status=_shadow_status(),
+                shadow_status=_opportunity_status(),
             )
             app.state.executor_status = dict(status)
             app.state.executor_error = None
@@ -149,6 +157,18 @@ async def _executor_loop() -> None:
             app.state.executor_error = type(exc).__name__
             log.warning("Coinbase local executor tick failed safely: %s", type(exc).__name__)
         await asyncio.sleep(app.state.executor_interval)
+
+
+async def _opportunity_loop() -> None:
+    while True:
+        try:
+            status = await asyncio.to_thread(app.state.opportunity_engine.tick)
+            app.state.opportunity_status = dict(status)
+            app.state.opportunity_error = None
+        except Exception as exc:
+            app.state.opportunity_error = type(exc).__name__
+            log.warning("Coinbase multi-market opportunity scan failed: %s", type(exc).__name__)
+        await asyncio.sleep(app.state.opportunity_interval)
 
 
 def _refresh_universe() -> dict[str, Any]:
@@ -221,16 +241,25 @@ async def _preview_loop() -> None:
 async def startup() -> None:
     cfg = _load_config()
     shadow_cfg = dict(cfg.get("coinbase_zscore_shadow") or {})
+    opportunity_cfg = dict(cfg.get("coinbase_opportunity_engine") or {})
     auto_cfg = dict(cfg.get("coinbase_autonomous_execution") or {})
 
     app.state.market = CoinbaseAdvancedMarketData(timeout=5.0)
     app.state.shadow_engine = CoinbaseZScoreShadowEngine(shadow_cfg)
     app.state.executor = CoinbaseAutonomousExecutor(auto_cfg)
+    app.state.opportunity_engine = CoinbaseOpportunityEngine(
+        opportunity_cfg,
+        market_data=app.state.market,
+        portfolio_id=str(app.state.executor.config.portfolio_id or ""),
+    )
     app.state.shadow_interval = max(2.0, float(shadow_cfg.get("interval_seconds", 5.0)))
+    app.state.opportunity_interval = max(10.0, float(opportunity_cfg.get("interval_seconds", 20.0)))
     app.state.executor_interval = max(2.0, float(auto_cfg.get("interval_seconds", 5.0)))
     app.state.shadow_status = app.state.shadow_engine.status()
+    app.state.opportunity_status = app.state.opportunity_engine.status()
     app.state.executor_status = app.state.executor.status()
     app.state.shadow_error = None
+    app.state.opportunity_error = None
     app.state.executor_error = None
     app.state.universe = {}
     app.state.universe_error = None
@@ -272,6 +301,7 @@ async def startup() -> None:
 
     app.state.tasks = [
         asyncio.create_task(_shadow_loop(), name="coinbase-local-shadow"),
+        asyncio.create_task(_opportunity_loop(), name="coinbase-local-opportunity"),
         asyncio.create_task(_executor_loop(), name="coinbase-local-executor"),
         asyncio.create_task(_universe_loop(), name="coinbase-local-universe"),
         asyncio.create_task(_preview_loop(), name="coinbase-local-preview"),
@@ -296,6 +326,7 @@ def health() -> dict[str, Any]:
         "live_armed": bool(getattr(app.state, "live_armed", False)),
         "shadow_error": getattr(app.state, "shadow_error", None),
         "executor_error": getattr(app.state, "executor_error", None),
+        "opportunity_error": getattr(app.state, "opportunity_error", None),
     }
 
 
@@ -360,6 +391,7 @@ def dashboard_snapshot() -> dict[str, Any]:
         "autonomous": autonomous(),
         "readiness": live_readiness(),
         "shadow": zscore_shadow(),
+        "opportunity": _opportunity_status(),
         "universe": dict(getattr(app.state, "universe", {}) or {}),
         "universe_error": getattr(app.state, "universe_error", None),
         "generated_at": time.time(),
