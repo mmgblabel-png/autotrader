@@ -109,6 +109,14 @@ button,.btn{border:0;border-radius:10px;padding:11px 15px;font-weight:850;cursor
   <div class="card"><div class="label">Live fundable</div><div id="eurquote" class="value">—</div><div class="sub">quote-valuta beschikbaar in Agent-portfolio</div></div>
 </section>
 
+<div class="section-title"><h2>Realtime order flow</h2><div class="line"></div><span class="badge">WEBSOCKET + REST FALLBACK</span></div>
+<section class="grid4">
+  <div class="card"><div class="label">WebSocket</div><div id="wsstatus" class="value">—</div><div id="wserror" class="sub">—</div></div>
+  <div class="card"><div class="label">Level-2 markets</div><div id="wssubs" class="value">—</div><div class="sub">dynamische topkandidaten</div></div>
+  <div class="card"><div class="label">Top live candidate</div><div id="topcandidate" class="value">—</div><div id="topreason" class="sub">—</div></div>
+  <div class="card"><div class="label">Realtime edge</div><div id="orderflowedge" class="value">—</div><div id="orderflowsub" class="sub">book / trade flow</div></div>
+</section>
+
 <div class="section-title"><h2>Coinbase execution audit</h2><div class="line"></div><span class="badge">PERSISTENT</span></div>
 <section class="card">
   <div class="table-wrap"><table class="table"><thead><tr><th>Tijd</th><th>Actie</th><th>Product</th><th>Side</th><th>Notional / size</th><th>Status / reason</th></tr></thead><tbody id="auditrows"><tr><td colspan="6" class="sub">Audit laden…</td></tr></tbody></table></div>
@@ -151,9 +159,9 @@ function gateChips(failed){
 async function refresh(){
   try{
     const d=await api("/api/coinbase/dashboard/snapshot");
-    const a=d.autonomous||{}, r=d.readiness||{}, s=d.shadow||{}, o=d.opportunity||{}, b=d.balances||{}, u=d.universe||{};
-    const rd=a.readiness||{}; const assets=b.assets||[]; const eur=assets.find(x=>x.currency==="EUR");
-    setText("agentcash",euro(eur?eur.total:rd.portfolio_nav_eur||0));
+    const a=d.autonomous||{}, r=d.readiness||{}, s=d.shadow||{}, o=d.opportunity||{}, rt=d.realtime_orderflow||o.realtime||{}, b=d.balances||{}, u=d.universe||{};
+    const rd=a.readiness||{}; const assets=b.assets||[];
+    setText("agentcash",euro(rd.portfolio_nav_eur||0));
     setText("portfolioscope",b.portfolio_scoped?"Dedicated isolated Coinbase portfolio":"PORTFOLIO SCOPE NIET BEVESTIGD");
     const armed=!!a.coinbase_armed; setText("armed",armed?"ARMED":"OFF"); document.getElementById("armed").className="value "+(armed?"green":"red");
     setText("armedsub",armed?"Agent mag handelen zodra evidence + risk gates groen zijn":"Live execution is gedeactiveerd");
@@ -178,6 +186,15 @@ async function refresh(){
     const blockers=s.promotion_blockers||[];document.getElementById("blockers").innerHTML=(blockers.length?blockers:["geen blockers"]).map(x=>'<span class="gate '+(blockers.length?"fail":"pass")+'">'+x+'</span>').join("");
     const pol=s.promotion_policy||{};setText("minsettled",pol.min_settled_trades??"—");setText("minwinrate",pct(pol.min_winrate_pct));setText("minpnl",euro(pol.min_net_pnl_eur));setText("minpf",num(pol.min_profit_factor));setText("maxshadowdd",pct(pol.max_drawdown_pct));
     setText("markets",o.scanned_markets??u.all??0);setText("tradable",o.tradable_markets??u.tradable??0);setText("cryptocrypto",u.crypto_crypto??0);setText("eurquote",o.fundable_markets??u.eur_quote??0);
+    const top=(o.top_candidates||[])[0]||{};
+    setText("wsstatus",rt.connected?"CONNECTED":"REST");
+    document.getElementById("wsstatus").className="value "+(rt.connected?"green":"blue");
+    setText("wserror",rt.last_error?("fallback: "+rt.last_error):(rt.connected?"live Level-2 + trades":"REST fallback actief"));
+    setText("wssubs",rt.subscribed_count??0);
+    setText("topcandidate",top.product_id||"—");
+    setText("topreason",top.orderflow_fresh?"realtime microstructure":"REST/momentum");
+    setText("orderflowedge",top.product_id?(num(top.realtime_edge_bps||0)+" bps"):"—");
+    setText("orderflowsub",top.product_id?("book "+num(top.book_imbalance||0)+" · flow "+num(top.trade_flow_imbalance||0)+" · velocity "+num(top.trade_velocity_ratio||1)+"x"):"geen candidate");
     document.getElementById("auditrows").innerHTML=auditRows(a.order_audit||[]);
     const ready=!!r.execution_ready_now, promote=!!s.promotion_ready;
     document.getElementById("readybadge").className="badge "+(ready?"ok":"warn");setText("readybadge",ready?"EXECUTION READY":"GATED");
