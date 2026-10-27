@@ -371,7 +371,14 @@ class CoinbaseAutonomousExecutor:
             if not asset:
                 continue
             try:
-                result[asset] = max(0.0, float(row.get("available") or 0.0))
+                available = max(0.0, float(row.get("available") or 0.0))
+                hold = max(0.0, float(row.get("hold") or 0.0))
+                total = max(
+                    available,
+                    float(row.get("total") or (available + hold)),
+                )
+                result[asset] = available
+                result[f"_TOTAL_{asset}"] = max(0.0, total)
             except (TypeError, ValueError):
                 pass
         return result
@@ -387,13 +394,46 @@ class CoinbaseAutonomousExecutor:
 
     def _account_nav(self, bid: float) -> tuple[float, dict[str, float]]:
         balances = self._balances()
-        usdc_to_eur = self._usdc_to_eur() if balances.get("USDC", 0.0) > 0 else 0.0
+        total_eur = max(0.0, float(balances.get("_TOTAL_EUR", balances.get("EUR", 0.0)) or 0.0))
+        total_usdc = max(0.0, float(balances.get("_TOTAL_USDC", balances.get("USDC", 0.0)) or 0.0))
+        usdc_to_eur = self._usdc_to_eur() if total_usdc > 0 else 0.0
         balances["_USDC_TO_EUR"] = usdc_to_eur
-        nav = (
-            balances["EUR"]
-            + balances["USDC"] * usdc_to_eur
-            + balances["BTC"] * bid
-        )
+        nav = total_eur + total_usdc * usdc_to_eur
+
+        assets = {
+            key.removeprefix("_TOTAL_")
+            for key in balances
+            if key.startswith("_TOTAL_")
+        }
+        for asset in assets:
+            if asset in {"EUR", "USDC"}:
+                continue
+            amount = max(0.0, float(balances.get(f"_TOTAL_{asset}", 0.0) or 0.0))
+            if amount <= 0:
+                continue
+            if asset == "BTC":
+                nav += amount * bid
+                continue
+
+            valued = False
+            try:
+                eur_book = self.client.top_of_book(f"{asset}-EUR")
+                eur_bid = float(eur_book.bid_price)
+                if eur_bid > 0:
+                    nav += amount * eur_bid
+                    valued = True
+            except Exception:
+                pass
+            if valued:
+                continue
+            if usdc_to_eur > 0:
+                try:
+                    usdc_book = self.client.top_of_book(f"{asset}-USDC")
+                    usdc_bid = float(usdc_book.bid_price)
+                    if usdc_bid > 0:
+                        nav += amount * usdc_bid * usdc_to_eur
+                except Exception:
+                    pass
         return max(0.0, nav), balances
 
     def _managed_equity(self, bid: float) -> float:
@@ -1365,11 +1405,7 @@ class CoinbaseAutonomousExecutor:
                         return best_pair
 
                     best_pair = best_route(normal_longs)
-                    if (
-                        best_pair is None
-                        and self.config.high_risk_fallback
-                        and not profit_target_met
-                    ):
+                    if best_pair is None and self.config.high_risk_fallback:
                         best_pair = best_route(high_longs)
                     if best_pair is not None:
                         decision, route = best_pair
