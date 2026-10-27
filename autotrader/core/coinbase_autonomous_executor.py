@@ -830,9 +830,12 @@ class CoinbaseAutonomousExecutor:
 
         maker_reasons = {"take_profit", "signal_horizon"}
         use_maker = bool(
-            self.config.maker_first_exit
-            and purpose == "exit"
-            and str(exit_reason or "") in maker_reasons
+            (purpose == "seed" and self.config.maker_first)
+            or (
+                self.config.maker_first_exit
+                and purpose == "exit"
+                and str(exit_reason or "") in maker_reasons
+            )
         )
         limit_text = ""
         if use_maker:
