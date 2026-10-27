@@ -29,6 +29,7 @@ from autotrader.connectors.coinbase_advanced import (
 )
 from autotrader.core.coinbase_autonomous_executor import CoinbaseAutonomousExecutor
 from autotrader.core.coinbase_opportunity_engine import CoinbaseOpportunityEngine
+from autotrader.core.coinbase_realtime_orderflow import CoinbaseRealtimeOrderflowEngine
 from autotrader.core.coinbase_zscore_shadow import CoinbaseZScoreShadowEngine
 from autotrader.core.live_arm_state import LiveArmIntentStore
 from autotrader.core.logger import get_logger
@@ -242,15 +243,19 @@ async def startup() -> None:
     cfg = _load_config()
     shadow_cfg = dict(cfg.get("coinbase_zscore_shadow") or {})
     opportunity_cfg = dict(cfg.get("coinbase_opportunity_engine") or {})
+    realtime_cfg = dict(cfg.get("coinbase_realtime_orderflow") or {})
     auto_cfg = dict(cfg.get("coinbase_autonomous_execution") or {})
 
     app.state.market = CoinbaseAdvancedMarketData(timeout=5.0)
     app.state.shadow_engine = CoinbaseZScoreShadowEngine(shadow_cfg)
     app.state.executor = CoinbaseAutonomousExecutor(auto_cfg)
+    app.state.realtime_orderflow = CoinbaseRealtimeOrderflowEngine(realtime_cfg)
+    await asyncio.to_thread(app.state.realtime_orderflow.start)
     app.state.opportunity_engine = CoinbaseOpportunityEngine(
         opportunity_cfg,
         market_data=app.state.market,
         portfolio_id=str(app.state.executor.config.portfolio_id or ""),
+        realtime_orderflow=app.state.realtime_orderflow,
     )
     app.state.shadow_interval = max(2.0, float(shadow_cfg.get("interval_seconds", 5.0)))
     app.state.opportunity_interval = max(10.0, float(opportunity_cfg.get("interval_seconds", 20.0)))
@@ -260,6 +265,7 @@ async def startup() -> None:
     app.state.executor_status = app.state.executor.status()
     app.state.shadow_error = None
     app.state.opportunity_error = None
+    app.state.realtime_error = None
     app.state.executor_error = None
     app.state.universe = {}
     app.state.universe_error = None
@@ -310,6 +316,9 @@ async def startup() -> None:
 
 @app.on_event("shutdown")
 async def shutdown() -> None:
+    realtime = getattr(app.state, "realtime_orderflow", None)
+    if realtime is not None:
+        await asyncio.to_thread(realtime.close)
     for task in getattr(app.state, "tasks", []):
         task.cancel()
     for task in getattr(app.state, "tasks", []):
@@ -327,6 +336,11 @@ def health() -> dict[str, Any]:
         "shadow_error": getattr(app.state, "shadow_error", None),
         "executor_error": getattr(app.state, "executor_error", None),
         "opportunity_error": getattr(app.state, "opportunity_error", None),
+        "realtime_orderflow": (
+            app.state.realtime_orderflow.status()
+            if getattr(app.state, "realtime_orderflow", None) is not None
+            else {"enabled": False, "started": False}
+        ),
     }
 
 
@@ -392,6 +406,11 @@ def dashboard_snapshot() -> dict[str, Any]:
         "readiness": live_readiness(),
         "shadow": zscore_shadow(),
         "opportunity": _opportunity_status(),
+        "realtime_orderflow": (
+            app.state.realtime_orderflow.status()
+            if getattr(app.state, "realtime_orderflow", None) is not None
+            else {}
+        ),
         "universe": dict(getattr(app.state, "universe", {}) or {}),
         "universe_error": getattr(app.state, "universe_error", None),
         "generated_at": time.time(),
