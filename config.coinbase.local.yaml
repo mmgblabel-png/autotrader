@@ -1,3 +1,11 @@
+coinbase_realtime_orderflow:
+  enabled: true
+  max_products: 20
+  depth_levels: 10
+  trade_window_seconds: 60
+  stale_after_seconds: 15
+  max_trade_events_per_product: 4000
+
 coinbase_opportunity_engine:
   enabled: true
   interval_seconds: 10
@@ -18,6 +26,16 @@ coinbase_opportunity_engine:
   high_risk_min_recent_momentum_bps: 3
   high_risk_max_spread_bps: 45
   high_risk_min_24h_quote_volume: 1000
+  realtime_product_limit: 20
+  realtime_min_edge_bps: 4
+  orderbook_imbalance_weight_bps: 22
+  trade_flow_weight_bps: 15
+  microprice_weight: 2
+  velocity_weight_bps: 6
+  state_path: /data/coinbase_opportunity_state.json
+  new_listing_window_seconds: 259200
+  new_listing_score_bonus: 35
+  new_listing_min_samples: 2
 
 coinbase_zscore_shadow:
   enabled: true
