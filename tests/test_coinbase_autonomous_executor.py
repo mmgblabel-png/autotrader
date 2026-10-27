@@ -716,3 +716,96 @@ def test_partial_maker_fill_is_adopted_after_cancel(tmp_path, monkeypatch):
     assert second["managed_position"] is not None
     assert second["managed_position"]["base_size"] == 0.00002
     assert any(row.get("action") == "MAKER_PARTIAL_ADOPTED" for row in second["order_audit"])
+
+
+def test_high_risk_fallback_only_used_when_profit_target_unmet(tmp_path, monkeypatch):
+    _set_live_env(monkeypatch)
+    fake = FakeCoinbase()
+    fake.eur = 6.0
+    fake.btc = 0.0
+    cfg = CoinbaseAutonomousConfig(
+        state_path=str(tmp_path / "high-risk-fallback.json"),
+        portfolio_id="agent-portfolio",
+        require_isolated_portfolio=True,
+        require_shadow_promotion=False,
+        full_capacity=True,
+        allow_dynamic_products=True,
+        maker_first=True,
+        high_risk_fallback=True,
+        high_risk_min_live_net_edge_bps=0.0,
+        high_risk_max_spread_bps=35.0,
+        managed_capital_pct=100.0,
+        cash_reserve_pct=0.0,
+        max_single_trade_pct=100.0,
+        daily_profit_target_eur=1.0,
+    )
+    executor = CoinbaseAutonomousExecutor(cfg, client=fake)
+    executor.state.managed_cash_eur = 6.0
+    status = executor.tick(
+        armed=True,
+        now=1000.0,
+        shadow_status={
+            "promotion_ready": False,
+            "last_signal": {
+                "decisions": [{
+                    **_long_decision("XRP-EUR:300:high-risk", 120),
+                    "product_id": "XRP-EUR",
+                    "risk_tier": "high",
+                }]
+            },
+        },
+    )
+    assert status["live_orders_sent"] == 1
+    assert status["last_action"]["risk_tier"] == "high"
+    assert fake.created[0]["product_id"] == "XRP-EUR"
+
+
+def test_profit_target_locks_new_entries_for_rest_of_day(tmp_path, monkeypatch):
+    _set_live_env(monkeypatch)
+    fake = FakeCoinbase()
+    fake.eur = 6.0
+    fake.btc = 0.0
+    cfg = CoinbaseAutonomousConfig(
+        state_path=str(tmp_path / "profit-lock.json"),
+        portfolio_id="agent-portfolio",
+        require_isolated_portfolio=True,
+        require_shadow_promotion=False,
+        full_capacity=True,
+        allow_dynamic_products=True,
+        maker_first=True,
+        managed_capital_pct=100.0,
+        cash_reserve_pct=0.0,
+        max_single_trade_pct=100.0,
+        daily_profit_target_eur=1.0,
+        stop_after_daily_profit_target=True,
+        day_timezone="Europe/Amsterdam",
+    )
+    executor = CoinbaseAutonomousExecutor(cfg, client=fake)
+    executor.state.managed_cash_eur = 6.0
+
+    # Initialize the local calendar day without opening a trade.
+    executor.tick(
+        armed=True,
+        now=1000.0,
+        shadow_status={"promotion_ready": False, "last_signal": {"decisions": []}},
+    )
+    executor.state.day_pnl_eur = 1.0
+
+    status = executor.tick(
+        armed=True,
+        now=1001.0,
+        shadow_status={
+            "promotion_ready": False,
+            "last_signal": {
+                "decisions": [{
+                    **_long_decision("XRP-EUR:300:after-target", 120),
+                    "product_id": "XRP-EUR",
+                    "risk_tier": "normal",
+                }]
+            },
+        },
+    )
+    assert status["live_orders_sent"] == 0
+    assert fake.created == []
+    assert status["daily_targets"]["profit_target_met"] is True
+    assert status["daily_targets"]["stop_after_profit_target"] is True
