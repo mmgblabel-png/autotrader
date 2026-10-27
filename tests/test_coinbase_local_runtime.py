@@ -50,8 +50,17 @@ def test_coinbase_local_config_is_risktrader_and_portfolio_isolated():
     assert auto["max_single_trade_pct"] == 100.0
     assert auto["full_capacity"] is True
     assert auto["require_shadow_promotion"] is False
+    assert auto["allow_dynamic_products"] is True
+    assert auto["maker_first"] is True
+    assert auto["daily_trade_target"] == 10
+    assert auto["daily_profit_target_eur"] == 1.0
     assert auto["max_daily_loss_pct"] == 3.0
     assert auto["max_drawdown_pct"] == 10.0
+    opportunity = cfg["coinbase_opportunity_engine"]
+    assert opportunity["enabled"] is True
+    assert opportunity["daily_trade_target"] == 10
+    assert opportunity["daily_profit_target_eur"] == 1.0
+    assert "EUR" in opportunity["quote_currencies"]
 
 
 def test_real_local_env_is_gitignored():
