@@ -106,7 +106,7 @@ button,.btn{border:0;border-radius:10px;padding:11px 15px;font-weight:850;cursor
   <div class="card"><div class="label">Coinbase markets</div><div id="markets" class="value">—</div></div>
   <div class="card"><div class="label">Tradable</div><div id="tradable" class="value">—</div></div>
   <div class="card"><div class="label">Crypto → crypto</div><div id="cryptocrypto" class="value">—</div></div>
-  <div class="card"><div class="label">EUR quote</div><div id="eurquote" class="value">—</div></div>
+  <div class="card"><div class="label">Live fundable</div><div id="eurquote" class="value">—</div><div class="sub">quote-valuta beschikbaar in Agent-portfolio</div></div>
 </section>
 
 <div class="section-title"><h2>Coinbase execution audit</h2><div class="line"></div><span class="badge">PERSISTENT</span></div>
