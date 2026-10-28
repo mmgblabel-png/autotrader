@@ -1381,3 +1381,70 @@ def test_expired_maker_exit_falls_back_to_market(tmp_path, monkeypatch):
     assert second["pending_order"]["order_type"] == "market"
     assert second["pending_order"]["market_fallback_used"] is True
     assert second["last_action"]["action"] == "EXIT_MARKET_FALLBACK_SUBMITTED"
+
+
+def test_material_unmanaged_inventory_blocks_new_entries(tmp_path, monkeypatch):
+    _set_live_env(monkeypatch)
+
+    class OrphanCoinbase(FakeCoinbase):
+        def account_balances(self, portfolio_id=None):
+            payload = super().account_balances(portfolio_id)
+            payload["assets"].append({
+                "currency": "XRP",
+                "available": "10",
+                "hold": "0",
+                "total": "10",
+            })
+            return payload
+
+        def top_of_book(self, product_id):
+            if product_id == "XRP-EUR":
+                return CoinbaseTopOfBook(
+                    product_id=product_id,
+                    bid_price=Decimal("1.00"),
+                    bid_size=Decimal("1000"),
+                    ask_price=Decimal("1.01"),
+                    ask_size=Decimal("1000"),
+                )
+            return super().top_of_book(product_id)
+
+    fake = OrphanCoinbase()
+    fake.eur = 6.0
+    fake.btc = 0.0
+    cfg = CoinbaseAutonomousConfig(
+        state_path=str(tmp_path / "orphan.json"),
+        portfolio_id="agent-portfolio",
+        require_isolated_portfolio=True,
+        require_shadow_promotion=False,
+        allow_dynamic_products=True,
+    )
+    executor = CoinbaseAutonomousExecutor(cfg, client=fake)
+    ready = executor.readiness(
+        armed=True,
+        shadow_status={"promotion_ready": False, "last_signal": {"decisions": []}},
+    )
+    assert ready["gates"]["unmanaged_inventory_clear"] is False
+    assert ready["unmanaged_inventory"][0]["asset"] == "XRP"
+    assert ready["ready_for_new_entry"] is False
+
+
+def test_btc_dust_does_not_trigger_unmanaged_inventory_gate(tmp_path, monkeypatch):
+    _set_live_env(monkeypatch)
+    fake = FakeCoinbase()
+    fake.eur = 0.1
+    fake.usdc = 16.46
+    fake.btc = 0.00001107
+    cfg = CoinbaseAutonomousConfig(
+        state_path=str(tmp_path / "btc-dust.json"),
+        portfolio_id="agent-portfolio",
+        require_isolated_portfolio=True,
+        require_shadow_promotion=False,
+        allow_existing_btc_seed=True,
+    )
+    executor = CoinbaseAutonomousExecutor(cfg, client=fake)
+    ready = executor.readiness(
+        armed=True,
+        shadow_status={"promotion_ready": False, "last_signal": {"decisions": []}},
+    )
+    assert ready["gates"]["unmanaged_inventory_clear"] is True
+    assert ready["unmanaged_inventory"] == []
