@@ -263,6 +263,7 @@ class CoinbaseAutonomousExecutor:
         self.client = client or CoinbaseAdvancedMarketData(timeout=5.0)
         self.state = CoinbaseAutonomousState()
         self._product_rule_cache: dict[str, dict[str, str]] = {}
+        self._risk_state_needs_rebase = False
         self._load()
 
     @staticmethod
@@ -286,6 +287,11 @@ class CoinbaseAutonomousExecutor:
         raw = payload.get("state") if isinstance(payload, dict) else None
         if not isinstance(raw, dict):
             return
+        try:
+            risk_model_version = int(payload.get("risk_model_version", 0) or 0)
+        except (TypeError, ValueError):
+            risk_model_version = 0
+        self._risk_state_needs_rebase = risk_model_version < 2
         position = raw.get("position")
         pending = raw.get("pending")
         submission_intent = raw.get("submission_intent")
@@ -336,6 +342,7 @@ class CoinbaseAutonomousExecutor:
             self.config.state_path,
             {
                 "venue": "coinbase_advanced",
+                "risk_model_version": 2,
                 "instrument_scope": "spot_only",
                 "leverage": False,
                 "margin": False,
@@ -600,6 +607,87 @@ class CoinbaseAutonomousExecutor:
                 "capital_flow_adjustment_eur": round(delta, 8),
                 "day_pnl_eur": round(float(self.state.day_pnl_eur), 8),
             })
+
+    def _rebase_legacy_drawdown_state(self, managed_equity: float, now: float) -> None:
+        """One-time migration from pre-cashflow-aware drawdown state.
+
+        Older releases persisted a peak that could include stale funding/state
+        transitions. That historical value is not comparable with the current
+        isolated managed sleeve and can create a fictitious permanent drawdown.
+        Rebase only while flat, using the current cashflow-adjusted day basis.
+        """
+        if not self._risk_state_needs_rebase:
+            return
+        if (
+            self.state.position is not None
+            or self.state.pending is not None
+            or self.state.submission_intent is not None
+        ):
+            return
+
+        managed_equity = max(0.0, float(managed_equity))
+        day_basis = max(0.0, float(self.state.day_start_managed_equity_eur))
+        new_peak = max(managed_equity, day_basis)
+        previous_peak = max(0.0, float(self.state.peak_managed_equity_eur))
+        current_dd = (
+            max(0.0, (new_peak - managed_equity) / new_peak * 100.0)
+            if new_peak > 0 else 0.0
+        )
+
+        self.state.peak_managed_equity_eur = new_peak
+        self.state.current_drawdown_pct = current_dd
+        # The historical max was derived from the incompatible old peak and is
+        # therefore reset to the first valid value under the new risk model.
+        self.state.max_drawdown_pct = current_dd
+        self._risk_state_needs_rebase = False
+        self._audit({
+            "at": now,
+            "action": "DRAWDOWN_STATE_REBASED",
+            "previous_peak_eur": round(previous_peak, 8),
+            "new_peak_eur": round(new_peak, 8),
+            "managed_equity_eur": round(managed_equity, 8),
+            "current_drawdown_pct": round(current_dd, 6),
+            "risk_model_version": 2,
+        })
+        self._save()
+
+    def reconcile_runtime_state(self, *, now: float | None = None) -> dict[str, Any]:
+        """Reconcile persisted cash/risk state without placing any order.
+
+        Used during local startup before deciding whether persisted operator
+        live intent may auto-resume.
+        """
+        ts = float(time.time() if now is None else now)
+        book = self.client.top_of_book(self.config.product_id)
+        bid = float(book.bid_price)
+        _, balances = self._account_nav(bid)
+        self._reconcile_isolated_cash(balances, ts)
+        managed_equity = self._managed_equity(bid)
+        self._roll_day(ts, managed_equity)
+        self._sync_flat_day_risk_basis(managed_equity, ts)
+        self._rebase_legacy_drawdown_state(managed_equity, ts)
+
+        self.state.peak_managed_equity_eur = max(
+            self.state.peak_managed_equity_eur,
+            managed_equity,
+        )
+        current_dd = 0.0
+        if self.state.peak_managed_equity_eur > 0:
+            current_dd = max(
+                0.0,
+                (self.state.peak_managed_equity_eur - managed_equity)
+                / self.state.peak_managed_equity_eur * 100.0,
+            )
+        self.state.current_drawdown_pct = current_dd
+        self.state.max_drawdown_pct = max(self.state.max_drawdown_pct, current_dd)
+        self._save()
+        return {
+            "managed_equity_eur": round(managed_equity, 8),
+            "peak_managed_equity_eur": round(self.state.peak_managed_equity_eur, 8),
+            "current_drawdown_pct": round(current_dd, 6),
+            "max_drawdown_pct": round(self.state.max_drawdown_pct, 6),
+            "risk_model_version": 2,
+        }
 
     def _daily_risk_capacity(self) -> dict[str, float]:
         basis = max(0.0, float(self.state.day_start_managed_equity_eur))
@@ -1920,6 +2008,7 @@ class CoinbaseAutonomousExecutor:
             managed_equity = self._managed_equity(bid)
             self._roll_day(ts, managed_equity)
             self._sync_flat_day_risk_basis(managed_equity, ts)
+            self._rebase_legacy_drawdown_state(managed_equity, ts)
             self.state.peak_managed_equity_eur = max(
                 self.state.peak_managed_equity_eur,
                 managed_equity,
