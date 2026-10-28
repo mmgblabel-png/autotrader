@@ -228,6 +228,7 @@ class CoinbaseAutonomousExecutor:
         )
         self.client = client or CoinbaseAdvancedMarketData(timeout=5.0)
         self.state = CoinbaseAutonomousState()
+        self._product_rule_cache: dict[str, dict[str, str]] = {}
         self._load()
 
     @staticmethod
@@ -323,15 +324,33 @@ class CoinbaseAutonomousExecutor:
         except Exception:
             return f"{max(0.0, float(value)):.{fallback_decimals}f}".rstrip("0").rstrip(".")
 
-    def _product_increments(self, product_id: str) -> tuple[str, str]:
+    def _product_rules(self, product_id: str) -> dict[str, str]:
+        product = str(product_id).upper()
+        cached = self._product_rule_cache.get(product)
+        if cached is not None:
+            return dict(cached)
         try:
-            info = self.client.product_info(product_id)
+            info = self.client.product_info(product)
         except Exception:
-            return "0.00000001", "0.01"
-        return (
-            str(info.get("base_increment") or "0.00000001"),
-            str(info.get("quote_increment") or "0.01"),
-        )
+            rules = {
+                "base_increment": "0.00000001",
+                "quote_increment": "0.01",
+                "base_min_size": "0",
+                "quote_min_size": "0",
+            }
+        else:
+            rules = {
+                "base_increment": str(info.get("base_increment") or "0.00000001"),
+                "quote_increment": str(info.get("quote_increment") or "0.01"),
+                "base_min_size": str(info.get("base_min_size") or "0"),
+                "quote_min_size": str(info.get("quote_min_size") or "0"),
+            }
+        self._product_rule_cache[product] = dict(rules)
+        return rules
+
+    def _product_increments(self, product_id: str) -> tuple[str, str]:
+        rules = self._product_rules(product_id)
+        return rules["base_increment"], rules["quote_increment"]
 
     def _market_learning_adjustment(self, product_id: str) -> tuple[float, dict[str, Any]]:
         row = dict(self.state.market_learning.get(str(product_id).upper(), {}) or {})
@@ -1033,10 +1052,16 @@ class CoinbaseAutonomousExecutor:
         product = str(product_id or self.config.product_id).upper()
         quote = str(quote_currency or product.rsplit("-", 1)[-1]).upper()
         rate = float(quote_to_eur or (1.0 if quote == "EUR" else self._usdc_to_eur()))
-        base_increment, _ = self._product_increments(product)
+        rules = self._product_rules(product)
+        base_increment = rules["base_increment"]
         size_text = self._floor_to_increment(base_size, base_increment, fallback_decimals=8)
-        if float(size_text or 0.0) <= 0:
-            raise CoinbaseTradingError("Rounded sell size is zero", category="invalid_order_size")
+        size_value = float(size_text or 0.0)
+        try:
+            base_min_size = max(0.0, float(rules.get("base_min_size") or 0.0))
+        except (TypeError, ValueError):
+            base_min_size = 0.0
+        if size_value <= 0 or size_value + 1e-12 < base_min_size:
+            raise CoinbaseTradingError("Sell size is below Coinbase product minimum", category="invalid_order_size")
 
         maker_reasons = {"take_profit", "signal_horizon"}
         use_maker = bool(
@@ -1218,9 +1243,22 @@ class CoinbaseAutonomousExecutor:
             if spread_bps > max_spread_bps:
                 continue
 
-            _, quote_increment = self._product_increments(product)
+            rules = self._product_rules(product)
+            quote_increment = rules["quote_increment"]
             quote_text = self._floor_to_increment(quote_size, quote_increment, fallback_decimals=6)
-            if float(quote_text or 0.0) <= 0:
+            quote_value = float(quote_text or 0.0)
+            if quote_value <= 0:
+                continue
+            try:
+                quote_min_size = max(0.0, float(rules.get("quote_min_size") or 0.0))
+                base_min_size = max(0.0, float(rules.get("base_min_size") or 0.0))
+            except (TypeError, ValueError):
+                quote_min_size = 0.0
+                base_min_size = 0.0
+            if quote_value + 1e-12 < quote_min_size:
+                continue
+            estimated_base = quote_value / max(ask, 1e-12)
+            if estimated_base + 1e-12 < base_min_size:
                 continue
             if self.config.maker_first:
                 limit_text = format(book.bid_price, "f")
