@@ -79,7 +79,7 @@ class FakeMarket:
         )
 
 
-def test_opportunity_engine_scans_full_universe_but_only_fundable_quotes_trade():
+def test_opportunity_engine_scans_full_universe_while_funding_is_enforced_by_executor():
     market = FakeMarket()
     engine = CoinbaseOpportunityEngine(
         {
@@ -107,12 +107,14 @@ def test_opportunity_engine_scans_full_universe_but_only_fundable_quotes_trade()
     assert status is not None
     assert status["scanned_markets"] == 3
     assert status["tradable_markets"] == 3
+    assert status["eligible_scan_markets"] == 3
     assert status["fundable_markets"] == 2
     assert status["fundable_quotes"] == ["EUR"]
     decisions = status["last_signal"]["decisions"]
     assert decisions
-    assert all(row["product_id"].endswith("-EUR") for row in decisions)
-    assert not any(row["product_id"] == "SOL-USDC" for row in decisions)
+    # Intelligence stays quote-independent; the executor later enforces
+    # whether the current portfolio can actually fund a route.
+    assert any(row["product_id"] == "SOL-USDC" for row in decisions)
     assert status["daily_trade_target"] == 10
     assert status["daily_profit_target_eur"] == 1.0
     assert status["target_policy"] == "aggregate_realized_pnl_target_never_force_negative_edge"
@@ -248,3 +250,66 @@ def test_opportunity_rotation_eventually_evaluates_full_fundable_universe():
 
     assert len(set(market.seen_books)) == 80
     assert engine.status()["evaluated_markets_this_tick"] == 40
+
+
+def test_opportunity_engine_keeps_scanning_when_quote_cash_is_fully_committed():
+    class HeldCashMarket(FakeMarket):
+        def account_balances(self, portfolio_id=None):
+            return {
+                "assets": [
+                    {"currency": "USDC", "available": "0", "hold": "20", "total": "20"},
+                ]
+            }
+
+        def list_spot_products(self):
+            return [
+                {
+                    "product_id": "SOL-USDC", "base": "SOL", "quote": "USDC",
+                    "tradable": True, "price": "90", "volume_24h": "100000",
+                    "price_change_24h_pct": "3.0",
+                },
+                {
+                    "product_id": "XRP-USDC", "base": "XRP", "quote": "USDC",
+                    "tradable": True, "price": "1.1", "volume_24h": "1000000",
+                    "price_change_24h_pct": "2.0",
+                },
+            ]
+
+        def top_of_book(self, product_id):
+            base = {"SOL-USDC": 90.0, "XRP-USDC": 1.1}[product_id]
+            mid = base * (1.0 + self.step * 0.001)
+            spread = mid * 0.0002
+            return CoinbaseTopOfBook(
+                product_id=product_id,
+                bid_price=Decimal(str(mid - spread / 2)),
+                bid_size=Decimal("1000"),
+                ask_price=Decimal(str(mid + spread / 2)),
+                ask_size=Decimal("1000"),
+            )
+
+    market = HeldCashMarket()
+    realtime = FakeRealtime()
+    engine = CoinbaseOpportunityEngine(
+        {
+            "candidate_limit": 10,
+            "realtime_product_limit": 10,
+            "min_samples": 2,
+            "min_recent_momentum_bps": 1,
+            "min_24h_quote_volume": 1000,
+            "quote_currencies": ["USDC"],
+        },
+        market_data=market,
+        portfolio_id="agent-portfolio",
+        realtime_orderflow=realtime,
+    )
+
+    status = None
+    for i in range(3):
+        market.step = i
+        status = engine.tick(now=1000.0 + i * 20.0)
+
+    assert status["fundable_markets"] == 0
+    assert status["eligible_scan_markets"] == 2
+    assert status["evaluated_markets_this_tick"] == 2
+    assert realtime.products
+    assert status["last_signal"]["decisions"]
