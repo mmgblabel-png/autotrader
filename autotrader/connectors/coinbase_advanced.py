@@ -754,6 +754,8 @@ class CoinbaseAdvancedMarketData:
                     "price_change_24h_pct": row.get("price_percentage_change_24h"),
                     "base_increment": row.get("base_increment"),
                     "quote_increment": row.get("quote_increment"),
+                    "base_min_size": row.get("base_min_size"),
+                    "quote_min_size": row.get("quote_min_size"),
                 })
 
             next_cursor = ""
