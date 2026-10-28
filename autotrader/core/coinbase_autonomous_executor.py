@@ -215,6 +215,7 @@ class CoinbaseAutonomousState:
     day_pnl_eur: float = 0.0
     day_settled_trades: int = 0
     peak_managed_equity_eur: float = 0.0
+    current_drawdown_pct: float = 0.0
     max_drawdown_pct: float = 0.0
     seen_windows: list[str] = None
     order_audit: list[dict[str, Any]] = None
@@ -294,7 +295,7 @@ class CoinbaseAutonomousExecutor:
         for key in (
             "managed_cash_eur", "live_orders_sent", "settled_trades",
             "realized_pnl_eur", "day_key", "day_start_managed_equity_eur",
-            "day_pnl_eur", "day_settled_trades", "peak_managed_equity_eur", "max_drawdown_pct",
+            "day_pnl_eur", "day_settled_trades", "peak_managed_equity_eur", "current_drawdown_pct", "max_drawdown_pct",
             "seen_windows", "order_audit", "market_learning", "entry_diagnostics", "last_action", "last_error",
         ):
             if key in raw:
@@ -1624,18 +1625,26 @@ class CoinbaseAutonomousExecutor:
             ready["managed_cash_eur"] = round(self.state.managed_cash_eur, 8)
             managed_equity = self._managed_equity(bid)
             self._roll_day(ts, managed_equity)
-            self.state.peak_managed_equity_eur = max(self.state.peak_managed_equity_eur, managed_equity)
+            self.state.peak_managed_equity_eur = max(
+                self.state.peak_managed_equity_eur,
+                managed_equity,
+            )
+            current_dd = 0.0
             if self.state.peak_managed_equity_eur > 0:
-                dd = max(
+                current_dd = max(
                     0.0,
                     (self.state.peak_managed_equity_eur - managed_equity)
                     / self.state.peak_managed_equity_eur * 100.0,
                 )
-                self.state.max_drawdown_pct = max(self.state.max_drawdown_pct, dd)
+            self.state.current_drawdown_pct = current_dd
+            self.state.max_drawdown_pct = max(self.state.max_drawdown_pct, current_dd)
 
             day_limit = self.state.day_start_managed_equity_eur * self.config.max_daily_loss_pct / 100.0
             day_stop = self.state.day_start_managed_equity_eur > 0 and self.state.day_pnl_eur <= -day_limit
-            drawdown_stop = self.state.max_drawdown_pct >= self.config.max_drawdown_pct
+            # Historical max drawdown is analytics only. Live execution is
+            # blocked by the CURRENT drawdown, so a recovered portfolio does
+            # not remain permanently disabled forever.
+            drawdown_stop = current_dd >= self.config.max_drawdown_pct
             action: dict[str, Any] | None = None
 
             # A tick that started with an unknown submit outcome is reconciliation-only.
@@ -1954,6 +1963,7 @@ class CoinbaseAutonomousExecutor:
                 "high_risk_fallback_enabled": self.config.high_risk_fallback,
                 "policy": "aggregate_realized_pnl_target_high_risk_fallback_no_negative_edge",
             },
+            "current_drawdown_pct": round(self.state.current_drawdown_pct, 6),
             "max_drawdown_pct": round(self.state.max_drawdown_pct, 6),
             "daily_loss_stop": day_stop,
             "drawdown_stop": drawdown_stop,
