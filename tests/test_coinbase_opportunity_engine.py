@@ -191,3 +191,60 @@ def test_opportunity_engine_uses_realtime_orderflow_edge(tmp_path):
     decisions = status["last_signal"]["decisions"]
     assert decisions
     assert any(row["reason"] == "multi_market_positive_momentum" for row in decisions)
+
+
+def test_opportunity_rotation_eventually_evaluates_full_fundable_universe():
+    class ManyMarket:
+        def __init__(self):
+            self.seen_books = []
+
+        def account_balances(self, portfolio_id=None):
+            return {
+                "assets": [
+                    {"currency": "USDC", "available": "20", "hold": "0", "total": "20"},
+                ]
+            }
+
+        def list_spot_products(self):
+            rows = []
+            for i in range(80):
+                rows.append({
+                    "product_id": f"C{i}-USDC",
+                    "base": f"C{i}",
+                    "quote": "USDC",
+                    "tradable": True,
+                    "price": "1",
+                    "volume_24h": "100000",
+                    "price_change_24h_pct": str(8.0 - i * 0.01),
+                })
+            return rows
+
+        def top_of_book(self, product_id):
+            self.seen_books.append(product_id)
+            return CoinbaseTopOfBook(
+                product_id=product_id,
+                bid_price=Decimal("1.0000"),
+                bid_size=Decimal("1000"),
+                ask_price=Decimal("1.0005"),
+                ask_size=Decimal("1000"),
+            )
+
+    market = ManyMarket()
+    engine = CoinbaseOpportunityEngine(
+        {
+            "candidate_limit": 40,
+            "realtime_product_limit": 10,
+            "min_samples": 2,
+            "min_recent_momentum_bps": 1000,
+            "min_24h_quote_volume": 1000,
+            "quote_currencies": ["USDC"],
+        },
+        market_data=market,
+        portfolio_id="agent-portfolio",
+    )
+
+    for i in range(5):
+        engine.tick(now=1000.0 + i * 20.0)
+
+    assert len(set(market.seen_books)) == 80
+    assert engine.status()["evaluated_markets_this_tick"] == 40
