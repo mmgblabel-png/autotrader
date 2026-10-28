@@ -1540,3 +1540,34 @@ def test_remaining_daily_loss_budget_caps_full_capacity_entry(tmp_path, monkeypa
     assert status["readiness"]["max_single_trade_eur"] == status["readiness"]["daily_risk_max_trade_eur"]
     assert status["live_orders_sent"] == 1
     assert float(fake.created[-1]["quote_size"]) <= status["readiness"]["daily_risk_max_trade_eur"] + 0.01
+
+
+def test_legacy_drawdown_peak_is_rebased_to_cashflow_aware_basis(tmp_path, monkeypatch):
+    _set_live_env(monkeypatch)
+    fake = FakeCoinbase()
+    cfg = CoinbaseAutonomousConfig(
+        state_path=str(tmp_path / "legacy-drawdown.json"),
+        portfolio_id="agent-portfolio",
+        require_isolated_portfolio=True,
+        require_shadow_promotion=False,
+        max_drawdown_pct=10.0,
+    )
+    executor = CoinbaseAutonomousExecutor(cfg, client=fake)
+
+    executor.state.day_key = "2026-10-28"
+    executor.state.day_start_managed_equity_eur = 14.8750221
+    executor.state.day_pnl_eur = -0.37551788
+    executor.state.managed_cash_eur = 14.49950422
+    executor.state.peak_managed_equity_eur = 23.866
+    executor.state.current_drawdown_pct = 39.249543
+    executor.state.max_drawdown_pct = 39.249543
+    executor._risk_state_needs_rebase = True
+
+    executor._rebase_legacy_drawdown_state(14.49950422, 1000.0)
+
+    assert executor._risk_state_needs_rebase is False
+    assert executor.state.peak_managed_equity_eur == pytest.approx(14.8750221)
+    assert executor.state.current_drawdown_pct == pytest.approx(2.5244862, rel=1e-6)
+    assert executor.state.max_drawdown_pct == pytest.approx(2.5244862, rel=1e-6)
+    assert executor.state.current_drawdown_pct < cfg.max_drawdown_pct
+    assert executor.state.order_audit[-1]["action"] == "DRAWDOWN_STATE_REBASED"
