@@ -1512,7 +1512,9 @@ def test_remaining_daily_loss_budget_caps_full_capacity_entry(tmp_path, monkeypa
         max_spread_bps=20.0,
     )
     executor = CoinbaseAutonomousExecutor(cfg, client=fake)
-    executor.state.day_key = "2026-10-28"
+    # Keep the synthetic timestamp and day key aligned so _roll_day()
+    # does not intentionally reset the scenario under test.
+    executor.state.day_key = "1970-01-01"
     executor.state.day_start_managed_equity_eur = 15.0
     executor.state.day_pnl_eur = -0.35
     executor.state.managed_cash_eur = 15.0
