@@ -1,3 +1,4 @@
+import pytest
 import os
 from decimal import Decimal
 
@@ -1448,3 +1449,92 @@ def test_btc_dust_does_not_trigger_unmanaged_inventory_gate(tmp_path, monkeypatc
     )
     assert ready["gates"]["unmanaged_inventory_clear"] is True
     assert ready["unmanaged_inventory"] == []
+
+
+def test_late_funding_rebases_daily_loss_basis_without_erasing_realized_pnl(tmp_path, monkeypatch):
+    _set_live_env(monkeypatch)
+    fake = FakeCoinbase()
+    fake.eur = 0.108337975214
+    fake.usdc = 16.0418752
+    fake.btc = 0.0
+    cfg = CoinbaseAutonomousConfig(
+        state_path=str(tmp_path / "cashflow-day-basis.json"),
+        portfolio_id="agent-portfolio",
+        require_isolated_portfolio=True,
+        require_shadow_promotion=False,
+        max_daily_loss_pct=3.0,
+    )
+    executor = CoinbaseAutonomousExecutor(cfg, client=fake)
+    executor.state.day_key = "2026-10-28"
+    executor.state.day_start_managed_equity_eur = 11.0
+    executor.state.day_pnl_eur = -0.37551788
+    executor.state.managed_cash_eur = 14.52
+
+    managed_equity = 14.525
+    before = executor._global_gates(armed=True, shadow_status={"promotion_ready": False})
+    assert before["daily_loss_stop_off"] is False
+
+    executor._sync_flat_day_risk_basis(managed_equity, 1000.0)
+    after = executor._global_gates(armed=True, shadow_status={"promotion_ready": False})
+
+    assert executor.state.day_pnl_eur == -0.37551788
+    assert executor.state.day_start_managed_equity_eur == pytest.approx(
+        managed_equity - executor.state.day_pnl_eur
+    )
+    assert after["daily_loss_stop_off"] is True
+    assert any(
+        row.get("action") == "DAY_RISK_BASIS_REBASED"
+        for row in executor.state.order_audit
+    )
+
+
+def test_remaining_daily_loss_budget_caps_full_capacity_entry(tmp_path, monkeypatch):
+    _set_live_env(monkeypatch)
+    fake = FakeCoinbase()
+    fake.eur = 15.0
+    fake.usdc = 0.0
+    fake.btc = 0.0
+    cfg = CoinbaseAutonomousConfig(
+        state_path=str(tmp_path / "daily-risk-cap.json"),
+        portfolio_id="agent-portfolio",
+        require_isolated_portfolio=True,
+        require_shadow_promotion=False,
+        full_capacity=True,
+        allow_dynamic_products=True,
+        maker_first=True,
+        managed_capital_pct=100.0,
+        cash_reserve_pct=0.0,
+        max_single_trade_pct=100.0,
+        max_daily_loss_pct=3.0,
+        stop_loss_pct=1.0,
+        max_taker_entry_fee_bps=60.0,
+        max_taker_entry_slippage_bps=35.0,
+        max_spread_bps=20.0,
+    )
+    executor = CoinbaseAutonomousExecutor(cfg, client=fake)
+    executor.state.day_key = "2026-10-28"
+    executor.state.day_start_managed_equity_eur = 15.0
+    executor.state.day_pnl_eur = -0.35
+    executor.state.managed_cash_eur = 15.0
+
+    status = executor.tick(
+        armed=True,
+        now=1000.0,
+        shadow_status={
+            "promotion_ready": False,
+            "last_signal": {
+                "decisions": [{
+                    **_long_decision("XRP-EUR:300:risk-cap", 120),
+                    "product_id": "XRP-EUR",
+                    "risk_tier": "normal",
+                    "forecast_move_bps": 500.0,
+                }]
+            },
+        },
+    )
+
+    assert status["readiness"]["hard_max_single_trade_eur"] == 15.0
+    assert status["readiness"]["daily_risk_max_trade_eur"] < 15.0
+    assert status["readiness"]["max_single_trade_eur"] == status["readiness"]["daily_risk_max_trade_eur"]
+    assert status["live_orders_sent"] == 1
+    assert float(fake.created[-1]["quote_size"]) <= status["readiness"]["daily_risk_max_trade_eur"] + 0.01
