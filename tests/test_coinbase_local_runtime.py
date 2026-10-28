@@ -54,6 +54,9 @@ def test_coinbase_local_config_is_risktrader_and_portfolio_isolated():
     assert auto["allow_dynamic_products"] is True
     assert auto["maker_first"] is True
     assert auto["maker_first_exit"] is True
+    assert auto["maker_entry_market_fallback"] is True
+    assert auto["max_taker_entry_fee_bps"] == 60.0
+    assert auto["max_taker_entry_slippage_bps"] == 35.0
     assert auto["assumed_exit_fee_bps"] == 30.0
     assert auto["daily_trade_target"] == 10
     assert auto["daily_profit_target_eur"] == 1.0
@@ -86,3 +89,8 @@ def test_coinbase_local_config_is_risktrader_and_portfolio_isolated():
 def test_real_local_env_is_gitignored():
     ignore = Path(".gitignore").read_text("utf-8")
     assert ".env.coinbase.local" in ignore
+
+
+def test_coinbase_local_compose_enables_existing_btc_seed():
+    text = Path("docker-compose.coinbase.local.yml").read_text(encoding="utf-8")
+    assert 'COINBASE_ALLOW_EXISTING_BTC_SEED: "true"' in text
