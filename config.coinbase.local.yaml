@@ -104,7 +104,10 @@ coinbase_autonomous_execution:
   # Multi-market entries rest post-only at the bid first to target maker fees.
   maker_first: true
   maker_first_exit: true
+  maker_entry_market_fallback: true
   maker_order_age_seconds: 25
+  max_taker_entry_fee_bps: 60.0
+  max_taker_entry_slippage_bps: 35.0
 
   # Activity/profit objectives are cumulative realized-day targets.
   daily_trade_target: 10
