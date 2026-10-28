@@ -63,6 +63,8 @@ class CoinbaseAutonomousConfig:
     maker_first_exit: bool = True
     maker_entry_market_fallback: bool = True
     maker_order_age_seconds: float = 25.0
+    submission_retry_after_seconds: float = 20.0
+    submission_abandon_after_seconds: float = 90.0
     max_taker_entry_fee_bps: float = 60.0
     max_taker_entry_slippage_bps: float = 35.0
     daily_trade_target: int = 10
@@ -120,6 +122,12 @@ class CoinbaseAutonomousConfig:
             maker_first_exit=bool(cfg.get("maker_first_exit", True)),
             maker_entry_market_fallback=bool(cfg.get("maker_entry_market_fallback", True)),
             maker_order_age_seconds=max(5.0, float(cfg.get("maker_order_age_seconds", 25.0))),
+            submission_retry_after_seconds=max(
+                5.0, float(cfg.get("submission_retry_after_seconds", 20.0))
+            ),
+            submission_abandon_after_seconds=max(
+                30.0, float(cfg.get("submission_abandon_after_seconds", 90.0))
+            ),
             max_taker_entry_fee_bps=max(0.0, float(cfg.get("max_taker_entry_fee_bps", 60.0))),
             max_taker_entry_slippage_bps=max(0.0, float(cfg.get("max_taker_entry_slippage_bps", 35.0))),
             daily_trade_target=max(1, int(cfg.get("daily_trade_target", 10))),
@@ -663,7 +671,23 @@ class CoinbaseAutonomousExecutor:
                 self._save()
                 return
         age = max(0.0, now - float(intent.created_at))
-        if age < 30.0 or intent.retry_count >= 1:
+        if intent.retry_count >= 1:
+            if age >= self.config.submission_abandon_after_seconds:
+                self.state.last_action = {
+                    "at": now,
+                    "action": "SUBMISSION_INTENT_ABANDONED",
+                    "client_order_id": intent.client_order_id,
+                    "product_id": intent.product_id,
+                    "side": intent.side,
+                    "purpose": intent.purpose,
+                    "age_seconds": round(age, 3),
+                    "reason": "not_found_after_idempotent_retry",
+                }
+                self._audit(dict(self.state.last_action))
+                self.state.submission_intent = None
+                self._save()
+            return
+        if age < self.config.submission_retry_after_seconds:
             return
         # One retry uses the exact same client_order_id. Coinbase documents
         # client_order_id as the duplicate-order safeguard; never generate a
@@ -2005,6 +2029,8 @@ class CoinbaseAutonomousExecutor:
                 "maker_first_exits": self.config.maker_first_exit,
                 "maker_entry_market_fallback": self.config.maker_entry_market_fallback,
                 "maker_order_age_seconds": self.config.maker_order_age_seconds,
+                "submission_retry_after_seconds": self.config.submission_retry_after_seconds,
+                "submission_abandon_after_seconds": self.config.submission_abandon_after_seconds,
                 "max_taker_entry_fee_bps": self.config.max_taker_entry_fee_bps,
                 "max_taker_entry_slippage_bps": self.config.max_taker_entry_slippage_bps,
                 "high_risk_fallback": self.config.high_risk_fallback,
