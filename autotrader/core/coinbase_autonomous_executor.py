@@ -2205,6 +2205,7 @@ class CoinbaseAutonomousExecutor:
         day_stop: bool | None = None,
         drawdown_stop: bool | None = None,
     ) -> dict[str, Any]:
+        daily_risk = self._daily_risk_capacity()
         return {
             "venue": "coinbase_advanced",
             "mode": "coinbase_risktrader",
@@ -2253,6 +2254,19 @@ class CoinbaseAutonomousExecutor:
                 "profit_target_met": bool(
                     self.config.daily_profit_target_eur > 0
                     and self.state.day_pnl_eur >= self.config.daily_profit_target_eur
+                ),
+                "risk_basis_eur": round(self.state.day_start_managed_equity_eur, 8),
+                "daily_loss_limit_eur": round(
+                    float(daily_risk["daily_loss_limit_eur"]), 8
+                ),
+                "daily_loss_remaining_eur": round(
+                    float(daily_risk["daily_loss_remaining_eur"]), 8
+                ) if math.isfinite(float(daily_risk["daily_loss_remaining_eur"])) else None,
+                "daily_risk_max_trade_eur": round(
+                    float(daily_risk["daily_risk_max_trade_eur"]), 8
+                ) if math.isfinite(float(daily_risk["daily_risk_max_trade_eur"])) else None,
+                "risk_loss_bps_per_trade": round(
+                    float(daily_risk["risk_loss_bps_per_trade"]), 4
                 ),
                 "stop_after_profit_target": self.config.stop_after_daily_profit_target,
                 "continuous_after_target": not self.config.stop_after_daily_profit_target,
