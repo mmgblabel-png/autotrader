@@ -117,6 +117,14 @@ button,.btn{border:0;border-radius:10px;padding:11px 15px;font-weight:850;cursor
   <div class="card"><div class="label">Realtime edge</div><div id="orderflowedge" class="value">—</div><div id="orderflowsub" class="sub">book / trade flow</div></div>
 </section>
 
+<div class="section-title"><h2>Entry diagnostics</h2><div class="line"></div><span class="badge">LIVE ROUTER</span></div>
+<section class="grid4">
+  <div class="card"><div class="label">LONG signals</div><div id="entrysignals" class="value">—</div><div id="entryroutes" class="sub">—</div></div>
+  <div class="card"><div class="label">Best net edge</div><div id="entryedge" class="value">—</div><div id="entryedgeproduct" class="sub">—</div></div>
+  <div class="card"><div class="label">Last reject</div><div id="entryreject" class="value">—</div><div id="entryrejectsub" class="sub">—</div></div>
+  <div class="card"><div class="label">Execution mode</div><div id="entrymode" class="value">—</div><div id="entryselected" class="sub">—</div></div>
+</section>
+
 <div class="section-title"><h2>Coinbase execution audit</h2><div class="line"></div><span class="badge">PERSISTENT</span></div>
 <section class="card">
   <div class="table-wrap"><table class="table"><thead><tr><th>Tijd</th><th>Actie</th><th>Product</th><th>Side</th><th>Notional / size</th><th>Status / reason</th></tr></thead><tbody id="auditrows"><tr><td colspan="6" class="sub">Audit laden…</td></tr></tbody></table></div>
@@ -153,7 +161,7 @@ function auditRows(rows){
   }).join("")
 }
 function gateChips(failed){
-  const known=["enabled","execution_mode_live","live_approved","adapter_installed","coinbase_live_enabled","emergency_stop_off","confirmation","runtime_armed","credentials_compatible","authenticated","isolated_portfolio_configured","shadow_promotion_ready"];
+  const known=["enabled","execution_mode_live","live_execution_approved","coinbase_adapter_installed","coinbase_live_trading","emergency_stop_off","confirmation_present","runtime_armed","credentials_compatible","authenticated","isolated_portfolio_configured","shadow_promotion_ready"];
   const f=new Set(failed||[]);return known.map(g=>'<span class="gate '+(f.has(g)?'fail':'pass')+'">'+(f.has(g)?'WAIT ':'OK ')+g+'</span>').join("")
 }
 async function refresh(){
@@ -168,7 +176,7 @@ async function refresh(){
     document.getElementById("statusdot").className="dot "+(armed?"":"off");setText("topstatus",armed?"COINBASE LIVE":"COINBASE OFF");
     document.getElementById("livebtn").disabled=armed||!r.ready_to_arm;document.getElementById("stopbtn").classList.toggle("hidden",!armed);
     const targets=a.daily_targets||{}; const dayTrades=Number(targets.trades_completed||0), tradeTarget=Number(targets.trade_target||10);
-    setText("evidence",dayTrades+" / "+tradeTarget);setText("evidencesub","afgeronde trades vandaag · positive-edge only");
+    setText("evidence",dayTrades+" / "+tradeTarget);setText("evidencesub","afgeronde trades vandaag · normal + bounded exploration");
     const settled=Number(s.settled_trades||0), min=Number((s.promotion_policy||{}).min_settled_trades||30);
     setText("maxtrade",euro(rd.max_single_trade_eur||0));setText("reserve",euro(rd.required_cash_reserve_eur||0));
     setText("orderssent",euro(targets.profit_eur||0)+" / "+euro(targets.profit_target_eur||1));setText("legacyorders","nog "+euro(targets.profit_remaining_eur||0)+" naar dagtarget · geen winstgarantie");
@@ -195,6 +203,16 @@ async function refresh(){
     setText("topreason",top.orderflow_fresh?"realtime microstructure":"REST/momentum");
     setText("orderflowedge",top.product_id?(num(top.realtime_edge_bps||0)+" bps"):"—");
     setText("orderflowsub",top.product_id?("book "+num(top.book_imbalance||0)+" · flow "+num(top.trade_flow_imbalance||0)+" · velocity "+num(top.trade_velocity_ratio||1)+"x"):"geen candidate");
+    const ed=a.entry_diagnostics||{}, lr=ed.last_reject||{};
+    setText("entrysignals",ed.decisions_seen??0);
+    setText("entryroutes",(ed.routes_considered??0)+" routes · "+(ed.accepted_routes??0)+" accepted");
+    setText("entryedge",ed.best_after_cost_edge_bps==null?"—":num(ed.best_after_cost_edge_bps)+" bps");
+    setText("entryedgeproduct",ed.best_after_cost_product||"geen route gemeten");
+    setText("entryreject",lr.reason||"GEEN");
+    setText("entryrejectsub",lr.product_id?lr.product_id+(lr.after_cost_edge_bps!=null?" · "+num(lr.after_cost_edge_bps)+" bps":""):"geen recente reject");
+    setText("entrymode",ed.exploration_selected?"EXPLORATION":(ed.selected_product?"NORMAL/HIGH":"SCANNING"));
+    document.getElementById("entrymode").className="value "+(ed.exploration_selected?"blue":(ed.selected_product?"green":""));
+    setText("entryselected",ed.selected_product?ed.selected_product+" · "+(ed.selected_risk_tier||"normal"):(ed.exploration_attempted?"exploration onderzocht":"wacht op signal"));
     document.getElementById("auditrows").innerHTML=auditRows(a.order_audit||[]);
     const ready=!!r.execution_ready_now, promote=!!s.promotion_ready;
     document.getElementById("readybadge").className="badge "+(ready?"ok":"warn");setText("readybadge",ready?"EXECUTION READY":"GATED");
