@@ -554,6 +554,17 @@ class CoinbaseAutonomousExecutor:
             if self.config.portfolio_id
             else self.client.authenticated_accounts_probe()
         )
+        day_limit = (
+            self.state.day_start_managed_equity_eur
+            * self.config.max_daily_loss_pct / 100.0
+        )
+        day_stop = (
+            self.state.day_start_managed_equity_eur > 0
+            and self.state.day_pnl_eur <= -day_limit
+        )
+        drawdown_stop = (
+            self.state.current_drawdown_pct >= self.config.max_drawdown_pct
+        )
         return {
             "enabled": self.config.enabled,
             "execution_mode_live": os.getenv("EXECUTION_MODE", "paper").strip().lower() == "live",
@@ -570,6 +581,8 @@ class CoinbaseAutonomousExecutor:
                 if self.config.require_isolated_portfolio
                 else True
             ),
+            "daily_loss_stop_off": not day_stop,
+            "drawdown_stop_off": not drawdown_stop,
             "shadow_promotion_ready": (
                 bool(shadow_status.get("promotion_ready"))
                 if self.config.require_shadow_promotion else True
