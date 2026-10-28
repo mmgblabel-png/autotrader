@@ -119,7 +119,7 @@ coinbase_autonomous_execution:
   exploration_enabled: true
   exploration_trade_fraction_pct: 20.0
   exploration_min_forecast_bps: 20.0
-  exploration_max_negative_edge_bps: 60.0
+  exploration_max_negative_edge_bps: 80.0
   exploration_max_spread_bps: 20.0
   day_timezone: Europe/Amsterdam
 
