@@ -61,7 +61,10 @@ class CoinbaseAutonomousConfig:
     require_shadow_promotion: bool = True
     maker_first: bool = False
     maker_first_exit: bool = True
+    maker_entry_market_fallback: bool = True
     maker_order_age_seconds: float = 25.0
+    max_taker_entry_fee_bps: float = 60.0
+    max_taker_entry_slippage_bps: float = 35.0
     daily_trade_target: int = 10
     daily_profit_target_eur: float = 1.0
     stop_after_daily_profit_target: bool = True
@@ -110,7 +113,10 @@ class CoinbaseAutonomousConfig:
             require_shadow_promotion=bool(cfg.get("require_shadow_promotion", True)),
             maker_first=bool(cfg.get("maker_first", False)),
             maker_first_exit=bool(cfg.get("maker_first_exit", True)),
+            maker_entry_market_fallback=bool(cfg.get("maker_entry_market_fallback", True)),
             maker_order_age_seconds=max(5.0, float(cfg.get("maker_order_age_seconds", 25.0))),
+            max_taker_entry_fee_bps=max(0.0, float(cfg.get("max_taker_entry_fee_bps", 60.0))),
+            max_taker_entry_slippage_bps=max(0.0, float(cfg.get("max_taker_entry_slippage_bps", 35.0))),
             daily_trade_target=max(1, int(cfg.get("daily_trade_target", 10))),
             daily_profit_target_eur=max(0.0, float(cfg.get("daily_profit_target_eur", 1.0))),
             stop_after_daily_profit_target=bool(cfg.get("stop_after_daily_profit_target", True)),
@@ -153,6 +159,8 @@ class PendingOrder:
     quote_size: str = ""
     base_size: str = ""
     market_fallback_used: bool = False
+    forecast_move_bps: float = 0.0
+    risk_tier: str = "normal"
 
 @dataclass
 class SubmissionIntent:
@@ -171,6 +179,8 @@ class SubmissionIntent:
     order_type: str = "market"
     limit_price: str = ""
     post_only: bool = False
+    forecast_move_bps: float = 0.0
+    risk_tier: str = "normal"
 
 
 @dataclass
@@ -581,6 +591,8 @@ class CoinbaseAutonomousExecutor:
                     limit_price=intent.limit_price,
                     quote_size=intent.quote_size,
                     base_size=intent.base_size,
+                    forecast_move_bps=intent.forecast_move_bps,
+                    risk_tier=intent.risk_tier,
                 )
                 self.state.submission_intent = None
                 self.state.live_orders_sent += 1
@@ -639,6 +651,8 @@ class CoinbaseAutonomousExecutor:
             limit_price=intent.limit_price,
             quote_size=intent.quote_size,
             base_size=intent.base_size,
+            forecast_move_bps=intent.forecast_move_bps,
+            risk_tier=intent.risk_tier,
         )
         self.state.submission_intent = None
         self.state.live_orders_sent += 1
@@ -767,6 +781,122 @@ class CoinbaseAutonomousExecutor:
                         self._audit(dict(self.state.last_action))
                         self._save()
                         return
+
+                    if (
+                        pending.purpose == "entry"
+                        and pending.side == "BUY"
+                        and pending.quote_size
+                        and self.config.maker_entry_market_fallback
+                        and not pending.market_fallback_used
+                        and (not pending.window_end or now < pending.window_end)
+                    ):
+                        book = self.client.top_of_book(pending.product_id)
+                        bid = float(book.bid_price)
+                        ask = float(book.ask_price)
+                        mid = (bid + ask) / 2.0 if bid > 0 and ask > 0 else 0.0
+                        spread_bps = (
+                            (ask - bid) / mid * 10_000.0
+                            if mid > 0 and ask >= bid else math.inf
+                        )
+                        preview = self.client.preview_spot_market_order(
+                            product_id=pending.product_id,
+                            side="BUY",
+                            quote_size=pending.quote_size,
+                            portfolio_id=self.config.portfolio_id or None,
+                        )
+                        notional = max(0.0, float(pending.quote_size or 0.0))
+                        fee_bps, slip_bps = self._preview_costs(preview, ask, notional)
+                        min_edge = (
+                            self.config.high_risk_min_live_net_edge_bps
+                            if str(pending.risk_tier).lower() == "high"
+                            else self.config.min_live_net_edge_bps
+                        )
+                        after_cost_edge = (
+                            float(pending.forecast_move_bps or 0.0)
+                            - fee_bps
+                            - slip_bps
+                            - self.config.assumed_exit_fee_bps
+                            - spread_bps
+                        )
+                        if (
+                            fee_bps <= self.config.max_taker_entry_fee_bps
+                            and slip_bps <= self.config.max_taker_entry_slippage_bps
+                            and after_cost_edge >= min_edge
+                        ):
+                            fallback_client_id = str(uuid.uuid4())
+                            self.state.submission_intent = SubmissionIntent(
+                                client_order_id=fallback_client_id,
+                                side="BUY",
+                                purpose="entry",
+                                created_at=now,
+                                quote_size=pending.quote_size,
+                                window_key=pending.window_key,
+                                window_end=pending.window_end,
+                                product_id=pending.product_id,
+                                quote_currency=pending.quote_currency,
+                                quote_to_eur=pending.quote_to_eur,
+                                order_type="market",
+                                forecast_move_bps=pending.forecast_move_bps,
+                                risk_tier=pending.risk_tier,
+                            )
+                            self.state.pending = None
+                            self._save()
+                            response = self.client.create_spot_market_order(
+                                client_order_id=fallback_client_id,
+                                product_id=pending.product_id,
+                                side="BUY",
+                                quote_size=pending.quote_size,
+                                portfolio_id=self.config.portfolio_id or None,
+                                preview_id=str(preview.get("preview_id") or "") or None,
+                            )
+                            fallback_order_id = self._order_id(response)
+                            self.state.live_orders_sent += 1
+                            self.state.pending = PendingOrder(
+                                order_id=fallback_order_id,
+                                side="BUY",
+                                purpose="entry",
+                                client_order_id=fallback_client_id,
+                                submitted_at=now,
+                                window_key=pending.window_key,
+                                window_end=pending.window_end,
+                                product_id=pending.product_id,
+                                quote_currency=pending.quote_currency,
+                                quote_to_eur=pending.quote_to_eur,
+                                order_type="market",
+                                quote_size=pending.quote_size,
+                                market_fallback_used=True,
+                                forecast_move_bps=pending.forecast_move_bps,
+                                risk_tier=pending.risk_tier,
+                            )
+                            self.state.submission_intent = None
+                            self.state.last_action = {
+                                "at": now,
+                                "action": "ENTRY_MARKET_FALLBACK_SUBMITTED",
+                                "order_id": fallback_order_id,
+                                "client_order_id": fallback_client_id,
+                                "product_id": pending.product_id,
+                                "side": "BUY",
+                                "purpose": "entry",
+                                "quote_size": pending.quote_size,
+                                "forecast_move_bps": pending.forecast_move_bps,
+                                "after_cost_edge_bps": round(after_cost_edge, 4),
+                                "preview_fee_bps": round(fee_bps, 4),
+                                "preview_slippage_bps": round(slip_bps, 4),
+                                "risk_tier": pending.risk_tier,
+                            }
+                            self._audit(dict(self.state.last_action))
+                            self._save()
+                            return
+                        self._audit({
+                            "at": now,
+                            "action": "ENTRY_MARKET_FALLBACK_SKIPPED",
+                            "product_id": pending.product_id,
+                            "forecast_move_bps": pending.forecast_move_bps,
+                            "after_cost_edge_bps": round(after_cost_edge, 4),
+                            "preview_fee_bps": round(fee_bps, 4),
+                            "preview_slippage_bps": round(slip_bps, 4),
+                            "risk_tier": pending.risk_tier,
+                        })
 
                     if pending.window_key and pending.window_end and now >= pending.window_end:
                         self.state.seen_windows.append(pending.window_key)
@@ -1181,6 +1311,8 @@ class CoinbaseAutonomousExecutor:
             order_type=order_type,
             limit_price=limit_price,
             post_only=order_type == "limit",
+            forecast_move_bps=float(decision.get("forecast_move_bps") or 0.0),
+            risk_tier=str(decision.get("risk_tier") or "normal"),
         )
         self._save()
         if order_type == "limit":
@@ -1219,6 +1351,8 @@ class CoinbaseAutonomousExecutor:
             order_type=order_type,
             limit_price=limit_price,
             quote_size=quote_text,
+            forecast_move_bps=float(decision.get("forecast_move_bps") or 0.0),
+            risk_tier=str(decision.get("risk_tier") or "normal"),
         )
         self.state.submission_intent = None
         action = {
@@ -1588,7 +1722,10 @@ class CoinbaseAutonomousExecutor:
                 "dynamic_products_enabled": self.config.allow_dynamic_products,
                 "maker_first_entries": self.config.maker_first,
                 "maker_first_exits": self.config.maker_first_exit,
+                "maker_entry_market_fallback": self.config.maker_entry_market_fallback,
                 "maker_order_age_seconds": self.config.maker_order_age_seconds,
+                "max_taker_entry_fee_bps": self.config.max_taker_entry_fee_bps,
+                "max_taker_entry_slippage_bps": self.config.max_taker_entry_slippage_bps,
                 "high_risk_fallback": self.config.high_risk_fallback,
                 "high_risk_min_live_net_edge_bps": self.config.high_risk_min_live_net_edge_bps,
                 "high_risk_max_spread_bps": self.config.high_risk_max_spread_bps,
