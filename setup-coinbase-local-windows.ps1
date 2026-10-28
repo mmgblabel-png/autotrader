@@ -125,7 +125,7 @@ if ($Start) {
         throw "Docker daemon is niet bereikbaar. Start Docker Desktop en probeer opnieuw."
     }
 
-    & docker compose --env-file $EnvPath -f docker-compose.coinbase.local.yml up -d --build
+    & docker compose --env-file $EnvPath -f docker-compose.coinbase.local.yml up -d --build --force-recreate
     if ($LASTEXITCODE -ne 0) {
         throw "Docker build/start is mislukt. De healthcheck wordt niet uitgevoerd."
     }
