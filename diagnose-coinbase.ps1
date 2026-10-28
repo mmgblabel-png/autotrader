@@ -47,6 +47,10 @@ $lastReject = $diag.last_reject
     daily_loss_stop          = [bool]$a.daily_loss_stop
     drawdown_stop            = [bool]$a.drawdown_stop
     current_drawdown_pct     = $a.current_drawdown_pct
+    daily_risk_basis_eur     = $a.daily_targets.risk_basis_eur
+    daily_loss_limit_eur     = $a.daily_targets.daily_loss_limit_eur
+    daily_loss_remaining_eur = $a.daily_targets.daily_loss_remaining_eur
+    daily_risk_max_trade_eur = $a.daily_targets.daily_risk_max_trade_eur
     day_trades               = $a.daily_targets.trades_completed
     day_pnl_eur              = $a.daily_targets.profit_eur
 } | Format-List
