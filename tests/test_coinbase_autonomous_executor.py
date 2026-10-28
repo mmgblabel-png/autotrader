@@ -1219,3 +1219,72 @@ def test_exploration_stops_after_daily_trade_target_but_regular_trading_remains_
     assert status["live_orders_sent"] == 1
     assert status["pending_order"] is not None
     assert status["pending_order"]["risk_tier"] == "normal"
+
+
+def test_historical_max_drawdown_does_not_permanently_lock_recovered_trader(tmp_path, monkeypatch):
+    _set_live_env(monkeypatch)
+    fake = FakeCoinbase()
+    fake.eur = 6.0
+    fake.btc = 0.0
+    cfg = CoinbaseAutonomousConfig(
+        state_path=str(tmp_path / "recovered-drawdown.json"),
+        portfolio_id="agent-portfolio",
+        require_isolated_portfolio=True,
+        require_shadow_promotion=False,
+        full_capacity=True,
+        allow_dynamic_products=True,
+        maker_first=True,
+        managed_capital_pct=100.0,
+        cash_reserve_pct=0.0,
+        max_single_trade_pct=100.0,
+        max_drawdown_pct=10.0,
+    )
+    executor = CoinbaseAutonomousExecutor(cfg, client=fake)
+
+    # Historical analytics may remember a prior breach, but current equity is
+    # fully recovered to the peak and therefore must be allowed to trade.
+    executor.state.managed_cash_eur = 6.0
+    executor.state.peak_managed_equity_eur = 6.0
+    executor.state.current_drawdown_pct = 0.0
+    executor.state.max_drawdown_pct = 15.0
+
+    status = executor.tick(
+        armed=True,
+        now=1000.0,
+        shadow_status={
+            "promotion_ready": False,
+            "last_signal": {
+                "decisions": [{
+                    **_long_decision("XRP-EUR:300:recovered", 120),
+                    "product_id": "XRP-EUR",
+                    "risk_tier": "normal",
+                }]
+            },
+        },
+    )
+    assert status["drawdown_stop"] is False
+    assert status["readiness"]["gates"]["drawdown_stop_off"] is True
+    assert status["live_orders_sent"] == 1
+    assert fake.created[-1]["side"] == "BUY"
+
+
+def test_current_drawdown_is_visible_as_readiness_gate(tmp_path, monkeypatch):
+    _set_live_env(monkeypatch)
+    fake = FakeCoinbase()
+    fake.eur = 6.0
+    fake.btc = 0.0
+    cfg = CoinbaseAutonomousConfig(
+        state_path=str(tmp_path / "current-drawdown.json"),
+        portfolio_id="agent-portfolio",
+        require_isolated_portfolio=True,
+        require_shadow_promotion=False,
+        max_drawdown_pct=10.0,
+    )
+    executor = CoinbaseAutonomousExecutor(cfg, client=fake)
+    executor.state.current_drawdown_pct = 11.0
+    ready = executor.readiness(
+        armed=True,
+        shadow_status={"promotion_ready": False, "last_signal": {"decisions": []}},
+    )
+    assert ready["gates"]["drawdown_stop_off"] is False
+    assert ready["ready_for_new_entry"] is False
