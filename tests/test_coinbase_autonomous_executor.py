@@ -5,6 +5,8 @@ from autotrader.connectors.coinbase_advanced import CoinbaseTopOfBook
 from autotrader.core.coinbase_autonomous_executor import (
     CoinbaseAutonomousConfig,
     CoinbaseAutonomousExecutor,
+    ManagedPosition,
+    SubmissionIntent,
 )
 
 
@@ -1288,3 +1290,97 @@ def test_current_drawdown_is_visible_as_readiness_gate(tmp_path, monkeypatch):
     )
     assert ready["gates"]["drawdown_stop_off"] is False
     assert ready["ready_for_new_entry"] is False
+
+
+def test_uncertain_submission_is_abandoned_after_timeout(tmp_path, monkeypatch):
+    _set_live_env(monkeypatch)
+
+    class MissingIntentCoinbase(FakeCoinbase):
+        def find_order_by_client_id(self, client_order_id, product_id=None, portfolio_id=None):
+            return None
+
+    fake = MissingIntentCoinbase()
+    fake.eur = 6.0
+    fake.btc = 0.0
+    cfg = CoinbaseAutonomousConfig(
+        state_path=str(tmp_path / "intent-timeout.json"),
+        portfolio_id="agent-portfolio",
+        require_isolated_portfolio=True,
+        require_shadow_promotion=False,
+        submission_retry_after_seconds=20.0,
+        submission_abandon_after_seconds=90.0,
+    )
+    executor = CoinbaseAutonomousExecutor(cfg, client=fake)
+    executor.state.submission_intent = SubmissionIntent(
+        client_order_id="missing-submit",
+        side="BUY",
+        purpose="entry",
+        created_at=1000.0,
+        quote_size="1",
+        product_id="BTC-EUR",
+        quote_currency="EUR",
+        quote_to_eur=1.0,
+        order_type="market",
+    )
+
+    # First recovery window triggers exactly one idempotent retry.
+    executor._recover_submission_intent(1021.0)
+    assert executor.state.submission_intent is not None
+    assert executor.state.submission_intent.retry_count == 1
+
+    # Still absent at Coinbase after the timeout: release the lock.
+    executor._recover_submission_intent(1091.0)
+    assert executor.state.submission_intent is None
+    assert executor.state.last_action["action"] == "SUBMISSION_INTENT_ABANDONED"
+
+
+def test_expired_maker_exit_falls_back_to_market(tmp_path, monkeypatch):
+    _set_live_env(monkeypatch)
+    fake = FakeCoinbase()
+    fake.eur = 0.0
+    fake.btc = 0.0
+    cfg = CoinbaseAutonomousConfig(
+        state_path=str(tmp_path / "exit-fallback.json"),
+        portfolio_id="agent-portfolio",
+        require_isolated_portfolio=True,
+        require_shadow_promotion=False,
+        maker_first_exit=True,
+        maker_exit_market_fallback=True,
+        maker_order_age_seconds=5.0,
+    )
+    executor = CoinbaseAutonomousExecutor(cfg, client=fake)
+    executor.state.managed_cash_eur = 0.0
+    executor.state.position = ManagedPosition(
+        base_size=0.0001,
+        entry_price=70000.0,
+        entry_fee_eur=0.01,
+        window_key="BTC-EUR:300:exit",
+        window_end=999.0,
+        opened_at=900.0,
+        product_id="BTC-EUR",
+        quote_currency="EUR",
+        quote_to_eur=1.0,
+        peak_price=76000.0,
+    )
+
+    first = executor.tick(
+        armed=True,
+        now=1000.0,
+        shadow_status={"promotion_ready": False, "last_signal": {"decisions": []}},
+    )
+    assert first["pending_order"] is not None
+    assert first["pending_order"]["purpose"] == "exit"
+    assert first["pending_order"]["order_type"] == "limit"
+    order_id = first["pending_order"]["order_id"]
+
+    fake.orders[order_id]["status"] = "OPEN"
+    second = executor.tick(
+        armed=True,
+        now=1006.0,
+        shadow_status={"promotion_ready": False, "last_signal": {"decisions": []}},
+    )
+    assert second["pending_order"] is not None
+    assert second["pending_order"]["purpose"] == "exit"
+    assert second["pending_order"]["order_type"] == "market"
+    assert second["pending_order"]["market_fallback_used"] is True
+    assert second["last_action"]["action"] == "EXIT_MARKET_FALLBACK_SUBMITTED"
