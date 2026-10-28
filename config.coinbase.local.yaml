@@ -88,8 +88,8 @@ coinbase_autonomous_execution:
   max_order_eur: 1000.0
   min_order_eur: 1.0
 
-  max_daily_loss_pct: 3.0
-  max_drawdown_pct: 10.0
+  max_daily_loss_pct: 100.0
+  max_drawdown_pct: 100.0
   stop_loss_pct: 1.0
   take_profit_pct: 1.5
   trailing_activate_pct: 0.8
