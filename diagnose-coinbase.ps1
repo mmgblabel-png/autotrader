@@ -17,11 +17,14 @@ $rt = $d.realtime_orderflow
 $diag = $a.entry_diagnostics
 $top = @($o.top_candidates)[0]
 $lastReject = $diag.last_reject
+$arm = $r.arm_persistence
 
 [pscustomobject]@{
     status                   = "ok"
     armed                    = [bool]$a.coinbase_armed
     execution_ready          = [bool]$r.execution_ready_now
+    persisted_armed          = [bool]$arm.persisted_armed
+    auto_resume_eligible     = [bool]$arm.auto_resume_eligible
     failed_gates             = (@($r.execution_failed_gates) -join ",")
     fundable_markets         = $o.fundable_markets
     fundable_quotes          = (@($o.fundable_quotes) -join ",")
