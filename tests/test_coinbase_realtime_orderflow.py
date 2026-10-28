@@ -54,7 +54,7 @@ def test_realtime_orderflow_builds_depth_and_trade_metrics():
     assert row["spread_bps"] > 0
     assert row["book_imbalance"] > 0
     assert row["microprice_edge_bps"] > 0
-    assert row["trade_flow_imbalance"] > 0
+    # Coinbase reports maker side: BUY maker means aggressive SELL flow.\n    assert row["trade_flow_imbalance"] < 0
     assert row["trade_count"] == 2
 
 
@@ -125,3 +125,26 @@ def test_realtime_orderflow_marks_stale_data():
     )
     assert engine.snapshot("XRP-EUR", now=304.0)["fresh"] is True
     assert engine.snapshot("XRP-EUR", now=306.0)["fresh"] is False
+
+
+def test_market_trade_side_is_inverted_from_maker_to_aggressor():
+    engine = CoinbaseRealtimeOrderflowEngine({"trade_window_seconds": 60})
+    engine.set_products(["SOL-USDC"])
+    engine.process_message(
+        {
+            "channel": "market_trades",
+            "events": [{
+                "type": "update",
+                "trades": [
+                    {"product_id": "SOL-USDC", "price": "100", "size": "3", "side": "SELL"},
+                    {"product_id": "SOL-USDC", "price": "100", "size": "1", "side": "BUY"},
+                ],
+            }],
+        },
+        received_at=100.0,
+    )
+    row = engine.snapshot("SOL-USDC", now=101.0)
+    # Maker SELL means the aggressor bought; 3x as much aggressive buy notional.
+    assert row["reported_buy_notional"] == 300.0
+    assert row["reported_sell_notional"] == 100.0
+    assert row["trade_flow_imbalance"] > 0
