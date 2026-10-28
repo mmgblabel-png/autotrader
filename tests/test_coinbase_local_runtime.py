@@ -61,7 +61,7 @@ def test_coinbase_local_config_is_risktrader_and_portfolio_isolated():
     assert auto["exploration_enabled"] is True
     assert auto["exploration_trade_fraction_pct"] == 20.0
     assert auto["exploration_min_forecast_bps"] == 20.0
-    assert auto["exploration_max_negative_edge_bps"] == 60.0
+    assert auto["exploration_max_negative_edge_bps"] == 80.0
     assert auto["exploration_max_spread_bps"] == 20.0
     assert auto["daily_trade_target"] == 10
     assert auto["daily_profit_target_eur"] == 1.0
