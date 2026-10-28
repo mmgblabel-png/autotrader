@@ -560,6 +560,123 @@ class CoinbaseAutonomousExecutor:
             self.state.day_pnl_eur = 0.0
             self.state.day_settled_trades = 0
 
+    def _sync_flat_day_risk_basis(self, managed_equity: float, now: float) -> None:
+        """Cashflow-adjust the daily loss basis while the strategy is flat.
+
+        Realized day PnL stays untouched. Deposits, withdrawals, quote-currency
+        conversions and local-state migrations therefore change the capital
+        base instead of being mistaken for trading PnL.
+        """
+        if (
+            self.state.position is not None
+            or self.state.pending is not None
+            or self.state.submission_intent is not None
+            or not self.state.day_key
+        ):
+            return
+        implied_basis = max(0.0, float(managed_equity) - float(self.state.day_pnl_eur))
+        if implied_basis <= 0:
+            return
+        previous = max(0.0, float(self.state.day_start_managed_equity_eur))
+        delta = implied_basis - previous
+        if abs(delta) < 1e-8:
+            return
+        self.state.day_start_managed_equity_eur = implied_basis
+
+        # Keep drawdown cashflow-neutral as well. Trading losses remain visible
+        # because day_pnl is explicitly removed from the basis adjustment.
+        if self.state.peak_managed_equity_eur > 0:
+            self.state.peak_managed_equity_eur = max(
+                managed_equity,
+                self.state.peak_managed_equity_eur + delta,
+            )
+
+        if abs(delta) >= 0.01:
+            self._audit({
+                "at": now,
+                "action": "DAY_RISK_BASIS_REBASED",
+                "previous_basis_eur": round(previous, 8),
+                "new_basis_eur": round(implied_basis, 8),
+                "capital_flow_adjustment_eur": round(delta, 8),
+                "day_pnl_eur": round(float(self.state.day_pnl_eur), 8),
+            })
+
+    def _daily_risk_capacity(self) -> dict[str, float]:
+        basis = max(0.0, float(self.state.day_start_managed_equity_eur))
+        if basis <= 0:
+            return {
+                "daily_loss_limit_eur": 0.0,
+                "daily_loss_remaining_eur": math.inf,
+                "risk_loss_bps_per_trade": 0.0,
+                "daily_risk_max_trade_eur": math.inf,
+            }
+
+        loss_limit = basis * self.config.max_daily_loss_pct / 100.0
+        remaining = max(0.0, loss_limit + float(self.state.day_pnl_eur))
+
+        # Conservative worst-case entry budget: configured stop distance plus
+        # taker fees on both legs, allowed entry slippage and the normal spread.
+        # This prevents a new order from knowingly making the hard daily-loss
+        # limit impossible to respect.
+        risk_bps = (
+            self.config.stop_loss_pct * 100.0
+            + (2.0 * self.config.max_taker_entry_fee_bps)
+            + self.config.max_taker_entry_slippage_bps
+            + self.config.max_spread_bps
+        )
+        fraction = max(risk_bps / 10_000.0, 1e-9)
+        return {
+            "daily_loss_limit_eur": loss_limit,
+            "daily_loss_remaining_eur": remaining,
+            "risk_loss_bps_per_trade": risk_bps,
+            "daily_risk_max_trade_eur": remaining / fraction,
+        }
+
+    def _refresh_dynamic_readiness(self, ready: dict[str, Any]) -> dict[str, Any]:
+        gates = dict(ready.get("gates") or {})
+        risk = self._daily_risk_capacity()
+        hard_max = max(0.0, float(
+            ready.get("hard_max_single_trade_eur", ready.get("max_single_trade_eur", 0.0))
+            or 0.0
+        ))
+        risk_max = float(risk["daily_risk_max_trade_eur"])
+        effective_max = hard_max if not math.isfinite(risk_max) else min(hard_max, risk_max)
+
+        day_limit = float(risk["daily_loss_limit_eur"])
+        day_stop = (
+            self.state.day_start_managed_equity_eur > 0
+            and self.state.day_pnl_eur <= -day_limit
+        )
+        drawdown_stop = self.state.current_drawdown_pct >= self.config.max_drawdown_pct
+        gates["daily_loss_stop_off"] = not day_stop
+        gates["drawdown_stop_off"] = not drawdown_stop
+        gates["daily_risk_budget_sufficient"] = (
+            effective_max + 1e-9 >= self.config.min_order_eur
+            if self.state.day_start_managed_equity_eur > 0
+            else True
+        )
+
+        ready["gates"] = gates
+        ready["failed_gates"] = sorted(k for k, v in gates.items() if not v)
+        ready["hard_max_single_trade_eur"] = round(hard_max, 8)
+        ready["daily_loss_limit_eur"] = round(day_limit, 8)
+        ready["daily_loss_remaining_eur"] = (
+            round(float(risk["daily_loss_remaining_eur"]), 8)
+            if math.isfinite(float(risk["daily_loss_remaining_eur"]))
+            else None
+        )
+        ready["daily_risk_max_trade_eur"] = (
+            round(risk_max, 8) if math.isfinite(risk_max) else None
+        )
+        ready["risk_loss_bps_per_trade"] = round(
+            float(risk["risk_loss_bps_per_trade"]), 4
+        )
+        ready["max_single_trade_eur"] = round(effective_max, 8)
+        ready["ready_for_new_entry"] = (
+            all(gates.values()) and self.state.submission_intent is None
+        )
+        return ready
+
     def _global_gates(self, *, armed: bool, shadow_status: dict[str, Any]) -> dict[str, bool]:
         auth = (
             self.client.authenticated_accounts_probe(self.config.portfolio_id)
@@ -1754,7 +1871,7 @@ class CoinbaseAutonomousExecutor:
             btc_eur_bid=bid,
         )
         gates["unmanaged_inventory_clear"] = not unmanaged_inventory
-        return {
+        ready = {
             "ready_for_new_entry": all(gates.values()) and self.state.submission_intent is None,
             "gates": gates,
             "failed_gates": sorted(k for k, v in gates.items() if not v),
@@ -1762,6 +1879,7 @@ class CoinbaseAutonomousExecutor:
             "balances": balances,
             "required_cash_reserve_eur": round(reserve, 8),
             "managed_sleeve_target_eur": round(sleeve, 8),
+            "hard_max_single_trade_eur": round(max_trade, 8),
             "max_single_trade_eur": round(max_trade, 8),
             "managed_cash_eur": round(self.state.managed_cash_eur, 8),
             "portfolio_id": self.config.portfolio_id or None,
@@ -1773,6 +1891,7 @@ class CoinbaseAutonomousExecutor:
             "best_bid": bid,
             "best_ask": ask,
         }
+        return self._refresh_dynamic_readiness(ready)
 
     def tick(
         self,
@@ -1800,6 +1919,7 @@ class CoinbaseAutonomousExecutor:
             ready["managed_cash_eur"] = round(self.state.managed_cash_eur, 8)
             managed_equity = self._managed_equity(bid)
             self._roll_day(ts, managed_equity)
+            self._sync_flat_day_risk_basis(managed_equity, ts)
             self.state.peak_managed_equity_eur = max(
                 self.state.peak_managed_equity_eur,
                 managed_equity,
@@ -1814,12 +1934,13 @@ class CoinbaseAutonomousExecutor:
             self.state.current_drawdown_pct = current_dd
             self.state.max_drawdown_pct = max(self.state.max_drawdown_pct, current_dd)
 
-            day_limit = self.state.day_start_managed_equity_eur * self.config.max_daily_loss_pct / 100.0
-            day_stop = self.state.day_start_managed_equity_eur > 0 and self.state.day_pnl_eur <= -day_limit
+            ready = self._refresh_dynamic_readiness(ready)
+            day_limit = float(ready.get("daily_loss_limit_eur") or 0.0)
+            day_stop = not bool(ready["gates"].get("daily_loss_stop_off", True))
             # Historical max drawdown is analytics only. Live execution is
             # blocked by the CURRENT drawdown, so a recovered portfolio does
             # not remain permanently disabled forever.
-            drawdown_stop = current_dd >= self.config.max_drawdown_pct
+            drawdown_stop = not bool(ready["gates"].get("drawdown_stop_off", True))
             action: dict[str, Any] | None = None
 
             # A tick that started with an unknown submit outcome is reconciliation-only.
