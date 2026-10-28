@@ -97,7 +97,7 @@ coinbase_autonomous_execution:
 
   max_preview_fee_bps: 35.0
   max_preview_slippage_bps: 25.0
-  assumed_exit_fee_bps: 30.0
+  assumed_exit_fee_bps: 25.0
   min_live_net_edge_bps: 8.0
   max_spread_bps: 20.0
 
@@ -116,6 +116,11 @@ coinbase_autonomous_execution:
   high_risk_fallback: true
   high_risk_min_live_net_edge_bps: 0.0
   high_risk_max_spread_bps: 45.0
+  exploration_enabled: true
+  exploration_trade_fraction_pct: 20.0
+  exploration_min_forecast_bps: 20.0
+  exploration_max_negative_edge_bps: 60.0
+  exploration_max_spread_bps: 20.0
   day_timezone: Europe/Amsterdam
 
   # RiskTrader evaluates each current setup directly; no historical promotion quota.
