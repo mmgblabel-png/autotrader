@@ -76,7 +76,7 @@ class CoinbaseAutonomousConfig:
     high_risk_max_spread_bps: float = 35.0
     exploration_enabled: bool = True
     exploration_trade_fraction_pct: float = 20.0
-    exploration_min_forecast_bps: float = 20.0
+    exploration_min_forecast_bps: float = 5.0
     exploration_max_negative_edge_bps: float = 80.0
     exploration_max_spread_bps: float = 20.0
     day_timezone: str = "Europe/Amsterdam"
@@ -143,7 +143,7 @@ class CoinbaseAutonomousConfig:
                 100.0, max(1.0, float(cfg.get("exploration_trade_fraction_pct", 20.0)))
             ),
             exploration_min_forecast_bps=max(
-                0.0, float(cfg.get("exploration_min_forecast_bps", 20.0))
+                0.0, float(cfg.get("exploration_min_forecast_bps", 5.0))
             ),
             exploration_max_negative_edge_bps=max(
                 0.0, float(cfg.get("exploration_max_negative_edge_bps", 80.0))
