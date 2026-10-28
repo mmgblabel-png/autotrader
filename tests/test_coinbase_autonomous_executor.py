@@ -1099,3 +1099,123 @@ def test_expired_maker_entry_falls_back_to_market_when_edge_survives(tmp_path, m
     assert second["last_action"]["action"] == "ENTRY_MARKET_FALLBACK_SUBMITTED"
     assert fake.created[-1]["side"] == "BUY"
     assert fake.created[-1].get("order_type") != "limit"
+
+
+def test_exploration_uses_small_market_order_when_regular_edge_is_too_low(tmp_path, monkeypatch):
+    _set_live_env(monkeypatch)
+    fake = FakeCoinbase()
+    fake.eur = 6.0
+    fake.btc = 0.0
+    cfg = CoinbaseAutonomousConfig(
+        state_path=str(tmp_path / "exploration.json"),
+        portfolio_id="agent-portfolio",
+        require_isolated_portfolio=True,
+        require_shadow_promotion=False,
+        full_capacity=True,
+        allow_dynamic_products=True,
+        maker_first=True,
+        managed_capital_pct=100.0,
+        cash_reserve_pct=0.0,
+        max_single_trade_pct=100.0,
+        assumed_exit_fee_bps=25.0,
+        min_live_net_edge_bps=8.0,
+        high_risk_min_live_net_edge_bps=0.0,
+        daily_trade_target=10,
+        exploration_enabled=True,
+        exploration_trade_fraction_pct=20.0,
+        exploration_min_forecast_bps=20.0,
+        exploration_max_negative_edge_bps=60.0,
+        exploration_max_spread_bps=20.0,
+    )
+    executor = CoinbaseAutonomousExecutor(cfg, client=fake)
+
+    decision = {
+        **_long_decision("XRP-EUR:300:explore", 120),
+        "product_id": "XRP-EUR",
+        "forecast_move_bps": 40.0,
+        "risk_tier": "high",
+    }
+    status = executor.tick(
+        armed=True,
+        now=1000.0,
+        shadow_status={
+            "promotion_ready": False,
+            "last_signal": {"decisions": [decision]},
+        },
+    )
+
+    assert status["live_orders_sent"] == 1
+    assert fake.created[-1]["side"] == "BUY"
+    assert status["pending_order"]["order_type"] == "market"
+    assert status["pending_order"]["risk_tier"] == "exploration"
+    assert float(status["pending_order"]["quote_size"]) <= 1.21
+    assert status["entry_diagnostics"]["exploration_selected"] is True
+    assert status["entry_diagnostics"]["selected_risk_tier"] == "exploration"
+
+
+def test_exploration_stops_after_daily_trade_target_but_regular_trading_remains_available(tmp_path, monkeypatch):
+    _set_live_env(monkeypatch)
+    fake = FakeCoinbase()
+    fake.eur = 6.0
+    fake.btc = 0.0
+    cfg = CoinbaseAutonomousConfig(
+        state_path=str(tmp_path / "exploration-target.json"),
+        portfolio_id="agent-portfolio",
+        require_isolated_portfolio=True,
+        require_shadow_promotion=False,
+        full_capacity=True,
+        allow_dynamic_products=True,
+        maker_first=True,
+        managed_capital_pct=100.0,
+        cash_reserve_pct=0.0,
+        max_single_trade_pct=100.0,
+        assumed_exit_fee_bps=25.0,
+        daily_trade_target=10,
+        exploration_enabled=True,
+        exploration_trade_fraction_pct=20.0,
+        exploration_min_forecast_bps=20.0,
+        exploration_max_negative_edge_bps=60.0,
+    )
+    executor = CoinbaseAutonomousExecutor(cfg, client=fake)
+
+    executor.tick(
+        armed=True,
+        now=1000.0,
+        shadow_status={"promotion_ready": False, "last_signal": {"decisions": []}},
+    )
+    executor.state.day_settled_trades = 10
+
+    low_edge = {
+        **_long_decision("XRP-EUR:300:no-more-explore", 120),
+        "product_id": "XRP-EUR",
+        "forecast_move_bps": 40.0,
+        "risk_tier": "high",
+    }
+    status = executor.tick(
+        armed=True,
+        now=1001.0,
+        shadow_status={
+            "promotion_ready": False,
+            "last_signal": {"decisions": [low_edge]},
+        },
+    )
+    assert status["live_orders_sent"] == 0
+    assert status["pending_order"] is None
+
+    strong = {
+        **_long_decision("XRP-EUR:300:regular-after-target", 120),
+        "product_id": "XRP-EUR",
+        "forecast_move_bps": 180.0,
+        "risk_tier": "normal",
+    }
+    status = executor.tick(
+        armed=True,
+        now=1002.0,
+        shadow_status={
+            "promotion_ready": False,
+            "last_signal": {"decisions": [strong]},
+        },
+    )
+    assert status["live_orders_sent"] == 1
+    assert status["pending_order"] is not None
+    assert status["pending_order"]["risk_tier"] == "normal"
