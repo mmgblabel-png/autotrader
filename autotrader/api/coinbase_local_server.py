@@ -344,6 +344,9 @@ def health() -> dict[str, Any]:
         "executor_error": getattr(app.state, "executor_error", None),
         "opportunity_error": getattr(app.state, "opportunity_error", None),
         "realtime_error": getattr(app.state, "realtime_error", None),
+        "daily_loss_stop": bool((getattr(app.state, "executor_status", {}) or {}).get("daily_loss_stop")),
+        "drawdown_stop": bool((getattr(app.state, "executor_status", {}) or {}).get("drawdown_stop")),
+        "current_drawdown_pct": (getattr(app.state, "executor_status", {}) or {}).get("current_drawdown_pct"),
         "realtime_orderflow": (
             app.state.realtime_orderflow.status()
             if getattr(app.state, "realtime_orderflow", None) is not None
