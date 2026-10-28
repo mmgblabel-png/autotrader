@@ -124,6 +124,7 @@ class CoinbaseOpportunityEngine:
         self._products: list[dict[str, Any]] = []
         self._universe_refreshed_at = 0.0
         self._samples: dict[str, deque[tuple[float, float]]] = defaultdict(lambda: deque(maxlen=120))
+        self._rotation_cursor = 0
         self._state_path = Path(self.config.state_path)
         self._known_products: dict[str, float] = self._load_known_products()
         self.last_status: dict[str, Any] = {
@@ -330,7 +331,24 @@ class CoinbaseOpportunityEngine:
 
         candidates: list[dict[str, Any]] = []
         decisions: list[dict[str, Any]] = []
-        for _, row in ranked[: self.config.candidate_limit]:
+
+        # Always inspect the strongest ranked markets, but rotate the remaining
+        # slots through the rest so the full fundable universe is genuinely
+        # evaluated over time without exploding REST top-of-book traffic.
+        limit = min(self.config.candidate_limit, len(ranked))
+        always_top = min(30, limit)
+        selected = list(ranked[:always_top])
+        remaining_slots = max(0, limit - always_top)
+        tail = ranked[always_top:]
+        if remaining_slots > 0 and tail:
+            start = self._rotation_cursor % len(tail)
+            for offset in range(min(remaining_slots, len(tail))):
+                selected.append(tail[(start + offset) % len(tail)])
+            self._rotation_cursor = (start + remaining_slots) % len(tail)
+        elif not tail:
+            self._rotation_cursor = 0
+
+        for _, row in selected:
             product_id = str(row.get("product_id") or "").upper()
             realtime = self._realtime_snapshot(product_id)
 
@@ -483,6 +501,8 @@ class CoinbaseOpportunityEngine:
             "top_candidates": candidates[:10],
             "realtime": realtime_status,
             "realtime_products": realtime_products,
+            "evaluated_markets_this_tick": len(selected),
+            "rotation_cursor": self._rotation_cursor,
             "daily_trade_target": self.config.daily_trade_target,
             "daily_profit_target_eur": self.config.daily_profit_target_eur,
             "high_risk_enabled": self.config.high_risk_enabled,
