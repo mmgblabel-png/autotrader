@@ -736,8 +736,10 @@ class CoinbaseAdvancedMarketData:
                 is_disabled = bool(row.get("is_disabled", False))
                 view_only = bool(row.get("view_only", False))
                 product_type = str(row.get("product_type") or "SPOT").upper()
+                status = str(row.get("status") or "").upper()
                 if product_type not in {"SPOT", "UNKNOWN_PRODUCT_TYPE", ""}:
                     continue
+                status_online = status in {"", "ONLINE"}
                 seen.add(product_id)
                 products.append({
                     "product_id": product_id,
@@ -748,7 +750,10 @@ class CoinbaseAdvancedMarketData:
                     "cancel_only": cancel_only,
                     "is_disabled": is_disabled,
                     "view_only": view_only,
-                    "tradable": not (trading_disabled or cancel_only or is_disabled or view_only),
+                    "status": status or None,
+                    "tradable": status_online and not (
+                        trading_disabled or cancel_only or is_disabled or view_only
+                    ),
                     "price": row.get("price"),
                     "volume_24h": row.get("volume_24h"),
                     "price_change_24h_pct": row.get("price_percentage_change_24h"),
