@@ -290,10 +290,17 @@ class CoinbaseOpportunityEngine:
         }
 
         tradable = [p for p in self._products if bool(p.get("tradable"))]
+        eligible = [
+            p for p in tradable
+            if str(p.get("quote") or "").upper() in set(self.config.quote_currencies)
+        ]
         fundable = [
-            p for p in tradable if str(p.get("quote") or "").upper() in fundable_quotes
+            p for p in eligible if str(p.get("quote") or "").upper() in fundable_quotes
         ]
 
+        # Discovery/orderflow must stay alive while capital is held in a maker
+        # order or an open position. Funding availability is an execution
+        # concern, not a market-intelligence concern.
         ranked: list[tuple[float, dict[str, Any]]] = []
         minimum_volume = min(
             self.config.min_24h_quote_volume,
@@ -301,7 +308,7 @@ class CoinbaseOpportunityEngine:
             if self.config.high_risk_enabled
             else self.config.min_24h_quote_volume,
         )
-        for row in fundable:
+        for row in eligible:
             product_id = str(row.get("product_id") or "").upper()
             price = self._float(row.get("price"))
             change_pct = self._float(row.get("price_change_24h_pct"))
@@ -503,6 +510,7 @@ class CoinbaseOpportunityEngine:
             "read_only": True,
             "scanned_markets": len(self._products),
             "tradable_markets": len(tradable),
+            "eligible_scan_markets": len(eligible),
             "fundable_markets": len(fundable),
             "fundable_quotes": sorted(fundable_quotes),
             "last_signal": {"decisions": decisions},
