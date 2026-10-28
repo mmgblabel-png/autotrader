@@ -18,6 +18,7 @@ $diag = $a.entry_diagnostics
 $top = @($o.top_candidates)[0]
 $lastReject = $diag.last_reject
 $arm = $r.arm_persistence
+$rules = $a.hard_rules
 
 [pscustomobject]@{
     status                   = "ok"
@@ -26,6 +27,10 @@ $arm = $r.arm_persistence
     persisted_armed          = [bool]$arm.persisted_armed
     auto_resume_eligible     = [bool]$arm.auto_resume_eligible
     failed_gates             = (@($r.execution_failed_gates) -join ",")
+    max_daily_loss_pct       = $rules.max_daily_loss_pct
+    max_drawdown_pct         = $rules.max_drawdown_pct
+    max_single_trade_pct     = $rules.max_single_trade_pct
+    cash_reserve_pct         = $rules.min_cash_reserve_pct
     fundable_markets         = $o.fundable_markets
     fundable_quotes          = (@($o.fundable_quotes) -join ",")
     evaluated_this_tick      = $o.evaluated_markets_this_tick
