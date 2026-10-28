@@ -2129,9 +2129,14 @@ class CoinbaseAutonomousExecutor:
                 seed_eur = min(gap, max_trade)
                 if seed_eur >= self.config.min_order_eur:
                     base_size = min(float(balances["BTC"]), seed_eur / bid)
-                    action = self._submit_sell(
-                        base_size=base_size, purpose="seed", now=ts, reference_bid=bid
-                    )
+                    actual_seed_eur = max(0.0, base_size * bid)
+                    # Never create a pending seed order from sub-minimum BTC
+                    # dust. Otherwise a harmless residual can temporarily
+                    # block all strategy entries.
+                    if actual_seed_eur + 1e-9 >= self.config.min_order_eur:
+                        action = self._submit_sell(
+                            base_size=base_size, purpose="seed", now=ts, reference_bid=bid
+                        )
 
             if (
                 action is None
