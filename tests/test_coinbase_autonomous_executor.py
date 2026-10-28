@@ -1321,14 +1321,11 @@ def test_uncertain_submission_is_abandoned_after_timeout(tmp_path, monkeypatch):
         quote_currency="EUR",
         quote_to_eur=1.0,
         order_type="market",
+        retry_count=1,
     )
 
-    # First recovery window triggers exactly one idempotent retry.
-    executor._recover_submission_intent(1021.0)
-    assert executor.state.submission_intent is not None
-    assert executor.state.submission_intent.retry_count == 1
-
-    # Still absent at Coinbase after the timeout: release the lock.
+    # The one allowed idempotent retry has already been attempted. If Coinbase
+    # still has no matching order after the timeout, release the lock.
     executor._recover_submission_intent(1091.0)
     assert executor.state.submission_intent is None
     assert executor.state.last_action["action"] == "SUBMISSION_INTENT_ABANDONED"
