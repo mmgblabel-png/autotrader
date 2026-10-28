@@ -61,6 +61,7 @@ class CoinbaseAutonomousConfig:
     require_shadow_promotion: bool = True
     maker_first: bool = False
     maker_first_exit: bool = True
+    maker_exit_market_fallback: bool = True
     maker_entry_market_fallback: bool = True
     maker_order_age_seconds: float = 25.0
     submission_retry_after_seconds: float = 20.0
@@ -120,6 +121,7 @@ class CoinbaseAutonomousConfig:
             require_shadow_promotion=bool(cfg.get("require_shadow_promotion", True)),
             maker_first=bool(cfg.get("maker_first", False)),
             maker_first_exit=bool(cfg.get("maker_first_exit", True)),
+            maker_exit_market_fallback=bool(cfg.get("maker_exit_market_fallback", True)),
             maker_entry_market_fallback=bool(cfg.get("maker_entry_market_fallback", True)),
             maker_order_age_seconds=max(5.0, float(cfg.get("maker_order_age_seconds", 25.0))),
             submission_retry_after_seconds=max(
@@ -187,6 +189,7 @@ class PendingOrder:
     market_fallback_used: bool = False
     forecast_move_bps: float = 0.0
     risk_tier: str = "normal"
+    exit_reason: str = ""
 
 @dataclass
 class SubmissionIntent:
@@ -207,6 +210,7 @@ class SubmissionIntent:
     post_only: bool = False
     forecast_move_bps: float = 0.0
     risk_tier: str = "normal"
+    exit_reason: str = ""
 
 
 @dataclass
@@ -656,6 +660,7 @@ class CoinbaseAutonomousExecutor:
                     base_size=intent.base_size,
                     forecast_move_bps=intent.forecast_move_bps,
                     risk_tier=intent.risk_tier,
+                    exit_reason=intent.exit_reason,
                 )
                 self.state.submission_intent = None
                 self.state.live_orders_sent += 1
@@ -732,6 +737,7 @@ class CoinbaseAutonomousExecutor:
             base_size=intent.base_size,
             forecast_move_bps=intent.forecast_move_bps,
             risk_tier=intent.risk_tier,
+            exit_reason=intent.exit_reason,
         )
         self.state.submission_intent = None
         self.state.live_orders_sent += 1
@@ -861,6 +867,67 @@ class CoinbaseAutonomousExecutor:
                             "side": "SELL",
                             "purpose": "seed",
                             "base_size": pending.base_size,
+                        }
+                        self._audit(dict(self.state.last_action))
+                        self._save()
+                        return
+
+                    if (
+                        pending.purpose == "exit"
+                        and pending.side == "SELL"
+                        and pending.base_size
+                        and self.config.maker_exit_market_fallback
+                        and not pending.market_fallback_used
+                    ):
+                        fallback_client_id = str(uuid.uuid4())
+                        self.state.submission_intent = SubmissionIntent(
+                            client_order_id=fallback_client_id,
+                            side="SELL",
+                            purpose="exit",
+                            created_at=now,
+                            base_size=pending.base_size,
+                            product_id=pending.product_id,
+                            quote_currency=pending.quote_currency,
+                            quote_to_eur=pending.quote_to_eur,
+                            order_type="market",
+                            exit_reason=pending.exit_reason,
+                        )
+                        self.state.pending = None
+                        self._save()
+                        response = self.client.create_spot_market_order(
+                            client_order_id=fallback_client_id,
+                            product_id=pending.product_id,
+                            side="SELL",
+                            base_size=pending.base_size,
+                            portfolio_id=self.config.portfolio_id or None,
+                        )
+                        fallback_order_id = self._order_id(response)
+                        self.state.live_orders_sent += 1
+                        self.state.pending = PendingOrder(
+                            order_id=fallback_order_id,
+                            side="SELL",
+                            purpose="exit",
+                            client_order_id=fallback_client_id,
+                            submitted_at=now,
+                            product_id=pending.product_id,
+                            quote_currency=pending.quote_currency,
+                            quote_to_eur=pending.quote_to_eur,
+                            order_type="market",
+                            base_size=pending.base_size,
+                            market_fallback_used=True,
+                            exit_reason=pending.exit_reason,
+                        )
+                        self.state.submission_intent = None
+                        self.state.last_action = {
+                            "at": now,
+                            "action": "EXIT_MARKET_FALLBACK_SUBMITTED",
+                            "order_id": fallback_order_id,
+                            "client_order_id": fallback_client_id,
+                            "product_id": pending.product_id,
+                            "side": "SELL",
+                            "purpose": "exit",
+                            "base_size": pending.base_size,
+                            "reason": pending.exit_reason,
                         }
                         self._audit(dict(self.state.last_action))
                         self._save()
@@ -1174,6 +1241,7 @@ class CoinbaseAutonomousExecutor:
             order_type=order_type,
             limit_price=limit_text,
             post_only=use_maker,
+            exit_reason=str(exit_reason or ""),
         )
         self._save()
 
@@ -1212,6 +1280,7 @@ class CoinbaseAutonomousExecutor:
             order_type=order_type,
             limit_price=limit_text,
             base_size=size_text,
+            exit_reason=str(exit_reason or ""),
         )
         self.state.submission_intent = None
         action = {
@@ -2027,6 +2096,7 @@ class CoinbaseAutonomousExecutor:
                 "dynamic_products_enabled": self.config.allow_dynamic_products,
                 "maker_first_entries": self.config.maker_first,
                 "maker_first_exits": self.config.maker_first_exit,
+                "maker_exit_market_fallback": self.config.maker_exit_market_fallback,
                 "maker_entry_market_fallback": self.config.maker_entry_market_fallback,
                 "maker_order_age_seconds": self.config.maker_order_age_seconds,
                 "submission_retry_after_seconds": self.config.submission_retry_after_seconds,
