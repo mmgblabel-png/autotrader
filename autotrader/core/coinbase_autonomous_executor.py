@@ -666,7 +666,12 @@ class CoinbaseAutonomousExecutor:
         })
         self._save()
 
-    def _refresh_pending(self, now: float) -> None:
+    def _refresh_pending(
+        self,
+        now: float,
+        *,
+        active_decisions: list[dict[str, Any]] | None = None,
+    ) -> None:
         pending = self.state.pending
         if pending is None:
             return
@@ -789,6 +794,13 @@ class CoinbaseAutonomousExecutor:
                         and self.config.maker_entry_market_fallback
                         and not pending.market_fallback_used
                         and (not pending.window_end or now < pending.window_end)
+                        and any(
+                            isinstance(row, dict)
+                            and row.get("decision") == "LONG"
+                            and str(row.get("product_id") or "").upper() == pending.product_id
+                            and str(row.get("window_key") or "") == str(pending.window_key or "")
+                            for row in (active_decisions or [])
+                        )
                     ):
                         book = self.client.top_of_book(pending.product_id)
                         bid = float(book.bid_price)
@@ -1425,7 +1437,11 @@ class CoinbaseAutonomousExecutor:
         try:
             had_uncertain_submission = self.state.submission_intent is not None
             self._recover_submission_intent(ts)
-            self._refresh_pending(ts)
+            current_decisions = [
+                row for row in ((shadow.get("last_signal") or {}).get("decisions") or [])
+                if isinstance(row, dict)
+            ]
+            self._refresh_pending(ts, active_decisions=current_decisions)
             ready = self.readiness(armed=armed, shadow_status=shadow)
             bid = float(ready["best_bid"])
             ask = float(ready["best_ask"])
