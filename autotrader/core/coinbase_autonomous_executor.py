@@ -201,6 +201,7 @@ class CoinbaseAutonomousState:
     seen_windows: list[str] = None
     order_audit: list[dict[str, Any]] = None
     market_learning: dict[str, dict[str, Any]] = None
+    entry_diagnostics: dict[str, Any] = None
     last_action: dict[str, Any] | None = None
     last_error: str | None = None
 
@@ -211,6 +212,8 @@ class CoinbaseAutonomousState:
             self.order_audit = []
         if self.market_learning is None:
             self.market_learning = {}
+        if self.entry_diagnostics is None:
+            self.entry_diagnostics = {}
 
 
 class CoinbaseAutonomousExecutor:
@@ -274,7 +277,7 @@ class CoinbaseAutonomousExecutor:
             "managed_cash_eur", "live_orders_sent", "settled_trades",
             "realized_pnl_eur", "day_key", "day_start_managed_equity_eur",
             "day_pnl_eur", "day_settled_trades", "peak_managed_equity_eur", "max_drawdown_pct",
-            "seen_windows", "order_audit", "market_learning", "last_action", "last_error",
+            "seen_windows", "order_audit", "market_learning", "entry_diagnostics", "last_action", "last_error",
         ):
             if key in raw:
                 setattr(self.state, key, raw[key])
@@ -287,6 +290,7 @@ class CoinbaseAutonomousExecutor:
             for k, v in (self.state.market_learning or {}).items()
             if isinstance(v, dict)
         }
+        self.state.entry_diagnostics = dict(self.state.entry_diagnostics or {})
 
     def _audit(self, event: dict[str, Any]) -> None:
         self.state.order_audit.append({
@@ -1183,6 +1187,10 @@ class CoinbaseAutonomousExecutor:
         balances: dict[str, float],
         spendable_eur: float,
         max_trade_eur: float,
+        diagnostics: dict[str, Any] | None = None,
+        min_edge_override_bps: float | None = None,
+        max_trade_override_eur: float | None = None,
+        max_spread_override_bps: float | None = None,
     ) -> dict[str, Any] | None:
         forecast_move_bps = max(0.0, float(decision.get("forecast_move_bps") or 0.0))
         probability_up = float(decision.get("probability_up") or 0.0)
@@ -1192,11 +1200,28 @@ class CoinbaseAutonomousExecutor:
             self.config.high_risk_max_spread_bps
             if risk_tier == "high" else self.config.max_spread_bps
         )
+        if max_spread_override_bps is not None:
+            max_spread_bps = min(max_spread_bps, max(0.0, float(max_spread_override_bps)))
         min_live_net_edge_bps = (
             self.config.high_risk_min_live_net_edge_bps
             if risk_tier == "high" else self.config.min_live_net_edge_bps
         )
+        if min_edge_override_bps is not None:
+            min_live_net_edge_bps = float(min_edge_override_bps)
+
+        def reject(reason: str, product: str = "", **details: Any) -> None:
+            if diagnostics is None:
+                return
+            rejects = diagnostics.setdefault("rejects", {})
+            rejects[reason] = int(rejects.get(reason, 0)) + 1
+            diagnostics["last_reject"] = {
+                "reason": reason,
+                "product_id": product or None,
+                **details,
+            }
+
         if forecast_move_bps <= 0:
+            reject("non_positive_forecast")
             return None
 
         best: dict[str, Any] | None = None
@@ -1206,86 +1231,151 @@ class CoinbaseAutonomousExecutor:
                 not self.config.allow_dynamic_products
                 and decision_product not in self.config.supported_products
             ):
+                reject("unsupported_product", decision_product)
                 return None
             products = [decision_product]
         else:
             products = list(self.config.supported_products)
+
         for product in products:
             product = str(product).upper()
+            if diagnostics is not None:
+                diagnostics["routes_considered"] = int(diagnostics.get("routes_considered", 0)) + 1
             if "-" not in product:
+                reject("invalid_product", product)
                 continue
             quote = product.rsplit("-", 1)[-1]
             if quote not in {"EUR", "USDC"}:
+                reject("unsupported_quote", product, quote=quote)
                 continue
 
             quote_to_eur = 1.0 if quote == "EUR" else max(
                 0.0, float(balances.get("_USDC_TO_EUR") or 0.0)
             )
             if quote_to_eur <= 0:
+                reject("quote_fx_unavailable", product, quote=quote)
                 continue
             quote_balance = max(0.0, float(balances.get(quote) or 0.0))
             route_available_eur = quote_balance * quote_to_eur
-            target_eur = min(route_available_eur, spendable_eur, max_trade_eur)
+            effective_max_trade = max_trade_eur
+            if max_trade_override_eur is not None:
+                effective_max_trade = min(
+                    effective_max_trade,
+                    max(0.0, float(max_trade_override_eur)),
+                )
+            target_eur = min(route_available_eur, spendable_eur, effective_max_trade)
             if target_eur + 1e-9 < self.config.min_order_eur:
+                reject(
+                    "insufficient_quote_balance",
+                    product,
+                    target_eur=round(target_eur, 8),
+                )
                 continue
 
-            quote_size = target_eur / quote_to_eur
-            if self.config.maker_first:
-                fee_headroom = 1.0 + self.config.max_preview_fee_bps / 10_000.0
-                quote_size = quote_size / max(fee_headroom, 1.0)
-            book = self.client.top_of_book(product)
-            bid = float(book.bid_price)
-            ask = float(book.ask_price)
-            if bid <= 0 or ask <= 0 or ask < bid:
-                continue
-            mid = (bid + ask) / 2.0
-            spread_bps = (ask - bid) / mid * 10_000.0 if mid > 0 else math.inf
-            if spread_bps > max_spread_bps:
-                continue
-
-            rules = self._product_rules(product)
-            quote_increment = rules["quote_increment"]
-            quote_text = self._floor_to_increment(quote_size, quote_increment, fallback_decimals=6)
-            quote_value = float(quote_text or 0.0)
-            if quote_value <= 0:
-                continue
             try:
-                quote_min_size = max(0.0, float(rules.get("quote_min_size") or 0.0))
-                base_min_size = max(0.0, float(rules.get("base_min_size") or 0.0))
-            except (TypeError, ValueError):
-                quote_min_size = 0.0
-                base_min_size = 0.0
-            if quote_value + 1e-12 < quote_min_size:
-                continue
-            estimated_base = quote_value / max(ask, 1e-12)
-            if estimated_base + 1e-12 < base_min_size:
-                continue
-            if self.config.maker_first:
-                limit_text = format(book.bid_price, "f")
-                preview = self.client.preview_spot_limit_order(
-                    product_id=product,
-                    side="BUY",
-                    limit_price=limit_text,
-                    quote_size=quote_text,
-                    portfolio_id=self.config.portfolio_id or None,
-                    post_only=True,
+                quote_size = target_eur / quote_to_eur
+                if self.config.maker_first:
+                    fee_headroom = 1.0 + self.config.max_preview_fee_bps / 10_000.0
+                    quote_size = quote_size / max(fee_headroom, 1.0)
+
+                book = self.client.top_of_book(product)
+                bid = float(book.bid_price)
+                ask = float(book.ask_price)
+                if bid <= 0 or ask <= 0 or ask < bid:
+                    reject("invalid_book", product)
+                    continue
+                mid = (bid + ask) / 2.0
+                spread_bps = (ask - bid) / mid * 10_000.0 if mid > 0 else math.inf
+                if spread_bps > max_spread_bps:
+                    reject(
+                        "spread",
+                        product,
+                        spread_bps=round(spread_bps, 4),
+                        max_spread_bps=round(max_spread_bps, 4),
+                    )
+                    continue
+
+                rules = self._product_rules(product)
+                quote_increment = rules["quote_increment"]
+                quote_text = self._floor_to_increment(
+                    quote_size,
+                    quote_increment,
+                    fallback_decimals=6,
                 )
-                cost_reference = bid
-                order_type = "limit"
-            else:
-                limit_text = ""
-                preview = self.client.preview_spot_market_order(
-                    product_id=product,
-                    side="BUY",
-                    quote_size=quote_text,
-                    portfolio_id=self.config.portfolio_id or None,
-                )
-                cost_reference = ask
-                order_type = "market"
+                quote_value = float(quote_text or 0.0)
+                if quote_value <= 0:
+                    reject("rounded_size_zero", product)
+                    continue
+                try:
+                    quote_min_size = max(0.0, float(rules.get("quote_min_size") or 0.0))
+                    base_min_size = max(0.0, float(rules.get("base_min_size") or 0.0))
+                except (TypeError, ValueError):
+                    quote_min_size = 0.0
+                    base_min_size = 0.0
+                estimated_base = quote_value / max(ask, 1e-12)
+                if (
+                    quote_value + 1e-12 < quote_min_size
+                    or estimated_base + 1e-12 < base_min_size
+                ):
+                    reject(
+                        "product_minimum",
+                        product,
+                        quote_size=quote_value,
+                        quote_min_size=quote_min_size,
+                        estimated_base=estimated_base,
+                        base_min_size=base_min_size,
+                    )
+                    continue
+
+                if self.config.maker_first:
+                    limit_text = format(book.bid_price, "f")
+                    preview = self.client.preview_spot_limit_order(
+                        product_id=product,
+                        side="BUY",
+                        limit_price=limit_text,
+                        quote_size=quote_text,
+                        portfolio_id=self.config.portfolio_id or None,
+                        post_only=True,
+                    )
+                    cost_reference = bid
+                    order_type = "limit"
+                else:
+                    limit_text = ""
+                    preview = self.client.preview_spot_market_order(
+                        product_id=product,
+                        side="BUY",
+                        quote_size=quote_text,
+                        portfolio_id=self.config.portfolio_id or None,
+                    )
+                    cost_reference = ask
+                    order_type = "market"
+            except CoinbaseAuthenticationError:
+                raise
+            except Exception as exc:
+                reject("route_error", product, error=type(exc).__name__)
+                continue
+
+            preview_errors = preview.get("errs") or preview.get("errors") or []
+            if preview_errors:
+                reject("preview_rejected", product, errors=list(preview_errors)[:5])
+                continue
+
             fee_bps, slip_bps = self._preview_costs(preview, cost_reference, quote_size)
             if fee_bps > self.config.max_preview_fee_bps:
+                reject(
+                    "fee",
+                    product,
+                    fee_bps=round(fee_bps, 4),
+                    max_fee_bps=round(self.config.max_preview_fee_bps, 4),
+                )
                 continue
             if slip_bps > self.config.max_preview_slippage_bps:
+                reject(
+                    "slippage",
+                    product,
+                    slippage_bps=round(slip_bps, 4),
+                    max_slippage_bps=round(self.config.max_preview_slippage_bps, 4),
+                )
                 continue
 
             after_cost_edge_bps = (
@@ -1295,7 +1385,22 @@ class CoinbaseAutonomousExecutor:
                 - self.config.assumed_exit_fee_bps
                 - spread_bps
             )
+            if diagnostics is not None:
+                prior = diagnostics.get("best_after_cost_edge_bps")
+                if prior is None or after_cost_edge_bps > float(prior):
+                    diagnostics["best_after_cost_edge_bps"] = round(after_cost_edge_bps, 4)
+                    diagnostics["best_after_cost_product"] = product
+                    diagnostics["best_forecast_move_bps"] = round(forecast_move_bps, 4)
+                    diagnostics["best_preview_fee_bps"] = round(fee_bps, 4)
+                    diagnostics["best_spread_bps"] = round(spread_bps, 4)
             if after_cost_edge_bps < min_live_net_edge_bps:
+                reject(
+                    "edge",
+                    product,
+                    forecast_move_bps=round(forecast_move_bps, 4),
+                    after_cost_edge_bps=round(after_cost_edge_bps, 4),
+                    required_edge_bps=round(min_live_net_edge_bps, 4),
+                )
                 continue
 
             learning_adjustment_bps, learning = self._market_learning_adjustment(product)
@@ -1328,6 +1433,9 @@ class CoinbaseAutonomousExecutor:
             }
             if best is None or float(candidate["score"]) > float(best["score"]):
                 best = candidate
+
+        if best is not None and diagnostics is not None:
+            diagnostics["accepted_routes"] = int(diagnostics.get("accepted_routes", 0)) + 1
         return best
 
     def _submit_buy(
@@ -1723,6 +1831,7 @@ class CoinbaseAutonomousExecutor:
             "submission_intent": asdict(self.state.submission_intent) if self.state.submission_intent else None,
             "portfolio_id": self.config.portfolio_id or None,
             "portfolio_isolated": bool(self.config.portfolio_id),
+            "entry_diagnostics": dict(self.state.entry_diagnostics or {}),
             "market_learning": {
                 product: {
                     **dict(row),
