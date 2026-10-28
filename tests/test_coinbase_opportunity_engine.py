@@ -66,7 +66,7 @@ class FakeMarket:
         ]
 
     def top_of_book(self, product_id):
-        base = {"BTC-EUR": 70000.0, "XRP-EUR": 1.10}[product_id]
+        base = {"BTC-EUR": 70000.0, "XRP-EUR": 1.10, "SOL-USDC": 90.0}[product_id]
         growth = 1.0 + self.step * 0.001
         mid = base * growth
         spread = mid * 0.0002
