@@ -1682,7 +1682,7 @@ class CoinbaseAutonomousExecutor:
         btc_eur_bid: float,
     ) -> list[dict[str, Any]]:
         """Return material non-cash inventory not represented by local position state."""
-        if self.state.position is not None:
+        if self.state.position is not None or not self.config.require_isolated_portfolio:
             return []
 
         usdc_to_eur = max(0.0, float(balances.get("_USDC_TO_EUR") or 0.0))
