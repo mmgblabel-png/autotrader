@@ -1380,20 +1380,28 @@ class CoinbaseAutonomousExecutor:
                 continue
 
             fee_bps, slip_bps = self._preview_costs(preview, cost_reference, quote_size)
-            if fee_bps > self.config.max_preview_fee_bps:
+            max_fee_bps = (
+                self.config.max_taker_entry_fee_bps
+                if force_market else self.config.max_preview_fee_bps
+            )
+            max_slippage_bps = (
+                self.config.max_taker_entry_slippage_bps
+                if force_market else self.config.max_preview_slippage_bps
+            )
+            if fee_bps > max_fee_bps:
                 reject(
                     "fee",
                     product,
                     fee_bps=round(fee_bps, 4),
-                    max_fee_bps=round(self.config.max_preview_fee_bps, 4),
+                    max_fee_bps=round(max_fee_bps, 4),
                 )
                 continue
-            if slip_bps > self.config.max_preview_slippage_bps:
+            if slip_bps > max_slippage_bps:
                 reject(
                     "slippage",
                     product,
                     slippage_bps=round(slip_bps, 4),
-                    max_slippage_bps=round(self.config.max_preview_slippage_bps, 4),
+                    max_slippage_bps=round(max_slippage_bps, 4),
                 )
                 continue
 
