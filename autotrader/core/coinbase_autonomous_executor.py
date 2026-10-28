@@ -71,6 +71,11 @@ class CoinbaseAutonomousConfig:
     high_risk_fallback: bool = True
     high_risk_min_live_net_edge_bps: float = 0.0
     high_risk_max_spread_bps: float = 35.0
+    exploration_enabled: bool = True
+    exploration_trade_fraction_pct: float = 20.0
+    exploration_min_forecast_bps: float = 20.0
+    exploration_max_negative_edge_bps: float = 60.0
+    exploration_max_spread_bps: float = 20.0
     day_timezone: str = "Europe/Amsterdam"
     state_path: str = "/data/coinbase_autonomous_canary.json"
 
@@ -123,6 +128,19 @@ class CoinbaseAutonomousConfig:
             high_risk_fallback=bool(cfg.get("high_risk_fallback", True)),
             high_risk_min_live_net_edge_bps=max(0.0, float(cfg.get("high_risk_min_live_net_edge_bps", 0.0))),
             high_risk_max_spread_bps=max(0.0, float(cfg.get("high_risk_max_spread_bps", 35.0))),
+            exploration_enabled=bool(cfg.get("exploration_enabled", True)),
+            exploration_trade_fraction_pct=min(
+                100.0, max(1.0, float(cfg.get("exploration_trade_fraction_pct", 20.0)))
+            ),
+            exploration_min_forecast_bps=max(
+                0.0, float(cfg.get("exploration_min_forecast_bps", 20.0))
+            ),
+            exploration_max_negative_edge_bps=max(
+                0.0, float(cfg.get("exploration_max_negative_edge_bps", 60.0))
+            ),
+            exploration_max_spread_bps=max(
+                0.0, float(cfg.get("exploration_max_spread_bps", 20.0))
+            ),
             day_timezone=str(cfg.get("day_timezone", "Europe/Amsterdam") or "Europe/Amsterdam"),
             state_path=str(cfg.get("state_path", "/data/coinbase_autonomous_canary.json")),
         )
@@ -1191,6 +1209,7 @@ class CoinbaseAutonomousExecutor:
         min_edge_override_bps: float | None = None,
         max_trade_override_eur: float | None = None,
         max_spread_override_bps: float | None = None,
+        force_market: bool = False,
     ) -> dict[str, Any] | None:
         forecast_move_bps = max(0.0, float(decision.get("forecast_move_bps") or 0.0))
         probability_up = float(decision.get("probability_up") or 0.0)
@@ -1274,7 +1293,7 @@ class CoinbaseAutonomousExecutor:
 
             try:
                 quote_size = target_eur / quote_to_eur
-                if self.config.maker_first:
+                if self.config.maker_first and not force_market:
                     fee_headroom = 1.0 + self.config.max_preview_fee_bps / 10_000.0
                     quote_size = quote_size / max(fee_headroom, 1.0)
 
@@ -1327,7 +1346,7 @@ class CoinbaseAutonomousExecutor:
                     )
                     continue
 
-                if self.config.maker_first:
+                if self.config.maker_first and not force_market:
                     limit_text = format(book.bid_price, "f")
                     preview = self.client.preview_spot_limit_order(
                         product_id=product,
@@ -1755,7 +1774,25 @@ class CoinbaseAutonomousExecutor:
                         if str(row.get("risk_tier") or "").lower() == "high"
                     ]
 
-                    def best_route(rows: list[dict[str, Any]]) -> tuple[dict[str, Any], dict[str, Any]] | None:
+                    entry_diag: dict[str, Any] = {
+                        "at": ts,
+                        "decisions_seen": len(longs),
+                        "normal_decisions": len(normal_longs),
+                        "high_risk_decisions": len(high_longs),
+                        "routes_considered": 0,
+                        "accepted_routes": 0,
+                        "rejects": {},
+                        "exploration_attempted": False,
+                    }
+
+                    def best_route(
+                        rows: list[dict[str, Any]],
+                        *,
+                        min_edge_override_bps: float | None = None,
+                        max_trade_override_eur: float | None = None,
+                        max_spread_override_bps: float | None = None,
+                        force_market: bool = False,
+                    ) -> tuple[dict[str, Any], dict[str, Any]] | None:
                         best_pair: tuple[dict[str, Any], dict[str, Any]] | None = None
                         for decision in rows:
                             route = self._best_entry_route(
@@ -1763,6 +1800,11 @@ class CoinbaseAutonomousExecutor:
                                 balances=balances,
                                 spendable_eur=spendable_eur,
                                 max_trade_eur=max_trade_eur,
+                                diagnostics=entry_diag,
+                                min_edge_override_bps=min_edge_override_bps,
+                                max_trade_override_eur=max_trade_override_eur,
+                                max_spread_override_bps=max_spread_override_bps,
+                                force_market=force_market,
                             )
                             if route is None:
                                 continue
@@ -1776,9 +1818,54 @@ class CoinbaseAutonomousExecutor:
                     best_pair = best_route(normal_longs)
                     if best_pair is None and self.config.high_risk_fallback:
                         best_pair = best_route(high_longs)
+
+                    if (
+                        best_pair is None
+                        and self.config.exploration_enabled
+                        and self.state.day_settled_trades < self.config.daily_trade_target
+                    ):
+                        exploration_rows = [
+                            row for row in longs
+                            if float(row.get("forecast_move_bps") or 0.0)
+                            >= self.config.exploration_min_forecast_bps
+                        ]
+                        if exploration_rows:
+                            entry_diag["exploration_attempted"] = True
+                            exploration_trade_eur = max(
+                                self.config.min_order_eur,
+                                float(ready["portfolio_nav_eur"])
+                                * self.config.exploration_trade_fraction_pct / 100.0,
+                            )
+                            exploration_pair = best_route(
+                                exploration_rows,
+                                min_edge_override_bps=-self.config.exploration_max_negative_edge_bps,
+                                max_trade_override_eur=exploration_trade_eur,
+                                max_spread_override_bps=self.config.exploration_max_spread_bps,
+                                force_market=True,
+                            )
+                            if exploration_pair is not None:
+                                decision, route = exploration_pair
+                                decision = {
+                                    **decision,
+                                    "risk_tier": "exploration",
+                                    "reason": "daily_learning_exploration",
+                                }
+                                route["risk_tier"] = "exploration"
+                                best_pair = (decision, route)
+                                entry_diag["exploration_selected"] = True
+                                entry_diag["exploration_notional_eur"] = round(
+                                    float(route.get("notional_eur") or 0.0), 8
+                                )
+
                     if best_pair is not None:
                         decision, route = best_pair
+                        entry_diag["selected_product"] = route.get("product_id")
+                        entry_diag["selected_risk_tier"] = decision.get("risk_tier")
+                        entry_diag["selected_after_cost_edge_bps"] = round(
+                            float(route.get("after_cost_edge_bps") or 0.0), 4
+                        )
                         action = self._submit_buy(route=route, decision=decision, now=ts)
+                    self.state.entry_diagnostics = entry_diag
 
             self.state.last_error = None
             self._save()
@@ -1892,6 +1979,11 @@ class CoinbaseAutonomousExecutor:
                 "high_risk_fallback": self.config.high_risk_fallback,
                 "high_risk_min_live_net_edge_bps": self.config.high_risk_min_live_net_edge_bps,
                 "high_risk_max_spread_bps": self.config.high_risk_max_spread_bps,
+                "exploration_enabled": self.config.exploration_enabled,
+                "exploration_trade_fraction_pct": self.config.exploration_trade_fraction_pct,
+                "exploration_min_forecast_bps": self.config.exploration_min_forecast_bps,
+                "exploration_max_negative_edge_bps": self.config.exploration_max_negative_edge_bps,
+                "exploration_max_spread_bps": self.config.exploration_max_spread_bps,
                 "stop_after_daily_profit_target": self.config.stop_after_daily_profit_target,
                 "day_timezone": self.config.day_timezone,
                 "full_capacity": self.config.full_capacity,
