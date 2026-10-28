@@ -393,6 +393,10 @@ class CoinbaseOpportunityEngine:
                 "quote_volume_24h": quote_volume,
                 "new_listing": is_new_listing,
                 "first_seen_at": first_seen,
+                "base_increment": row.get("base_increment"),
+                "quote_increment": row.get("quote_increment"),
+                "base_min_size": row.get("base_min_size"),
+                "quote_min_size": row.get("quote_min_size"),
                 "orderflow_fresh": bool(realtime.get("fresh")),
                 "book_imbalance": self._float(realtime.get("book_imbalance")),
                 "trade_flow_imbalance": self._float(realtime.get("trade_flow_imbalance")),
@@ -464,6 +468,10 @@ class CoinbaseOpportunityEngine:
                         "book_imbalance": candidate["book_imbalance"],
                         "trade_flow_imbalance": candidate["trade_flow_imbalance"],
                         "trade_velocity_ratio": candidate["trade_velocity_ratio"],
+                        "base_increment": candidate.get("base_increment"),
+                        "quote_increment": candidate.get("quote_increment"),
+                        "base_min_size": candidate.get("base_min_size"),
+                        "quote_min_size": candidate.get("quote_min_size"),
                     }
                 )
 
