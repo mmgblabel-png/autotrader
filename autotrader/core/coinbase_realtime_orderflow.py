@@ -91,8 +91,18 @@ class CoinbaseRealtimeOrderflowEngine:
 
     @staticmethod
     def _trade_side(value: object) -> str:
-        side = str(value or "").upper()
-        return side if side in {"BUY", "SELL"} else "UNKNOWN"
+        """Return aggressor side from Coinbase's reported maker side.
+
+        Coinbase Advanced market-trades reports side as the maker side.
+        Therefore maker BUY means an aggressive SELL hit the bid, while maker
+        SELL means an aggressive BUY lifted the ask.
+        """
+        maker_side = str(value or "").upper()
+        if maker_side == "BUY":
+            return "SELL"
+        if maker_side == "SELL":
+            return "BUY"
+        return "UNKNOWN"
 
     def _on_open(self) -> None:
         with self._lock:
