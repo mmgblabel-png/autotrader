@@ -282,6 +282,14 @@ async def startup() -> None:
     app.state.arm_store = LiveArmIntentStore(_ARM_PATH, allow_cross_release_resume=True)
     app.state.live_armed = False
 
+    # Reconcile cash/risk persistence before evaluating persisted live intent.
+    # This is state-only: no order can be placed by reconcile_runtime_state().
+    try:
+        await asyncio.to_thread(app.state.executor.reconcile_runtime_state)
+        app.state.executor_status = app.state.executor.status()
+    except Exception as exc:
+        log.warning("Coinbase local startup state reconcile failed safely: %s", type(exc).__name__)
+
     # Fail closed unless the exact isolated portfolio is configured and authenticated.
     portfolio_id = str(app.state.executor.config.portfolio_id or "").strip()
     if not portfolio_id and app.state.executor.config.require_isolated_portfolio:
