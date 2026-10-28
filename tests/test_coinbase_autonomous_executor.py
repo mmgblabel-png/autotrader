@@ -1029,3 +1029,73 @@ def test_expired_maker_seed_falls_back_to_market_once(tmp_path, monkeypatch):
     )
     assert third["pending_order"] is None
     assert any(row.get("action") == "SEED_FILLED" for row in third["order_audit"])
+
+
+def test_expired_maker_entry_falls_back_to_market_when_edge_survives(tmp_path, monkeypatch):
+    _set_live_env(monkeypatch)
+    fake = FakeCoinbase()
+    fake.eur = 6.0
+    fake.btc = 0.0
+    cfg = CoinbaseAutonomousConfig(
+        state_path=str(tmp_path / "entry-market-fallback.json"),
+        portfolio_id="agent-portfolio",
+        require_isolated_portfolio=True,
+        require_shadow_promotion=False,
+        full_capacity=True,
+        allow_dynamic_products=True,
+        maker_first=True,
+        maker_entry_market_fallback=True,
+        maker_order_age_seconds=5.0,
+        max_taker_entry_fee_bps=60.0,
+        max_taker_entry_slippage_bps=35.0,
+        managed_capital_pct=100.0,
+        cash_reserve_pct=0.0,
+        max_single_trade_pct=100.0,
+        min_live_net_edge_bps=8.0,
+        assumed_exit_fee_bps=30.0,
+    )
+    executor = CoinbaseAutonomousExecutor(cfg, client=fake)
+    executor.state.managed_cash_eur = 6.0
+
+    first = executor.tick(
+        armed=True,
+        now=1000.0,
+        shadow_status={
+            "promotion_ready": False,
+            "last_signal": {
+                "decisions": [{
+                    **_long_decision("XRP-EUR:300:maker-fallback", 120),
+                    "product_id": "XRP-EUR",
+                    "risk_tier": "high",
+                }]
+            },
+        },
+    )
+    assert first["pending_order"] is not None
+    assert first["pending_order"]["purpose"] == "entry"
+    assert first["pending_order"]["order_type"] == "limit"
+    first_order_id = first["pending_order"]["order_id"]
+
+    fake.orders[first_order_id]["status"] = "OPEN"
+    second = executor.tick(
+        armed=True,
+        now=1006.0,
+        shadow_status={
+            "promotion_ready": False,
+            "last_signal": {
+                "decisions": [{
+                    **_long_decision("XRP-EUR:300:maker-fallback", 120),
+                    "product_id": "XRP-EUR",
+                    "risk_tier": "high",
+                }]
+            },
+        },
+    )
+
+    assert second["pending_order"] is not None
+    assert second["pending_order"]["purpose"] == "entry"
+    assert second["pending_order"]["order_type"] == "market"
+    assert second["pending_order"]["market_fallback_used"] is True
+    assert second["last_action"]["action"] == "ENTRY_MARKET_FALLBACK_SUBMITTED"
+    assert fake.created[-1]["side"] == "BUY"
+    assert fake.created[-1].get("order_type") != "limit"
