@@ -2026,7 +2026,12 @@ class CoinbaseAutonomousExecutor:
                     + float(balances.get("USDC") or 0.0)
                     * float(balances.get("_USDC_TO_EUR") or 0.0)
                 )
-                hard_max_trade = float(ready["max_single_trade_eur"])
+                # Seed conversion reduces existing BTC inventory and does
+                # not create a new directional position. Daily entry-risk
+                # sizing must therefore never split or block seed liquidation.
+                hard_max_trade = float(
+                    ready.get("hard_max_single_trade_eur", ready["max_single_trade_eur"])
+                )
                 max_trade = (
                     hard_max_trade
                     if self.config.full_capacity
