@@ -1,6 +1,6 @@
-"""Standalone Coinbase-only control dashboard.
+"""Professional one-page Coinbase RiskTrader dashboard.
 
-This page intentionally contains no Bitvavo portfolio, order, PnL or control data.
+Coinbase-only. The page intentionally excludes Bitvavo and other portfolios.
 """
 
 from __future__ import annotations
@@ -10,245 +10,304 @@ COINBASE_DASHBOARD_HTML = r'''<!doctype html>
 <html lang="nl">
 <head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Coinbase Agent | Dedicated Control Room</title>
+<title>Coinbase RiskTrader | Control Room</title>
 <style>
-:root{--bg:#050b18;--panel:#0b1528;--panel2:#101d35;--line:#203252;--text:#f4f7ff;--muted:#8fa4c5;--blue:#3773f5;--blue2:#6ba4ff;--green:#31d19a;--amber:#f2b84b;--red:#ff6577}
-*{box-sizing:border-box}body{margin:0;min-height:100vh;color:var(--text);font-family:Inter,Segoe UI,Arial,sans-serif;background:radial-gradient(circle at 80% 0,#153b87 0,#081126 34%,#050b18 70%)}
-.hidden{display:none!important}.wrap{max-width:1440px;margin:auto;padding:28px}.top{display:flex;justify-content:space-between;gap:18px;align-items:center;margin-bottom:22px}.brand{display:flex;align-items:center;gap:15px}.logo{width:52px;height:52px;border-radius:50%;background:#fff;color:#1652f0;display:grid;place-items:center;font-size:26px;font-weight:950;box-shadow:0 0 0 6px #1652f022}.eyebrow{font-size:11px;letter-spacing:.14em;text-transform:uppercase;color:var(--blue2);font-weight:850}.title{font-size:30px;font-weight:900;margin-top:3px}.sub{color:var(--muted);font-size:12px}.actions{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
-button,.btn{border:0;border-radius:10px;padding:11px 15px;font-weight:850;cursor:pointer;background:var(--blue);color:#fff}button.secondary,.btn.secondary{background:#0d1930;color:var(--text);border:1px solid var(--line)}button.danger{background:#3a1821;color:#ffdbe1;border:1px solid #7a3241}button:disabled{opacity:.45;cursor:not-allowed}.pill,.badge{display:inline-flex;align-items:center;gap:7px;border:1px solid var(--line);border-radius:999px;padding:7px 11px;color:var(--muted);font-size:11px}.badge.ok{color:var(--green);border-color:#23604f}.badge.warn{color:var(--amber);border-color:#6c5122}.badge.bad{color:var(--red);border-color:#743342}.dot{width:8px;height:8px;border-radius:50%;background:var(--green);box-shadow:0 0 13px var(--green)}.dot.off{background:var(--red);box-shadow:0 0 13px var(--red)}
-.login{max-width:430px;margin:10vh auto;padding:28px;background:#0b1528ee;border:1px solid var(--line);border-radius:22px;box-shadow:0 30px 90px #0008}.login h1{margin:5px 0 6px}.field{display:grid;gap:7px;margin:14px 0}.field label{font-size:11px;color:var(--muted)}input{width:100%;border:1px solid var(--line);background:#071126;color:var(--text);border-radius:10px;padding:12px;outline:none}input:focus{border-color:var(--blue)}.err{min-height:20px;color:var(--red);font-size:12px;margin-top:10px}
-.hero{display:grid;grid-template-columns:1.4fr repeat(3,1fr);gap:14px}.card{background:linear-gradient(145deg,#101d35f5,#091426f5);border:1px solid var(--line);border-radius:18px;padding:18px;box-shadow:0 14px 40px #0003}.hero-main{min-height:136px;background:linear-gradient(135deg,#153873dd,#0b1a34 65%)}.label{color:var(--muted);font-size:11px;text-transform:uppercase;letter-spacing:.08em}.value{font-size:28px;font-weight:900;margin-top:8px}.big{font-size:37px}.green{color:var(--green)}.blue{color:var(--blue2)}.amber{color:var(--amber)}.red{color:var(--red)}
-.section{margin-top:18px}.section-title{display:flex;align-items:center;gap:12px;margin:24px 0 10px}.section-title h2{font-size:13px;margin:0;text-transform:uppercase;letter-spacing:.12em;color:#b7c7e4}.section-title .line{height:1px;background:var(--line);flex:1}
-.grid4{display:grid;grid-template-columns:repeat(4,1fr);gap:14px}.grid3{display:grid;grid-template-columns:repeat(3,1fr);gap:14px}.two{display:grid;grid-template-columns:1.15fr .85fr;gap:14px}.metric{display:flex;justify-content:space-between;gap:15px;padding:11px 0;border-bottom:1px solid #182943;color:var(--muted);font-size:12px}.metric b{color:var(--text);text-align:right}.bar{height:10px;border-radius:99px;background:#071126;overflow:hidden;margin:10px 0}.bar i{display:block;height:100%;background:linear-gradient(90deg,var(--blue),var(--green));border-radius:inherit}.notice{padding:12px 14px;border-radius:10px;background:#131d31;border-left:3px solid var(--blue);font-size:12px;color:#c9d6ee}.notice.warn{border-left-color:var(--amber);background:#2b2414}.table-wrap{overflow:auto;border:1px solid #1b2d49;border-radius:12px;max-height:400px}.table{width:100%;border-collapse:collapse;font-size:12px;min-width:680px}.table th{text-align:left;position:sticky;top:0;background:#101d35;color:var(--muted);padding:10px;border-bottom:1px solid var(--line)}.table td{padding:11px 10px;border-bottom:1px solid #172740}.mono{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-variant-numeric:tabular-nums}.foot{display:flex;justify-content:space-between;gap:10px;margin-top:20px;color:var(--muted);font-size:10px}
-.gates{display:flex;flex-wrap:wrap;gap:7px;margin-top:10px}.gate{border:1px solid var(--line);background:#081326;border-radius:999px;padding:6px 9px;font-size:10px;color:var(--muted)}.gate.pass{color:var(--green);border-color:#245b4c}.gate.fail{color:var(--amber);border-color:#695323}
-@media(max-width:1000px){.hero,.grid4{grid-template-columns:repeat(2,1fr)}.two,.grid3{grid-template-columns:1fr}}@media(max-width:600px){.wrap{padding:15px}.top{align-items:flex-start;flex-direction:column}.hero,.grid4{grid-template-columns:1fr}}
+:root{
+  --bg:#050914;--panel:#0b1424;--panel2:#0f1b30;--panel3:#111f37;--line:#1f304b;
+  --text:#f5f7fb;--muted:#8ea0bc;--blue:#3773f5;--blue2:#78a6ff;--green:#39d39f;
+  --red:#ff667a;--amber:#f0b74b;--shadow:0 18px 55px rgba(0,0,0,.28)
+}
+*{box-sizing:border-box}html{scroll-behavior:smooth}
+body{margin:0;min-height:100vh;background:
+radial-gradient(circle at 85% -10%,#1b438e 0,transparent 29%),
+linear-gradient(180deg,#07101f 0,#050914 38%,#040812 100%);
+color:var(--text);font-family:Inter,Segoe UI,Arial,sans-serif}
+.hidden{display:none!important}.wrap{max-width:1500px;margin:auto;padding:24px}
+header{display:flex;align-items:center;justify-content:space-between;gap:18px;margin-bottom:18px}
+.brand{display:flex;align-items:center;gap:14px}.coin{width:48px;height:48px;border-radius:50%;display:grid;place-items:center;background:#fff;color:#1652f0;font-size:25px;font-weight:950;box-shadow:0 0 0 5px rgba(22,82,240,.14)}
+.eyebrow,.kicker{font-size:10px;letter-spacing:.14em;text-transform:uppercase;color:var(--blue2);font-weight:850}
+h1{font-size:27px;margin:3px 0 2px}.subtitle{color:var(--muted);font-size:12px}
+.actions{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+button{border:0;border-radius:10px;padding:10px 14px;font-weight:800;color:#fff;background:var(--blue);cursor:pointer}
+button.secondary{background:#0b1629;border:1px solid var(--line)}button.danger{background:#35151e;border:1px solid #74303f}
+button:disabled{opacity:.45;cursor:not-allowed}
+.statuspill,.tag{display:inline-flex;align-items:center;gap:7px;padding:7px 10px;border-radius:999px;border:1px solid var(--line);font-size:10px;color:var(--muted);font-weight:750}
+.dot{width:8px;height:8px;border-radius:50%;background:var(--green);box-shadow:0 0 12px var(--green)}.dot.off{background:var(--red);box-shadow:0 0 12px var(--red)}
+.notice{border:1px solid #264578;background:#0b1a32;border-left:3px solid var(--blue);border-radius:12px;padding:12px 14px;color:#cbd8ee;font-size:12px;margin-bottom:14px}
+.notice.warn{border-left-color:var(--amber);background:#251e10;border-color:#54431f}.notice.bad{border-left-color:var(--red);background:#27121a;border-color:#5b2734}
+.grid5{display:grid;grid-template-columns:1.2fr repeat(4,1fr);gap:12px}.grid4{display:grid;grid-template-columns:repeat(4,1fr);gap:12px}
+.two{display:grid;grid-template-columns:1.25fr .75fr;gap:12px}.two-even{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+.card{background:linear-gradient(145deg,rgba(16,29,51,.97),rgba(8,18,34,.97));border:1px solid var(--line);border-radius:16px;padding:16px;box-shadow:var(--shadow)}
+.hero{background:linear-gradient(135deg,#153971cc,#0b1a34 67%)}
+.label{font-size:10px;letter-spacing:.08em;text-transform:uppercase;color:var(--muted);font-weight:800}.value{font-size:27px;font-weight:900;margin-top:7px;line-height:1.05}.value.big{font-size:34px}.sub{font-size:11px;color:var(--muted);margin-top:5px;line-height:1.45}
+.green{color:var(--green)}.red{color:var(--red)}.amber{color:var(--amber)}.blue{color:var(--blue2)}
+.sectionhead{display:flex;align-items:center;gap:12px;margin:20px 0 9px}.sectionhead h2{font-size:12px;margin:0;text-transform:uppercase;letter-spacing:.13em;color:#bdc9dd}.sectionhead i{height:1px;background:var(--line);flex:1}
+.livebox{display:grid;grid-template-columns:1.2fr .8fr;gap:14px;align-items:stretch}.activity{min-height:215px}
+.activitytop{display:flex;justify-content:space-between;gap:12px;align-items:flex-start}.activitytitle{font-size:25px;font-weight:900;margin:8px 0 3px}.activitymeta{display:flex;gap:7px;flex-wrap:wrap;margin-top:12px}
+.metric{display:flex;justify-content:space-between;gap:15px;padding:10px 0;border-bottom:1px solid #182942;color:var(--muted);font-size:11px}.metric:last-child{border-bottom:0}.metric b{color:var(--text);text-align:right}
+.pnlbreakdown{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-top:12px}.mini{background:#091426;border:1px solid #1c2d48;border-radius:11px;padding:11px}.mini b{display:block;font-size:16px;margin-top:4px}
+.chartbox{height:160px;margin-top:10px;background:#071121;border:1px solid #172944;border-radius:12px;overflow:hidden;position:relative}.chartbox svg{width:100%;height:100%}.chart-empty{display:grid;place-items:center;height:100%;color:var(--muted);font-size:11px}
+.tablewrap{overflow:auto;border:1px solid #1b2e49;border-radius:12px}.table{width:100%;border-collapse:collapse;min-width:950px;font-size:11px}.table th{position:sticky;top:0;text-align:left;background:#101d35;color:var(--muted);font-size:10px;text-transform:uppercase;letter-spacing:.04em;padding:10px;border-bottom:1px solid var(--line)}.table td{padding:11px 10px;border-bottom:1px solid #172740;vertical-align:middle}.table tr:last-child td{border-bottom:0}
+.result{font-weight:900}.reason{display:inline-flex;padding:4px 7px;border-radius:999px;background:#0a172a;border:1px solid #213753;color:#b9c8df}
+.mono{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-variant-numeric:tabular-nums}
+.progress{height:8px;background:#071020;border-radius:999px;overflow:hidden;margin-top:9px}.progress i{display:block;height:100%;background:linear-gradient(90deg,var(--blue),var(--green));border-radius:inherit}
+.gates{display:flex;gap:6px;flex-wrap:wrap;margin-top:10px}.gate{font-size:9px;padding:5px 7px;border-radius:999px;border:1px solid #245342;color:var(--green);background:#071a17}.gate.fail{border-color:#6f4e22;color:var(--amber);background:#1f1809}
+.insight{padding:12px;border-radius:11px;background:#0a1527;border:1px solid #1c304c;margin-top:10px;font-size:11px;line-height:1.55;color:#c7d3e7}.insight strong{color:#fff}
+.login{max-width:420px;margin:12vh auto;padding:26px;background:#0b1528f7;border:1px solid var(--line);border-radius:20px;box-shadow:0 35px 90px #0008}.login h2{margin:5px 0}.field{display:grid;gap:6px;margin:13px 0}.field label{font-size:10px;color:var(--muted)}input{width:100%;padding:11px;border-radius:9px;border:1px solid var(--line);background:#071126;color:var(--text);outline:none}.err{min-height:18px;color:var(--red);font-size:11px;margin-top:8px}
+.foot{display:flex;justify-content:space-between;gap:12px;margin:18px 0 5px;color:var(--muted);font-size:9px}
+@media(max-width:1100px){.grid5{grid-template-columns:repeat(2,1fr)}.grid4{grid-template-columns:repeat(2,1fr)}.two,.two-even,.livebox{grid-template-columns:1fr}}
+@media(max-width:650px){.wrap{padding:13px}header{align-items:flex-start;flex-direction:column}.grid5,.grid4{grid-template-columns:1fr}.pnlbreakdown{grid-template-columns:1fr}.value.big{font-size:30px}}
 </style>
 </head>
 <body>
 <div id="login" class="login">
-  <div class="eyebrow">Coinbase dedicated control room</div>
-  <h1>Coinbase Agent</h1>
-  <p class="sub">Alleen Coinbase Agent-data, Coinbase execution en Coinbase-controls.</p>
-  <div class="field"><label>Gebruikersnaam</label><input id="username" value="admin" autocomplete="username"></div>
-  <div class="field"><label>Wachtwoord</label><input id="password" type="password" autocomplete="current-password"></div>
-  <div class="field"><label>Of API-key</label><input id="apikey" type="password" placeholder="X-API-Key (optioneel)" autocomplete="off"></div>
-  <button onclick="login()">Coinbase Dashboard openen</button><div id="loginerr" class="err"></div>
+  <div class="eyebrow">Coinbase RiskTrader</div><h2>Control Room</h2>
+  <div class="subtitle">Eén dashboard voor geld, trades, redenen, risico en live execution.</div>
+  <div class="field"><label>Gebruikersnaam</label><input id="username" value="admin"></div>
+  <div class="field"><label>Wachtwoord</label><input id="password" type="password"></div>
+  <div class="field"><label>Of lokale API-key</label><input id="apikey" type="password" placeholder="X-API-Key"></div>
+  <button onclick="login()">Dashboard openen</button><div id="loginerr" class="err"></div>
 </div>
 
 <div id="app" class="hidden"><div class="wrap">
-<header class="top">
-  <div class="brand"><div class="logo">C</div><div><div class="eyebrow">Dedicated Coinbase Agent</div><div class="title">Coinbase Control Room</div><div class="sub">Isolated portfolio · BTC-EUR SPOT · autonome evidence-gated execution</div></div></div>
-  <div class="actions"><span class="pill"><span id="statusdot" class="dot off"></span><b id="topstatus">CONTROLEREN</b></span><button class="secondary" onclick="refresh()">Vernieuwen</button><button id="livebtn" onclick="activateLive()" disabled>Coinbase Live</button><button id="stopbtn" class="danger hidden" onclick="deactivateLive()">Stop Live</button><button class="secondary" onclick="logout()">Uitloggen</button></div>
+<header>
+  <div class="brand"><div class="coin">C</div><div><div class="eyebrow">Dedicated Coinbase Agent</div><h1>RiskTrader Control Room</h1><div class="subtitle">Eén pagina · isolated portfolio · live spot execution · automatische refresh</div></div></div>
+  <div class="actions">
+    <span class="statuspill"><span id="statusdot" class="dot off"></span><span id="topstatus">CONTROLEREN</span></span>
+    <button class="secondary" onclick="refresh()">Vernieuwen</button>
+    <button id="livebtn" onclick="activateLive()" disabled>Live aan</button>
+    <button id="stopbtn" class="danger hidden" onclick="deactivateLive()">Stop live</button>
+    <button class="secondary" onclick="logout()">Uitloggen</button>
+  </div>
 </header>
 
 <div id="notice" class="notice">Coinbase-data laden…</div>
 
-<section class="section hero">
-  <div class="card hero-main"><div class="label">Agent portfolio</div><div id="agentcash" class="value big">—</div><div id="portfolioscope" class="sub">Dedicated isolated Coinbase portfolio</div><div class="gates"><span class="gate">100% assigned capacity</span><span class="gate">0% extra reserve</span><span class="gate">3% daily loss</span><span class="gate">10% drawdown</span></div></div>
-  <div class="card"><div class="label">Live status</div><div id="armed" class="value">—</div><div id="armedsub" class="sub">—</div></div>
-  <div class="card"><div class="label">Dagdoel trades</div><div id="evidence" class="value blue">—</div><div id="evidencesub" class="sub">target · nooit geforceerd bij negatieve edge</div></div>
-  <div class="card"><div class="label">Execution scope</div><div id="scope" class="value">MULTI-MARKET</div><div class="sub">Coinbase SPOT · dynamische EUR/USDC opportunity routing</div></div>
+<section class="grid5">
+  <div class="card hero"><div class="label">Agent portfolio nu</div><div id="nav" class="value big">—</div><div id="navsub" class="sub">isolated Coinbase portfolio</div></div>
+  <div class="card"><div class="label">PnL vandaag</div><div id="daypnl" class="value">—</div><div id="daypnlsub" class="sub">gerealiseerd na fees</div></div>
+  <div class="card"><div class="label">Trades vandaag</div><div id="trades" class="value">—</div><div id="tradesub" class="sub">afgeronde round-trips</div></div>
+  <div class="card"><div class="label">Winrate vandaag</div><div id="todaywinrate" class="value">—</div><div id="winsub" class="sub">winst / verlies</div></div>
+  <div class="card"><div class="label">Open exposure</div><div id="exposure" class="value">—</div><div id="exposuresub" class="sub">positie of order</div></div>
 </section>
 
-<div class="section-title"><h2>Execution & risk</h2><div class="line"></div><span id="readybadge" class="badge">READINESS</span></div>
-<section class="grid4">
-  <div class="card"><div class="label">Max entry nu</div><div id="maxtrade" class="value">—</div><div class="sub">Tot 100% van toegewezen Agent-capaciteit wanneer gates groen zijn</div></div>
-  <div class="card"><div class="label">Cash reserve</div><div id="reserve" class="value">—</div><div class="sub">blijft buiten nieuwe entries</div></div>
-  <div class="card"><div class="label">Dag PnL target</div><div id="orderssent" class="value">—</div><div id="legacyorders" class="sub">—</div></div>
-  <div class="card"><div class="label">Runtime error</div><div id="runtimeerror" class="value">—</div><div class="sub">Coinbase autonomous executor</div></div>
-</section>
-
-<section class="section two">
-  <div class="card">
-    <div class="label">Readiness gates</div>
-    <div id="gatechips" class="gates"></div>
-    <div class="metric"><span>Ready to arm</span><b id="readytoarm">—</b></div>
-    <div class="metric"><span>Execution ready now</span><b id="execnow">—</b></div>
-    <div class="metric"><span>Trade permission preview</span><b id="preview">—</b></div>
-    <div class="metric"><span>Persistent operator intent</span><b id="intent">—</b></div>
-    <div class="metric"><span>Portfolio isolated</span><b id="isolated">—</b></div>
-  </div>
-  <div class="card">
-    <div class="label">Agent balances</div>
-    <div id="balances"></div>
-    <div class="notice" style="margin-top:12px">Deze kaart leest uitsluitend het geconfigureerde Coinbase Agent-portfolio. Andere Coinbase-portfolios worden niet in dit dashboard getoond.</div>
-  </div>
-</section>
-
-<div class="section-title"><h2>Shadow evidence engine</h2><div class="line"></div><span id="shadowbadge" class="badge">EVIDENCE</span></div>
-<section class="section two">
-  <div class="card">
-    <div class="grid3">
-      <div><div class="label">Winrate</div><div id="winrate" class="value">—</div></div>
-      <div><div class="label">Net PnL</div><div id="shadowpnl" class="value">—</div></div>
-      <div><div class="label">Profit factor</div><div id="pf" class="value">—</div></div>
+<div class="sectionhead"><h2>Wat gebeurt er nu?</h2><i></i><span id="readytag" class="tag">STATUS</span></div>
+<section class="livebox">
+  <div class="card activity">
+    <div class="activitytop">
+      <div><div class="label">Actieve state</div><div id="activitytitle" class="activitytitle">SCANNING</div><div id="activitysub" class="subtitle">Wachten op live data…</div></div>
+      <span id="activitytag" class="tag">—</span>
     </div>
-    <div class="bar"><i id="evidencebar" style="width:0%"></i></div>
-    <div class="metric"><span>Evidence progress</span><b id="evidenceprogress">—</b></div>
-    <div class="metric"><span>Max drawdown</span><b id="shadowdd">—</b></div>
-    <div class="metric"><span>Laatste BTC-EUR prijs</span><b id="lastprice">—</b></div>
-    <div class="metric"><span>Laatste beslisreden</span><b id="decisionreason">—</b></div>
-    <div class="metric"><span>Horizons</span><b>5m · 15m · 30m · 60m</b></div>
+    <div class="activitymeta">
+      <span class="tag" id="activityproduct">product —</span>
+      <span class="tag" id="activityside">side —</span>
+      <span class="tag" id="activitytype">type —</span>
+      <span class="tag" id="activityrisk">risk —</span>
+    </div>
+    <div id="currentmetrics" style="margin-top:10px"></div>
   </div>
   <div class="card">
-    <div class="label">Promotion blockers</div>
-    <div id="blockers" class="gates"></div>
-    <div class="metric"><span>Minimum settled</span><b id="minsettled">—</b></div>
-    <div class="metric"><span>Minimum winrate</span><b id="minwinrate">—</b></div>
-    <div class="metric"><span>Minimum net PnL</span><b id="minpnl">—</b></div>
-    <div class="metric"><span>Minimum profit factor</span><b id="minpf">—</b></div>
-    <div class="metric"><span>Max shadow drawdown</span><b id="maxshadowdd">—</b></div>
+    <div class="label">Waarom winnen/verliezen we?</div>
+    <div class="pnlbreakdown">
+      <div class="mini"><span class="label">Prijsresultaat</span><b id="grosspnl">—</b></div>
+      <div class="mini"><span class="label">Fees</span><b id="fees">—</b></div>
+      <div class="mini"><span class="label">Netto</span><b id="netpnl">—</b></div>
+    </div>
+    <div id="lossinsight" class="insight">Trade-data wordt opgebouwd…</div>
   </div>
 </section>
 
-<div class="section-title"><h2>Coinbase market discovery</h2><div class="line"></div><span class="badge">READ ONLY</span></div>
-<section class="grid4">
-  <div class="card"><div class="label">Coinbase markets</div><div id="markets" class="value">—</div></div>
-  <div class="card"><div class="label">Tradable</div><div id="tradable" class="value">—</div></div>
-  <div class="card"><div class="label">Crypto → crypto</div><div id="cryptocrypto" class="value">—</div></div>
-  <div class="card"><div class="label">Live fundable</div><div id="eurquote" class="value">—</div><div class="sub">quote-valuta beschikbaar in Agent-portfolio</div></div>
-</section>
-
-<div class="section-title"><h2>Realtime order flow</h2><div class="line"></div><span class="badge">WEBSOCKET + REST FALLBACK</span></div>
-<section class="grid4">
-  <div class="card"><div class="label">WebSocket</div><div id="wsstatus" class="value">—</div><div id="wserror" class="sub">—</div></div>
-  <div class="card"><div class="label">Level-2 markets</div><div id="wssubs" class="value">—</div><div class="sub">dynamische topkandidaten</div></div>
-  <div class="card"><div class="label">Top live candidate</div><div id="topcandidate" class="value">—</div><div id="topreason" class="sub">—</div></div>
-  <div class="card"><div class="label">Realtime edge</div><div id="orderflowedge" class="value">—</div><div id="orderflowsub" class="sub">book / trade flow</div></div>
-</section>
-
-<div class="section-title"><h2>Entry diagnostics</h2><div class="line"></div><span class="badge">LIVE ROUTER</span></div>
-<section class="grid4">
-  <div class="card"><div class="label">LONG signals</div><div id="entrysignals" class="value">—</div><div id="entryroutes" class="sub">—</div></div>
-  <div class="card"><div class="label">Best net edge</div><div id="entryedge" class="value">—</div><div id="entryedgeproduct" class="sub">—</div></div>
-  <div class="card"><div class="label">Last reject</div><div id="entryreject" class="value">—</div><div id="entryrejectsub" class="sub">—</div></div>
-  <div class="card"><div class="label">Execution mode</div><div id="entrymode" class="value">—</div><div id="entryselected" class="sub">—</div></div>
-</section>
-
-<div class="section-title"><h2>Coinbase execution audit</h2><div class="line"></div><span class="badge">PERSISTENT</span></div>
+<div class="sectionhead"><h2>PnL vandaag</h2><i></i><span class="tag">CUMULATIEF</span></div>
 <section class="card">
-  <div class="table-wrap"><table class="table"><thead><tr><th>Tijd</th><th>Actie</th><th>Product</th><th>Side</th><th>Notional / size</th><th>Status / reason</th></tr></thead><tbody id="auditrows"><tr><td colspan="6" class="sub">Audit laden…</td></tr></tbody></table></div>
+  <div id="pnlchart" class="chartbox"><div class="chart-empty">Nog geen gesloten trades vandaag.</div></div>
 </section>
 
-<div class="foot"><span>Dedicated Coinbase Agent dashboard</span><span id="updated">—</span></div>
+<div class="sectionhead"><h2>Trade journal</h2><i></i><span id="journalcount" class="tag">0 trades</span></div>
+<section class="card">
+  <div class="tablewrap"><table class="table">
+    <thead><tr><th>Tijd</th><th>Markt</th><th>Risk</th><th>Entry</th><th>Exit</th><th>Fees</th><th>Netto PnL</th><th>Exitreden</th></tr></thead>
+    <tbody id="journal"><tr><td colspan="8" class="subtitle">Trades laden…</td></tr></tbody>
+  </table></div>
+</section>
+
+<div class="sectionhead"><h2>Market scanner</h2><i></i><span class="tag">LIVE INTELLIGENCE</span></div>
+<section class="grid4">
+  <div class="card"><div class="label">Markten gescand</div><div id="scanned" class="value">—</div><div id="eligible" class="sub">—</div></div>
+  <div class="card"><div class="label">LONG signalen</div><div id="signals" class="value">—</div><div id="routes" class="sub">—</div></div>
+  <div class="card"><div class="label">Beste kandidaat</div><div id="candidate" class="value">—</div><div id="candidateedge" class="sub">—</div></div>
+  <div class="card"><div class="label">WebSocket</div><div id="ws" class="value">—</div><div id="wssub" class="sub">—</div></div>
+</section>
+
+<div class="sectionhead"><h2>Risk & execution</h2><i></i><span class="tag">AGENT-PORTFOLIO ONLY</span></div>
+<section class="two-even">
+  <div class="card">
+    <div class="label">Actieve policy</div>
+    <div class="metric"><span>Max daily loss</span><b id="riskdaily">—</b></div>
+    <div class="metric"><span>Max drawdown</span><b id="riskdd">—</b></div>
+    <div class="metric"><span>Max single trade</span><b id="risksingle">—</b></div>
+    <div class="metric"><span>Cash reserve</span><b id="riskreserve">—</b></div>
+    <div class="metric"><span>Current drawdown</span><b id="currentdd">—</b></div>
+    <div class="metric"><span>Max entry nu</span><b id="maxentry">—</b></div>
+  </div>
+  <div class="card">
+    <div class="label">Execution gates</div><div id="gatechips" class="gates"></div>
+    <div class="metric"><span>Armed</span><b id="armed">—</b></div>
+    <div class="metric"><span>Execution ready</span><b id="execready">—</b></div>
+    <div class="metric"><span>Persisted live intent</span><b id="persisted">—</b></div>
+    <div class="metric"><span>Portfolio isolated</span><b id="isolated">—</b></div>
+    <div class="metric"><span>Runtime error</span><b id="runtimeerror">—</b></div>
+  </div>
+</section>
+
+<div class="sectionhead"><h2>Balances</h2><i></i></div>
+<section class="card"><div id="balances"></div></section>
+
+<div class="sectionhead"><h2>Laatste execution events</h2><i></i><span class="tag">TECHNISCHE AUDIT</span></div>
+<section class="card"><div class="tablewrap"><table class="table">
+<thead><tr><th>Tijd</th><th>Actie</th><th>Product</th><th>Side</th><th>Waarde</th><th>Details</th></tr></thead>
+<tbody id="audit"><tr><td colspan="6" class="subtitle">Audit laden…</td></tr></tbody>
+</table></div></section>
+
+<div class="foot"><span>Coinbase RiskTrader · dedicated isolated portfolio</span><span id="updated">—</span></div>
 </div></div>
 
 <script>
-let token=sessionStorage.getItem("coinbase_dashboard_token")||"", apiKey=sessionStorage.getItem("coinbase_dashboard_api_key")||"";
-const euro=v=>Number(v||0).toLocaleString("nl-NL",{style:"currency",currency:"EUR",minimumFractionDigits:2,maximumFractionDigits:4});
-const pct=v=>Number(v||0).toLocaleString("nl-NL",{minimumFractionDigits:2,maximumFractionDigits:2})+"%";
-const num=v=>Number(v||0).toLocaleString("nl-NL",{maximumFractionDigits:4});
+let token=sessionStorage.getItem("coinbase_dashboard_token")||"",apiKey=sessionStorage.getItem("coinbase_dashboard_api_key")||"";
+const E=id=>document.getElementById(id);
+const money=v=>Number(v||0).toLocaleString("nl-NL",{style:"currency",currency:"EUR",minimumFractionDigits:2,maximumFractionDigits:4});
+const dec=(v,n=4)=>Number(v||0).toLocaleString("nl-NL",{maximumFractionDigits:n});
+const pct=v=>Number(v||0).toLocaleString("nl-NL",{minimumFractionDigits:1,maximumFractionDigits:2})+"%";
+const signedMoney=v=>(Number(v||0)>0?"+":"")+money(v);
+const esc=v=>String(v??"—").replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+function set(id,v){E(id).textContent=v}
 function headers(extra={}){const h={"Content-Type":"application/json",...extra};if(token)h.Authorization="Bearer "+token;if(apiKey)h["X-API-Key"]=apiKey;return h}
-function showLogin(message=""){document.getElementById("app").classList.add("hidden");document.getElementById("login").classList.remove("hidden");document.getElementById("loginerr").textContent=message}
-async function api(path,opt={}){const r=await fetch(path,{...opt,headers:headers(opt.headers||{})});let data={};try{data=await r.json()}catch{}if(r.status===401){token="";apiKey="";sessionStorage.removeItem("coinbase_dashboard_token");sessionStorage.removeItem("coinbase_dashboard_api_key");showLogin("Sessie verlopen of API-key ongeldig. Vul je lokale PUBLIC_API_KEY opnieuw in.");throw new Error("Unauthorized")}if(!r.ok)throw new Error(typeof data.detail==="string"?data.detail:JSON.stringify(data.detail||data));return data}
-async function login(){
-  document.getElementById("loginerr").textContent="";
-  apiKey=document.getElementById("apikey").value.trim();
-  try{
-    if(apiKey){sessionStorage.setItem("coinbase_dashboard_api_key",apiKey)}else{const x=await api("/api/auth/login",{method:"POST",body:JSON.stringify({username:document.getElementById("username").value,password:document.getElementById("password").value})});token=x.access_token;sessionStorage.setItem("coinbase_dashboard_token",token)}
-    document.getElementById("login").classList.add("hidden");document.getElementById("app").classList.remove("hidden");await refresh();window.dashboardTimer=setInterval(refresh,10000)
-  }catch(e){document.getElementById("loginerr").textContent=e.message}
+function showLogin(msg=""){E("app").classList.add("hidden");E("login").classList.remove("hidden");E("loginerr").textContent=msg}
+async function api(path,opt={}){const r=await fetch(path,{...opt,headers:headers(opt.headers||{})});let d={};try{d=await r.json()}catch{}if(r.status===401){token="";apiKey="";sessionStorage.clear();showLogin("Sessie verlopen of API-key ongeldig.");throw new Error("Unauthorized")}if(!r.ok)throw new Error(typeof d.detail==="string"?d.detail:JSON.stringify(d.detail||d));return d}
+async function login(){E("loginerr").textContent="";apiKey=E("apikey").value.trim();try{if(apiKey)sessionStorage.setItem("coinbase_dashboard_api_key",apiKey);else{const d=await api("/api/auth/login",{method:"POST",body:JSON.stringify({username:E("username").value,password:E("password").value})});token=d.access_token;sessionStorage.setItem("coinbase_dashboard_token",token)}E("login").classList.add("hidden");E("app").classList.remove("hidden");await refresh();window.dashboardTimer=setInterval(refresh,5000)}catch(e){E("loginerr").textContent=e.message}}
+function logout(){sessionStorage.clear();location.reload()}
+
+function pairTrades(audit){
+  const rows=(Array.isArray(audit)?audit:[]).slice().sort((a,b)=>Number(a.at||0)-Number(b.at||0));
+  const opens={},trades=[];
+  for(const r of rows){
+    if(r.action==="ENTRY_FILLED"){
+      opens[String(r.product_id||"UNKNOWN")]={...r};
+    }
+    if(r.action==="EXIT_FILLED"){
+      const p=String(r.product_id||"UNKNOWN"),en=opens[p]||{};
+      const entryFee=Number(en.fees_eur||0),exitFee=Number(r.fees_eur||0),net=Number(r.realized_pnl_eur||0);
+      trades.push({
+        at:Number(r.at||0),product:p,risk:en.risk_tier||"—",
+        entry:Number(en.price||0),exit:Number(r.price||0),
+        fees:entryFee+exitFee,pnl:net,gross:net+entryFee+exitFee,
+        reason:r.exit_reason||r.reason||"—",entryAt:Number(en.at||0),
+        entryType:en.order_type||"—",exitType:r.order_type||"—"
+      });
+      delete opens[p];
+    }
+  }
+  return trades;
 }
-function logout(){token="";apiKey="";sessionStorage.removeItem("coinbase_dashboard_token");sessionStorage.removeItem("coinbase_dashboard_api_key");if(window.dashboardTimer)clearInterval(window.dashboardTimer);location.reload()}
-function yes(v){return v?'<span class="green">JA</span>':'<span class="red">NEE</span>'}
-function setText(id,v){document.getElementById(id).textContent=v}
+function journalRows(trades){
+  if(!trades.length)return '<tr><td colspan="8" class="subtitle">Nog geen gesloten strategy-trades in de lokale audit.</td></tr>';
+  return trades.slice().reverse().map(t=>{
+    const cls=t.pnl>=0?"green":"red";
+    return '<tr><td class="mono">'+new Date(t.at*1000).toLocaleTimeString("nl-NL")+'</td>'+
+    '<td><b>'+esc(t.product)+'</b></td><td>'+esc(t.risk)+'</td>'+
+    '<td class="mono">'+dec(t.entry,8)+'</td><td class="mono">'+dec(t.exit,8)+'</td>'+
+    '<td class="mono">'+money(t.fees)+'</td><td class="mono result '+cls+'">'+signedMoney(t.pnl)+'</td>'+
+    '<td><span class="reason">'+esc(t.reason)+'</span></td></tr>'
+  }).join("");
+}
+function drawPnl(trades){
+  if(!trades.length){E("pnlchart").innerHTML='<div class="chart-empty">Nog geen gesloten trades in de lokale audit.</div>';return}
+  let cum=0;const pts=trades.map((t,i)=>({i:i+1,v:(cum+=t.pnl)}));
+  const vals=pts.map(x=>x.v).concat([0]),min=Math.min(...vals),max=Math.max(...vals),range=Math.max(.01,max-min);
+  const W=900,H=150,pad=18;
+  const x=i=>pad+(i/(Math.max(1,pts.length-1)))*(W-pad*2);
+  const y=v=>H-pad-((v-min)/range)*(H-pad*2);
+  const path=pts.map((p,i)=>(i?"L":"M")+x(i).toFixed(1)+" "+y(p.v).toFixed(1)).join(" ");
+  const zero=y(0).toFixed(1);
+  E("pnlchart").innerHTML='<svg viewBox="0 0 '+W+' '+H+'" preserveAspectRatio="none">'+
+    '<line x1="0" y1="'+zero+'" x2="'+W+'" y2="'+zero+'" stroke="#27405f" stroke-width="1"/>'+
+    '<path d="'+path+'" fill="none" stroke="'+(cum>=0?"#39d39f":"#ff667a")+'" stroke-width="3" vector-effect="non-scaling-stroke"/>'+
+    pts.map((p,i)=>'<circle cx="'+x(i)+'" cy="'+y(p.v)+'" r="4" fill="'+(p.v>=0?"#39d39f":"#ff667a")+'"/>').join("")+
+    '</svg>';
+}
 function auditRows(rows){
-  if(!Array.isArray(rows)||!rows.length)return '<tr><td colspan="6" class="sub">Nog geen nieuwe geaudite Coinbase execution-events.</td></tr>';
-  return rows.slice().reverse().map(r=>{
-    const t=r.at?new Date(Number(r.at)*1000).toLocaleString("nl-NL"):"—";
-    const side=r.side||"—"; const amt=r.notional_eur??r.quote_size??r.base_size??r.managed_cash_eur??"—";
-    return '<tr><td class="mono">'+t+'</td><td>'+(r.action||r.event||"—")+'</td><td>'+(r.product_id||"BTC-EUR")+'</td><td>'+side+'</td><td class="mono">'+amt+'</td><td>'+(r.status||r.reason||r.error||"—")+'</td></tr>'
+  const list=(rows||[]).slice(-18).reverse();
+  if(!list.length)return '<tr><td colspan="6" class="subtitle">Nog geen execution-events.</td></tr>';
+  return list.map(r=>{
+    const detail=r.exit_reason||r.reason||r.status||r.error||r.risk_tier||"—";
+    const amt=r.realized_pnl_eur!=null?signedMoney(r.realized_pnl_eur):(r.quote_size??r.base_size??r.managed_cash_eur??"—");
+    return '<tr><td class="mono">'+(r.at?new Date(Number(r.at)*1000).toLocaleTimeString("nl-NL"):"—")+'</td>'+
+    '<td>'+esc(r.action||r.event)+'</td><td>'+esc(r.product_id||"—")+'</td><td>'+esc(r.side||"—")+'</td>'+
+    '<td class="mono">'+esc(amt)+'</td><td>'+esc(detail)+'</td></tr>'
   }).join("")
 }
-function gateChips(failed){
-  const known=["enabled","execution_mode_live","live_execution_approved","coinbase_adapter_installed","coinbase_live_trading","emergency_stop_off","confirmation_present","runtime_armed","credentials_compatible","authenticated","isolated_portfolio_configured","daily_loss_stop_off","drawdown_stop_off","unmanaged_inventory_clear","daily_risk_budget_sufficient","shadow_promotion_ready"];
-  const f=new Set(failed||[]);return known.map(g=>'<span class="gate '+(f.has(g)?'fail':'pass')+'">'+(f.has(g)?'WAIT ':'OK ')+g+'</span>').join("")
-}
+function gates(failed){const all=["enabled","execution_mode_live","live_execution_approved","coinbase_adapter_installed","coinbase_live_trading","emergency_stop_off","confirmation_present","runtime_armed","credentials_compatible","authenticated","isolated_portfolio_configured","daily_loss_stop_off","drawdown_stop_off","daily_risk_budget_sufficient","shadow_promotion_ready"];const f=new Set(failed||[]);return all.map(x=>'<span class="gate '+(f.has(x)?"fail":"")+'">'+(f.has(x)?"WAIT ":"OK ")+x+'</span>').join("")}
+
 async function refresh(){
   try{
-    const d=await api("/api/coinbase/dashboard/snapshot");
-    const a=d.autonomous||{}, r=d.readiness||{}, s=d.shadow||{}, o=d.opportunity||{}, rt=d.realtime_orderflow||o.realtime||{}, b=d.balances||{}, u=d.universe||{};
-    const rd=a.readiness||{}; const assets=b.assets||[];
-    setText("agentcash",euro(rd.portfolio_nav_eur||0));
-    setText("portfolioscope",b.portfolio_scoped?"Dedicated isolated Coinbase portfolio":"PORTFOLIO SCOPE NIET BEVESTIGD");
-    const armed=!!a.coinbase_armed; setText("armed",armed?"ARMED":"OFF"); document.getElementById("armed").className="value "+(armed?"green":"red");
-    setText("armedsub",armed?"Agent mag handelen zodra evidence + risk gates groen zijn":"Live execution is gedeactiveerd");
-    document.getElementById("statusdot").className="dot "+(armed?"":"off");setText("topstatus",armed?"COINBASE LIVE":"COINBASE OFF");
-    document.getElementById("livebtn").disabled=armed||!r.ready_to_arm;document.getElementById("stopbtn").classList.toggle("hidden",!armed);
-    const targets=a.daily_targets||{}; const dayTrades=Number(targets.trades_completed||0), tradeTarget=Number(targets.trade_target||10);
-    setText("evidence",dayTrades+" / "+tradeTarget);setText("evidencesub","afgeronde trades vandaag · normal + bounded exploration");
-    const settled=Number(s.settled_trades||0), min=Number((s.promotion_policy||{}).min_settled_trades||30);
-    setText("maxtrade",euro(rd.max_single_trade_eur||0));setText("reserve",euro(rd.required_cash_reserve_eur||0));
-    setText("orderssent",euro(targets.profit_eur||0)+" / "+euro(targets.profit_target_eur||1));setText("legacyorders","nog "+euro(targets.profit_remaining_eur||0)+" naar dagtarget · geen winstgarantie");
-    setText("runtimeerror",a.runtime_error||"GEEN");document.getElementById("runtimeerror").className="value "+(a.runtime_error?"red":"green");
-    document.getElementById("gatechips").innerHTML=gateChips(r.execution_failed_gates||r.failed_gates||[]);
-    setText("readytoarm",r.ready_to_arm?"JA":"NEE");setText("execnow",r.execution_ready_now?"JA":"NEE");
-    setText("preview",(r.trade_permission_preview||{}).passed?"OK":"BLOKKADE");
-    setText("intent",((r.arm_persistence||{}).persisted_armed)?"ARMED INTENT":"OFF");
-    setText("isolated",b.portfolio_scoped?"JA":"NEE");
-    document.getElementById("balances").innerHTML=assets.length?assets.map(x=>'<div class="metric"><span>'+x.currency+'</span><b>'+x.available+' beschikbaar · '+x.hold+' hold</b></div>').join(""):'<div class="sub">Geen assets.</div>';
-    setText("winrate",pct(s.winrate_pct));setText("shadowpnl",euro(s.realized_pnl_eur));setText("pf",s.profit_factor==null?"∞":num(s.profit_factor));
-    setText("shadowdd",pct(s.max_drawdown_pct));setText("lastprice",s.last_mid_price?euro(s.last_mid_price):"—");
-    const decisions=((s.last_signal||{}).decisions||[]);setText("decisionreason",decisions.length?(decisions[decisions.length-1].reason||decisions[decisions.length-1].decision||"—"):"—");
-    const progress=Math.min(100,min?settled/min*100:0);document.getElementById("evidencebar").style.width=progress+"%";setText("evidenceprogress",settled+" / "+min+" ("+progress.toFixed(0)+"%)");
-    const blockers=s.promotion_blockers||[];document.getElementById("blockers").innerHTML=(blockers.length?blockers:["geen blockers"]).map(x=>'<span class="gate '+(blockers.length?"fail":"pass")+'">'+x+'</span>').join("");
-    const pol=s.promotion_policy||{};setText("minsettled",pol.min_settled_trades??"—");setText("minwinrate",pct(pol.min_winrate_pct));setText("minpnl",euro(pol.min_net_pnl_eur));setText("minpf",num(pol.min_profit_factor));setText("maxshadowdd",pct(pol.max_drawdown_pct));
-    setText("markets",o.scanned_markets??u.all??0);setText("tradable",o.tradable_markets??u.tradable??0);setText("cryptocrypto",u.crypto_crypto??0);setText("eurquote",o.fundable_markets??u.eur_quote??0);
-    const top=(o.top_candidates||[])[0]||{};
-    setText("wsstatus",rt.connected?"CONNECTED":"REST");
-    document.getElementById("wsstatus").className="value "+(rt.connected?"green":"blue");
-    setText("wserror",rt.last_error?("fallback: "+rt.last_error):(rt.connected?"live Level-2 + trades":"REST fallback actief"));
-    setText("wssubs",rt.subscribed_count??0);
-    setText("topcandidate",top.product_id||"—");
-    setText("topreason",top.orderflow_fresh?"realtime microstructure":"REST/momentum");
-    setText("orderflowedge",top.product_id?(num(top.realtime_edge_bps||0)+" bps"):"—");
-    setText("orderflowsub",top.product_id?("book "+num(top.book_imbalance||0)+" · flow "+num(top.trade_flow_imbalance||0)+" · velocity "+num(top.trade_velocity_ratio||1)+"x"):"geen candidate");
-    const ed=a.entry_diagnostics||{}, lr=ed.last_reject||{};
-    setText("entrysignals",ed.decisions_seen??0);
-    setText("entryroutes",(ed.routes_considered??0)+" routes · "+(ed.accepted_routes??0)+" accepted");
-    setText("entryedge",ed.best_after_cost_edge_bps==null?"—":num(ed.best_after_cost_edge_bps)+" bps");
-    setText("entryedgeproduct",ed.best_after_cost_product||"geen route gemeten");
-    setText("entryreject",lr.reason||"GEEN");
-    setText("entryrejectsub",lr.product_id?lr.product_id+(lr.after_cost_edge_bps!=null?" · "+num(lr.after_cost_edge_bps)+" bps":""):"geen recente reject");
-    setText("entrymode",ed.exploration_selected?"EXPLORATION":(ed.selected_product?"NORMAL/HIGH":"SCANNING"));
-    document.getElementById("entrymode").className="value "+(ed.exploration_selected?"blue":(ed.selected_product?"green":""));
-    setText("entryselected",ed.selected_product?ed.selected_product+" · "+(ed.selected_risk_tier||"normal"):(ed.exploration_attempted?"exploration onderzocht":"wacht op signal"));
-    document.getElementById("auditrows").innerHTML=auditRows(a.order_audit||[]);
-    const ready=!!r.execution_ready_now, promote=!!s.promotion_ready;
-    document.getElementById("readybadge").className="badge "+(ready?"ok":"warn");setText("readybadge",ready?"EXECUTION READY":"GATED");
-    document.getElementById("shadowbadge").className="badge "+(promote?"ok":"warn");setText("shadowbadge",promote?"PROMOTION READY":"BUILDING EVIDENCE");
-    const msg=armed?(ready?"Coinbase Agent is armed en multi-market execution-ready. Dagtargets: "+dayTrades+"/"+tradeTarget+" trades en "+euro(targets.profit_eur||0)+" / "+euro(targets.profit_target_eur||1)+".":"Coinbase Agent is armed; nieuwe entries wachten nog op: "+(r.execution_failed_gates||[]).join(", ")):"Coinbase Live staat uit. Market scan en shadow research blijven actief.";
-    document.getElementById("notice").textContent=msg;document.getElementById("notice").className="notice "+((armed&&!ready)||!armed?"warn":"");
-    setText("updated","Bijgewerkt "+new Date().toLocaleTimeString("nl-NL"));
-  }catch(e){document.getElementById("notice").textContent="Dashboard update mislukt: "+e.message;document.getElementById("notice").className="notice warn"}
+    const d=await api("/api/coinbase/dashboard/snapshot"),a=d.autonomous||{},r=d.readiness||{},o=d.opportunity||{},rt=d.realtime_orderflow||o.realtime||{},b=d.balances||{};
+    const rd=a.readiness||{},targets=a.daily_targets||{},rules=a.hard_rules||{},audit=a.order_audit||[],tr=pairTrades(audit);
+    const pnl=Number(targets.profit_eur??a.day_pnl_eur??0),wins=tr.filter(x=>x.pnl>0).length,losses=tr.filter(x=>x.pnl<0).length;
+    const fees=tr.reduce((s,x)=>s+x.fees,0),gross=tr.reduce((s,x)=>s+x.gross,0),net=tr.reduce((s,x)=>s+x.pnl,0);
+
+    set("nav",money(rd.portfolio_nav_eur||0));set("navsub",(b.portfolio_scoped?"Isolated portfolio bevestigd":"Portfolio-scope niet bevestigd"));
+    set("daypnl",signedMoney(pnl));E("daypnl").className="value "+(pnl>=0?"green":"red");set("daypnlsub","gerealiseerd vandaag · na fees");
+    set("trades",targets.trades_completed??tr.length);set("tradesub",(targets.trade_target||10)+" dagtarget · trader stopt niet bij target");
+    const wr=(wins+losses)?wins/(wins+losses)*100:0;set("todaywinrate",pct(wr));set("winsub",wins+" winst · "+losses+" verlies");
+
+    const pending=a.pending_order||null,pos=a.managed_position||null;
+    let exposure=0,phase="SCANNING",prod="—",side="—",otype="—",risk=(a.entry_diagnostics||{}).selected_risk_tier||"—",activitySub="Zoekt continu naar de beste Coinbase spot-kans.";
+    if(pos){phase="POSITIE OPEN";prod=pos.product_id||"—";side="LONG";otype="managed";exposure=Number(pos.base_size||0)*Number(pos.entry_price||0);activitySub="Positie wordt bewaakt op stop-loss, take-profit, trailing en signal horizon."}
+    if(pending){phase=pending.purpose==="exit"?"EXIT ORDER":pending.purpose==="entry"?"ENTRY ORDER":"ORDER OPEN";prod=pending.product_id||prod;side=pending.side||side;otype=pending.order_type||"—";exposure=Number(pending.quote_size||0)||exposure;activitySub="Order staat bij Coinbase en wordt automatisch bewaakt, herprijsd of naar fallback gestuurd."}
+    set("exposure",exposure?money(exposure):money(0));set("exposuresub",phase.toLowerCase()+" · "+prod);
+    set("activitytitle",phase);set("activitysub",activitySub);set("activitytag",a.coinbase_armed?"LIVE":"OFF");
+    set("activityproduct","product "+prod);set("activityside","side "+side);set("activitytype","type "+otype);set("activityrisk","risk "+risk);
+    E("currentmetrics").innerHTML=pos?
+      '<div class="metric"><span>Entry price</span><b>'+dec(pos.entry_price,8)+'</b></div><div class="metric"><span>Size</span><b>'+dec(pos.base_size,8)+'</b></div><div class="metric"><span>Opened</span><b>'+(pos.opened_at?new Date(Number(pos.opened_at)*1000).toLocaleTimeString("nl-NL"):"—")+'</b></div>':
+      pending?'<div class="metric"><span>Order product</span><b>'+esc(pending.product_id)+'</b></div><div class="metric"><span>Order side</span><b>'+esc(pending.side)+'</b></div><div class="metric"><span>Order type</span><b>'+esc(pending.order_type||"—")+'</b></div>':
+      '<div class="metric"><span>State</span><b>Geen open positie/order</b></div>';
+
+    set("grosspnl",signedMoney(gross));E("grosspnl").className=gross>=0?"green":"red";
+    set("fees","-"+money(fees));E("fees").className="amber";set("netpnl",signedMoney(net));E("netpnl").className=net>=0?"green":"red";
+    let insight="Er zijn nog onvoldoende gesloten trades om een verliesanalyse te maken.";
+    if(tr.length){
+      const feeShare=Math.abs(net)>0?fees/Math.abs(net)*100:0;
+      if(net<0&&gross<0)insight="<strong>Hoofdoorzaak:</strong> de prijsbewegingen van gesloten trades waren negatief. Fees maakten het verlies groter. Totaal fees: <strong>"+money(fees)+"</strong>.";
+      else if(net<0&&gross>=0)insight="<strong>Hoofdoorzaak:</strong> vóór fees waren de trades ongeveer positief, maar kosten draaiden het netto resultaat negatief. Fees: <strong>"+money(fees)+"</strong>.";
+      else if(net>=0)insight="<strong>Netto positief.</strong> Bruto trading-resultaat "+signedMoney(gross)+" en fees "+money(fees)+".";
+      insight+=" Gesloten trades in lokale journal: <strong>"+tr.length+"</strong>.";
+    }
+    E("lossinsight").innerHTML=insight;
+    E("journal").innerHTML=journalRows(tr);set("journalcount",tr.length+" gesloten trades");drawPnl(tr);
+
+    const ed=a.entry_diagnostics||{},top=(o.top_candidates||[])[0]||{};
+    set("scanned",o.scanned_markets??0);set("eligible",(o.eligible_scan_markets??o.tradable_markets??0)+" eligible · "+(o.fundable_markets??0)+" nu fundable");
+    set("signals",ed.decisions_seen??0);set("routes",(ed.routes_considered??0)+" routes onderzocht · "+(ed.accepted_routes??0)+" accepted");
+    set("candidate",top.product_id||ed.best_after_cost_product||"—");set("candidateedge",(top.forecast_move_bps!=null?dec(top.forecast_move_bps,1)+" bps forecast":"")+(ed.best_after_cost_edge_bps!=null?" · "+dec(ed.best_after_cost_edge_bps,1)+" bps net edge":""));
+    set("ws",rt.connected?"CONNECTED":"REST");E("ws").className="value "+(rt.connected?"green":"amber");set("wssub",(rt.subscribed_count??0)+" live products · "+(rt.last_error||"geen error"));
+
+    set("riskdaily",pct(rules.max_daily_loss_pct));set("riskdd",pct(rules.max_drawdown_pct));set("risksingle",pct(rules.max_single_trade_pct));set("riskreserve",pct(rules.min_cash_reserve_pct));
+    set("currentdd",pct(a.current_drawdown_pct));set("maxentry",money(rd.max_single_trade_eur||0));
+    E("gatechips").innerHTML=gates(r.execution_failed_gates||r.failed_gates||[]);
+    set("armed",a.coinbase_armed?"JA":"NEE");set("execready",r.execution_ready_now?"JA":"NEE");set("persisted",(r.arm_persistence||{}).persisted_armed?"JA":"NEE");set("isolated",b.portfolio_scoped?"JA":"NEE");set("runtimeerror",a.runtime_error||"GEEN");
+
+    const assets=b.assets||[];E("balances").innerHTML=assets.length?assets.map(x=>'<div class="metric"><span>'+esc(x.currency)+'</span><b>'+esc(x.available)+' beschikbaar · '+esc(x.hold)+' hold · '+esc(x.total)+' totaal</b></div>').join(""):'<div class="subtitle">Geen balances.</div>';
+    E("audit").innerHTML=auditRows(audit);
+
+    const armed=!!a.coinbase_armed,ready=!!r.execution_ready_now;E("statusdot").className="dot "+(armed?"":"off");set("topstatus",armed?"COINBASE LIVE":"COINBASE OFF");set("readytag",ready?"EXECUTION READY":"GATED");
+    E("livebtn").disabled=armed||!r.ready_to_arm;E("stopbtn").classList.toggle("hidden",!armed);
+    let msg=armed?(ready?"RiskTrader is live en execution-ready.":"RiskTrader is live maar wacht op: "+(r.execution_failed_gates||[]).join(", ")):"Live execution staat uit.";
+    E("notice").textContent=msg;E("notice").className="notice "+(!ready?"warn":"");
+    set("updated","Bijgewerkt "+new Date().toLocaleTimeString("nl-NL"));
+  }catch(e){E("notice").textContent="Dashboard update mislukt: "+e.message;E("notice").className="notice bad"}
 }
-async function activateLive(){
-  try{
-    const ctl=prompt("Vul je AUTOTRADER_CONTROL_TOKEN in. Dit wordt niet opgeslagen.");
-    if(!ctl)return;
-    const phrase=prompt("Bevestig door exact I_UNDERSTAND_COINBASE_LIVE_ORDERS in te vullen.");
-    if(phrase!=="I_UNDERSTAND_COINBASE_LIVE_ORDERS")return;
-    await api("/api/coinbase/live/activate",{method:"POST",headers:{"X-Autotrader-Token":ctl},body:JSON.stringify({confirmation:phrase})});
-    await refresh();
-  }catch(e){alert("Coinbase Live niet geactiveerd: "+e.message)}
-}
-async function deactivateLive(){
-  try{
-    const ctl=prompt("Vul je AUTOTRADER_CONTROL_TOKEN in. Dit wordt niet opgeslagen.");
-    if(!ctl)return;
-    await api("/api/coinbase/live/deactivate",{method:"POST",headers:{"X-Autotrader-Token":ctl},body:"{}"});
-    await refresh();
-  }catch(e){alert("Coinbase Live niet gestopt: "+e.message)}
-}
-async function boot(){
-  if(apiKey||token){
-    document.getElementById("login").classList.add("hidden");
-    document.getElementById("app").classList.remove("hidden");
-    try{await refresh();window.dashboardTimer=setInterval(refresh,10000);return}catch(e){}
-  }
-  showLogin("");
-}
-boot();
+async function activateLive(){try{const ctl=prompt("AUTOTRADER_CONTROL_TOKEN:");if(!ctl)return;const phrase=prompt("Typ exact I_UNDERSTAND_COINBASE_LIVE_ORDERS");if(phrase!=="I_UNDERSTAND_COINBASE_LIVE_ORDERS")return;await api("/api/coinbase/live/activate",{method:"POST",headers:{"X-Autotrader-Token":ctl},body:JSON.stringify({confirmation:phrase})});await refresh()}catch(e){alert("Live niet geactiveerd: "+e.message)}}
+async function deactivateLive(){try{const ctl=prompt("AUTOTRADER_CONTROL_TOKEN:");if(!ctl)return;await api("/api/coinbase/live/deactivate",{method:"POST",headers:{"X-Autotrader-Token":ctl},body:"{}"});await refresh()}catch(e){alert("Live niet gestopt: "+e.message)}}
+async function boot(){if(apiKey||token){E("login").classList.add("hidden");E("app").classList.remove("hidden");try{await refresh();window.dashboardTimer=setInterval(refresh,5000);return}catch{}}showLogin("")}boot();
 </script>
 </body></html>'''
 
