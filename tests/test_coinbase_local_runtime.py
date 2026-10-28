@@ -102,3 +102,10 @@ def test_real_local_env_is_gitignored():
 def test_coinbase_local_compose_enables_existing_btc_seed():
     text = Path("docker-compose.coinbase.local.yml").read_text(encoding="utf-8")
     assert 'COINBASE_ALLOW_EXISTING_BTC_SEED: "true"' in text
+
+
+def test_coinbase_local_startup_reconciles_risk_before_live_resume():
+    source = Path("autotrader/api/coinbase_local_server.py").read_text("utf-8")
+    reconcile_at = source.index("reconcile_runtime_state")
+    resume_at = source.index("arm_store.should_resume")
+    assert reconcile_at < resume_at
