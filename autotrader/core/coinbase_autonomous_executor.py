@@ -77,7 +77,7 @@ class CoinbaseAutonomousConfig:
     exploration_enabled: bool = True
     exploration_trade_fraction_pct: float = 20.0
     exploration_min_forecast_bps: float = 20.0
-    exploration_max_negative_edge_bps: float = 60.0
+    exploration_max_negative_edge_bps: float = 80.0
     exploration_max_spread_bps: float = 20.0
     day_timezone: str = "Europe/Amsterdam"
     state_path: str = "/data/coinbase_autonomous_canary.json"
@@ -146,7 +146,7 @@ class CoinbaseAutonomousConfig:
                 0.0, float(cfg.get("exploration_min_forecast_bps", 20.0))
             ),
             exploration_max_negative_edge_bps=max(
-                0.0, float(cfg.get("exploration_max_negative_edge_bps", 60.0))
+                0.0, float(cfg.get("exploration_max_negative_edge_bps", 80.0))
             ),
             exploration_max_spread_bps=max(
                 0.0, float(cfg.get("exploration_max_spread_bps", 20.0))
@@ -1675,6 +1675,59 @@ class CoinbaseAutonomousExecutor:
         return action
 
 
+    def _unmanaged_inventory(
+        self,
+        balances: dict[str, float],
+        *,
+        btc_eur_bid: float,
+    ) -> list[dict[str, Any]]:
+        """Return material non-cash inventory not represented by local position state."""
+        if self.state.position is not None:
+            return []
+
+        usdc_to_eur = max(0.0, float(balances.get("_USDC_TO_EUR") or 0.0))
+        rows: list[dict[str, Any]] = []
+        assets = sorted(
+            key.removeprefix("_TOTAL_")
+            for key in balances
+            if key.startswith("_TOTAL_")
+        )
+        for asset in assets:
+            if asset in {"EUR", "USDC"}:
+                continue
+            amount = max(0.0, float(balances.get(f"_TOTAL_{asset}", 0.0) or 0.0))
+            if amount <= 0:
+                continue
+
+            # BTC is intentionally seedable by this runtime. Dust below the
+            # configured minimum is harmless and must not block new entries.
+            if asset == "BTC" and self.config.allow_existing_btc_seed:
+                value_eur = amount * max(0.0, btc_eur_bid)
+                if value_eur + 1e-9 < self.config.min_order_eur:
+                    continue
+                # Material BTC can be handled by the seed path, so it is not orphaned.
+                continue
+
+            value_eur = 0.0
+            try:
+                book = self.client.top_of_book(f"{asset}-EUR")
+                value_eur = amount * float(book.bid_price)
+            except Exception:
+                if usdc_to_eur > 0:
+                    try:
+                        book = self.client.top_of_book(f"{asset}-USDC")
+                        value_eur = amount * float(book.bid_price) * usdc_to_eur
+                    except Exception:
+                        value_eur = 0.0
+
+            if value_eur + 1e-9 >= self.config.min_order_eur:
+                rows.append({
+                    "asset": asset,
+                    "amount": amount,
+                    "estimated_value_eur": round(value_eur, 8),
+                })
+        return rows
+
     def readiness(self, *, armed: bool, shadow_status: dict[str, Any]) -> dict[str, Any]:
         book = self.client.top_of_book(self.config.product_id)
         bid, ask = float(book.bid_price), float(book.ask_price)
@@ -1686,6 +1739,11 @@ class CoinbaseAutonomousExecutor:
         )
         max_trade = nav * self.config.max_single_trade_pct / 100.0
         gates = self._global_gates(armed=armed, shadow_status=shadow_status)
+        unmanaged_inventory = self._unmanaged_inventory(
+            balances,
+            btc_eur_bid=bid,
+        )
+        gates["unmanaged_inventory_clear"] = not unmanaged_inventory
         return {
             "ready_for_new_entry": all(gates.values()) and self.state.submission_intent is None,
             "gates": gates,
@@ -1700,6 +1758,7 @@ class CoinbaseAutonomousExecutor:
             "portfolio_isolated": bool(self.config.portfolio_id),
             "isolated_portfolio_required": self.config.require_isolated_portfolio,
             "existing_btc_auto_seed_enabled": self.config.allow_existing_btc_seed,
+            "unmanaged_inventory": unmanaged_inventory,
             "submission_outcome_unknown": self.state.submission_intent is not None,
             "best_bid": bid,
             "best_ask": ask,
