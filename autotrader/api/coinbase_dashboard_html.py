@@ -161,7 +161,7 @@ function auditRows(rows){
   }).join("")
 }
 function gateChips(failed){
-  const known=["enabled","execution_mode_live","live_execution_approved","coinbase_adapter_installed","coinbase_live_trading","emergency_stop_off","confirmation_present","runtime_armed","credentials_compatible","authenticated","isolated_portfolio_configured","daily_loss_stop_off","drawdown_stop_off","shadow_promotion_ready"];
+  const known=["enabled","execution_mode_live","live_execution_approved","coinbase_adapter_installed","coinbase_live_trading","emergency_stop_off","confirmation_present","runtime_armed","credentials_compatible","authenticated","isolated_portfolio_configured","daily_loss_stop_off","drawdown_stop_off","unmanaged_inventory_clear","shadow_promotion_ready"];
   const f=new Set(failed||[]);return known.map(g=>'<span class="gate '+(f.has(g)?'fail':'pass')+'">'+(f.has(g)?'WAIT ':'OK ')+g+'</span>').join("")
 }
 async function refresh(){
