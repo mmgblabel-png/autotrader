@@ -1318,6 +1318,9 @@ class CoinbaseAutonomousExecutor:
                 "at": now, "action": "ENTRY_FILLED", "base_size": size,
                 "product_id": pending.product_id, "quote_currency": pending.quote_currency,
                 "price": price, "fees_eur": fees_eur,
+                "forecast_move_bps": pending.forecast_move_bps,
+                "risk_tier": pending.risk_tier,
+                "order_type": pending.order_type,
             }
         elif pending.purpose == "exit" and self.state.position is not None:
             proceeds_eur = max(0.0, (size * price - fees) * quote_to_eur)
@@ -1344,6 +1347,8 @@ class CoinbaseAutonomousExecutor:
                 "product_id": pending.product_id, "quote_currency": pending.quote_currency,
                 "price": price, "fees_eur": fees_eur, "realized_pnl_eur": pnl,
                 "position_closed": sold_fraction >= 0.999999,
+                "exit_reason": pending.exit_reason or "unspecified",
+                "order_type": pending.order_type,
             }
 
         if self.state.last_action is not None:
