@@ -73,8 +73,8 @@ def test_coinbase_local_config_is_risktrader_and_portfolio_isolated():
     assert auto["high_risk_min_live_net_edge_bps"] == 0.0
     assert auto["high_risk_max_spread_bps"] == 45.0
     assert auto["day_timezone"] == "Europe/Amsterdam"
-    assert auto["max_daily_loss_pct"] == 3.0
-    assert auto["max_drawdown_pct"] == 10.0
+    assert auto["max_daily_loss_pct"] == 100.0
+    assert auto["max_drawdown_pct"] == 100.0
     realtime = cfg["coinbase_realtime_orderflow"]
     assert realtime["enabled"] is True
     assert realtime["max_products"] == 20
