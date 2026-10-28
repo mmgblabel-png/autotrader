@@ -1421,7 +1421,17 @@ class CoinbaseAutonomousExecutor:
                     )
                     continue
 
-                rules = self._product_rules(product)
+                decision_rules = {
+                    "base_increment": decision.get("base_increment"),
+                    "quote_increment": decision.get("quote_increment"),
+                    "base_min_size": decision.get("base_min_size"),
+                    "quote_min_size": decision.get("quote_min_size"),
+                }
+                if all(value not in {None, ""} for value in decision_rules.values()):
+                    rules = {key: str(value) for key, value in decision_rules.items()}
+                    self._product_rule_cache[product] = dict(rules)
+                else:
+                    rules = self._product_rules(product)
                 quote_increment = rules["quote_increment"]
                 quote_text = self._floor_to_increment(
                     quote_size,
