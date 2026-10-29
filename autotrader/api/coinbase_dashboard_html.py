@@ -267,15 +267,17 @@ async function refresh(){
     };
     const usdcBal=assetValue("USDC"),eurBal=assetValue("EUR");
 
-    set("nav",money(rd.portfolio_nav_eur||0));set("navsub",dec(usdcBal,4)+" USDC + "+money(eurBal)+" · isolated Agent-portfolio");
+    const navEur=Number(rd.portfolio_nav_eur||0);set("nav",navEur>0?money(navEur):(usdcBal>0?dec(usdcBal,4)+" USDC":money(eurBal)));set("navsub",dec(usdcBal,4)+" USDC + "+money(eurBal)+" · isolated Agent-portfolio");
     set("daypnl",signedMoney(pnl));E("daypnl").className="value "+(pnl>=0?"green":"red");
     const wr=(wins+losses)?wins/(wins+losses)*100:0;
     set("daypnlsub",todayTrades.length+" gesloten trades vandaag · "+wins+" winst / "+losses+" verlies · "+pct(wr)+" winrate");
     set("trades",dec(usdcBal,4)+" USDC");set("tradesub","beschikbaar voor nieuwe USDC-markten");
     set("todaywinrate",money(eurBal));set("winsub","beschikbaar in EUR");
 
-    const pending=a.pending_order||null,pos=a.managed_position||null;
-    let exposure=0,phase="SCANNING",prod="—",side="—",otype="—",risk=(a.entry_diagnostics||{}).selected_risk_tier||"—",activitySub="Zoekt continu naar de beste Coinbase spot-kans.";
+    const pending=a.pending_order||null,pos=a.managed_position||null,entryDiag=a.entry_diagnostics||{};
+    const scanCandidate=((o.top_candidates||[])[0]||{}).product_id||entryDiag.best_after_cost_product||entryDiag.selected_product||"—";
+    let exposure=0,phase="SCANNING",prod=scanCandidate,side="WATCH",otype="scanner",risk=entryDiag.selected_risk_tier||"—";
+    let activitySub="Scant "+Number(o.scanned_markets||0)+" Coinbase-markten. Beste kandidaat: "+scanCandidate+(entryDiag.last_reject_reason?" · laatste afwijzing: "+entryDiag.last_reject_reason:"")+".";
     if(pos){phase="POSITIE OPEN";prod=pos.product_id||"—";side="LONG";otype="managed";exposure=Number(pos.base_size||0)*Number(pos.entry_price||0);activitySub="Positie wordt bewaakt op stop-loss, take-profit, trailing en signal horizon."}
     if(pending){phase=pending.purpose==="exit"?"EXIT ORDER":pending.purpose==="entry"?"ENTRY ORDER":"ORDER OPEN";prod=pending.product_id||prod;side=pending.side||side;otype=pending.order_type||"—";exposure=Number(pending.quote_size||0)||exposure;activitySub="Order staat bij Coinbase en wordt automatisch bewaakt, herprijsd of naar fallback gestuurd."}
     set("exposure",phase);set("exposuresub",(prod!=="—"?prod+" · ":"")+(exposure?money(exposure)+" exposure":"geen open exposure"));
