@@ -392,6 +392,12 @@ def autonomous() -> dict[str, Any]:
     status = dict(getattr(app.state, "executor_status", {}) or {})
     status["coinbase_armed"] = bool(app.state.live_armed)
     status["runtime_error"] = getattr(app.state, "executor_error", None)
+    # Keep dashboard portfolio figures tied to a fresh Coinbase readiness read.
+    # Cached executor_status can briefly contain startup-zero balances.
+    try:
+        status["readiness"] = _executor_readiness(armed=bool(app.state.live_armed))
+    except Exception:
+        pass
     return status
 
 
@@ -403,6 +409,7 @@ def live_readiness() -> dict[str, Any]:
 @app.get("/api/coinbase/dashboard/snapshot")
 def dashboard_snapshot() -> dict[str, Any]:
     portfolio_id = str(app.state.executor.config.portfolio_id or "").strip()
+    readiness = live_readiness()
     try:
         balances = app.state.market.account_balances(portfolio_id=portfolio_id or None)
     except CoinbaseAuthenticationError as exc:
@@ -413,6 +420,33 @@ def dashboard_snapshot() -> dict[str, Any]:
             "assets": [],
             "error_category": exc.category,
         }
+
+    # Fail-safe dashboard fallback: if the direct balance list is temporarily
+    # empty but readiness already has the isolated sleeve balances, expose those
+    # instead of misleading the operator with EUR 0 / "Geen balances".
+    if not list(balances.get("assets") or []):
+        rb = readiness.get("balances") if isinstance(readiness, dict) else {}
+        if isinstance(rb, dict):
+            fallback_assets = []
+            for currency in ("EUR", "USDC", "BTC"):
+                try:
+                    value = float(rb.get(currency, 0.0) or 0.0)
+                except (TypeError, ValueError):
+                    value = 0.0
+                if value > 0:
+                    fallback_assets.append({
+                        "currency": currency,
+                        "available": str(value),
+                        "hold": "0",
+                        "total": str(value),
+                    })
+            if fallback_assets:
+                balances = dict(balances)
+                balances["assets"] = fallback_assets
+                balances["asset_count"] = len(fallback_assets)
+                balances["portfolio_scoped"] = bool(portfolio_id)
+                balances["fallback_source"] = "readiness"
+
     return {
         "venue": "coinbase_advanced",
         "runtime": "coinbase_local",
@@ -422,7 +456,7 @@ def dashboard_snapshot() -> dict[str, Any]:
         ),
         "balances": balances,
         "autonomous": autonomous(),
-        "readiness": live_readiness(),
+        "readiness": readiness,
         "shadow": zscore_shadow(),
         "opportunity": _opportunity_status(),
         "realtime_orderflow": (
