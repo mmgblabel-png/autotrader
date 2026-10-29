@@ -84,11 +84,11 @@ button:disabled{opacity:.45;cursor:not-allowed}
 <div id="notice" class="notice">Coinbase-data laden…</div>
 
 <section class="grid5">
-  <div class="card hero"><div class="label">Agent portfolio nu</div><div id="nav" class="value big">—</div><div id="navsub" class="sub">isolated Coinbase portfolio</div></div>
+  <div class="card hero"><div class="label">Agent saldo totaal</div><div id="nav" class="value big">—</div><div id="navsub" class="sub">live isolated Coinbase saldo</div></div>
   <div class="card"><div class="label">PnL vandaag</div><div id="daypnl" class="value">—</div><div id="daypnlsub" class="sub">gerealiseerd na fees</div></div>
-  <div class="card"><div class="label">Trades vandaag</div><div id="trades" class="value">—</div><div id="tradesub" class="sub">afgeronde round-trips</div></div>
-  <div class="card"><div class="label">Winrate vandaag</div><div id="todaywinrate" class="value">—</div><div id="winsub" class="sub">winst / verlies</div></div>
-  <div class="card"><div class="label">Open exposure</div><div id="exposure" class="value">—</div><div id="exposuresub" class="sub">positie of order</div></div>
+  <div class="card"><div class="label">USDC beschikbaar</div><div id="trades" class="value">—</div><div id="tradesub" class="sub">vrij voor nieuwe trades</div></div>
+  <div class="card"><div class="label">EUR beschikbaar</div><div id="todaywinrate" class="value">—</div><div id="winsub" class="sub">vrij in Agent-portfolio</div></div>
+  <div class="card"><div class="label">Bot nu</div><div id="exposure" class="value">—</div><div id="exposuresub" class="sub">actuele execution-state</div></div>
 </section>
 
 <div class="sectionhead"><h2>Wat gebeurt er nu?</h2><i></i><span id="readytag" class="tag">STATUS</span></div>
@@ -138,8 +138,9 @@ button:disabled{opacity:.45;cursor:not-allowed}
   <div class="card"><div class="label">WebSocket</div><div id="ws" class="value">—</div><div id="wssub" class="sub">—</div></div>
 </section>
 
-<div class="sectionhead"><h2>Risk & execution</h2><i></i><span class="tag">AGENT-PORTFOLIO ONLY</span></div>
-<section class="two-even">
+<details class="card" style="margin-top:20px">
+<summary style="cursor:pointer;font-weight:850;color:#bdc9dd;letter-spacing:.08em;text-transform:uppercase;font-size:11px">Risk & execution details</summary>
+<section class="two-even" style="margin-top:12px">
   <div class="card">
     <div class="label">Actieve policy</div>
     <div class="metric"><span>Max daily loss</span><b id="riskdaily">—</b></div>
@@ -158,15 +159,18 @@ button:disabled{opacity:.45;cursor:not-allowed}
     <div class="metric"><span>Runtime error</span><b id="runtimeerror">—</b></div>
   </div>
 </section>
+</details>
 
-<div class="sectionhead"><h2>Balances</h2><i></i></div>
+<div class="sectionhead"><h2>Agent balances</h2><i></i></div>
 <section class="card"><div id="balances"></div></section>
 
-<div class="sectionhead"><h2>Laatste execution events</h2><i></i><span class="tag">TECHNISCHE AUDIT</span></div>
-<section class="card"><div class="tablewrap"><table class="table">
+<details class="card" style="margin-top:20px">
+<summary style="cursor:pointer;font-weight:850;color:#bdc9dd;letter-spacing:.08em;text-transform:uppercase;font-size:11px">Technische execution-audit</summary>
+<div class="tablewrap" style="margin-top:12px"><table class="table">
 <thead><tr><th>Tijd</th><th>Actie</th><th>Product</th><th>Side</th><th>Waarde</th><th>Details</th></tr></thead>
 <tbody id="audit"><tr><td colspan="6" class="subtitle">Audit laden…</td></tr></tbody>
-</table></div></section>
+</table></div>
+</details>
 
 <div class="foot"><span>Coinbase RiskTrader · dedicated isolated portfolio</span><span id="updated">—</span></div>
 </div></div>
@@ -212,7 +216,7 @@ function journalRows(trades){
   if(!trades.length)return '<tr><td colspan="8" class="subtitle">Nog geen gesloten strategy-trades in de lokale audit.</td></tr>';
   return trades.slice().reverse().map(t=>{
     const cls=t.pnl>=0?"green":"red";
-    return '<tr><td class="mono">'+new Date(t.at*1000).toLocaleTimeString("nl-NL")+'</td>'+
+    return '<tr><td class="mono">'+new Date(t.at*1000).toLocaleString("nl-NL",{day:"2-digit",month:"2-digit",hour:"2-digit",minute:"2-digit"})+'</td>'+
     '<td><b>'+esc(t.product)+'</b></td><td>'+esc(t.risk)+'</td>'+
     '<td class="mono">'+dec(t.entry,8)+'</td><td class="mono">'+dec(t.exit,8)+'</td>'+
     '<td class="mono">'+money(t.fees)+'</td><td class="mono result '+cls+'">'+signedMoney(t.pnl)+'</td>'+
@@ -250,26 +254,41 @@ function gates(failed){const all=["enabled","execution_mode_live","live_executio
 async function refresh(){
   try{
     const d=await api("/api/coinbase/dashboard/snapshot"),a=d.autonomous||{},r=d.readiness||{},o=d.opportunity||{},rt=d.realtime_orderflow||o.realtime||{},b=d.balances||{};
-    const rd=a.readiness||{},targets=a.daily_targets||{},rules=a.hard_rules||{},audit=a.order_audit||[],tr=pairTrades(audit);
-    const pnl=Number(targets.profit_eur??a.day_pnl_eur??0),wins=tr.filter(x=>x.pnl>0).length,losses=tr.filter(x=>x.pnl<0).length;
-    const fees=tr.reduce((s,x)=>s+x.fees,0),gross=tr.reduce((s,x)=>s+x.gross,0),net=tr.reduce((s,x)=>s+x.pnl,0);
+    const rd=r||a.readiness||{},targets=a.daily_targets||{},rules=a.hard_rules||{},audit=a.order_audit||[],tr=pairTrades(audit);
+    const dayKey=new Date().toLocaleDateString("sv-SE",{timeZone:"Europe/Amsterdam"});
+    const todayTrades=tr.filter(x=>new Date(Number(x.at||0)*1000).toLocaleDateString("sv-SE",{timeZone:"Europe/Amsterdam"})===dayKey);
+    const pnl=Number(targets.profit_eur??a.day_pnl_eur??0),wins=todayTrades.filter(x=>x.pnl>0).length,losses=todayTrades.filter(x=>x.pnl<0).length;
+    const fees=todayTrades.reduce((sum,x)=>sum+x.fees,0),gross=todayTrades.reduce((sum,x)=>sum+x.gross,0),net=todayTrades.reduce((sum,x)=>sum+x.pnl,0);
+    const directAssets=Array.isArray(b.assets)?b.assets:[];
+    const assetValue=(ccy)=>{
+      const row=directAssets.find(x=>String(x.currency||"").toUpperCase()===ccy);
+      if(row)return Number(row.available??row.total??0)||0;
+      return Number((rd.balances||{})[ccy]||0)||0;
+    };
+    const usdcBal=assetValue("USDC"),eurBal=assetValue("EUR");
 
-    set("nav",money(rd.portfolio_nav_eur||0));set("navsub",(b.portfolio_scoped?"Isolated portfolio bevestigd":"Portfolio-scope niet bevestigd"));
-    set("daypnl",signedMoney(pnl));E("daypnl").className="value "+(pnl>=0?"green":"red");set("daypnlsub","gerealiseerd vandaag · na fees");
-    set("trades",targets.trades_completed??tr.length);set("tradesub",(targets.trade_target||10)+" dagtarget · trader stopt niet bij target");
-    const wr=(wins+losses)?wins/(wins+losses)*100:0;set("todaywinrate",pct(wr));set("winsub",wins+" winst · "+losses+" verlies");
+    set("nav",money(rd.portfolio_nav_eur||0));set("navsub",dec(usdcBal,4)+" USDC + "+money(eurBal)+" · isolated Agent-portfolio");
+    set("daypnl",signedMoney(pnl));E("daypnl").className="value "+(pnl>=0?"green":"red");
+    const wr=(wins+losses)?wins/(wins+losses)*100:0;
+    set("daypnlsub",todayTrades.length+" gesloten trades vandaag · "+wins+" winst / "+losses+" verlies · "+pct(wr)+" winrate");
+    set("trades",dec(usdcBal,4)+" USDC");set("tradesub","beschikbaar voor nieuwe USDC-markten");
+    set("todaywinrate",money(eurBal));set("winsub","beschikbaar in EUR");
 
     const pending=a.pending_order||null,pos=a.managed_position||null;
     let exposure=0,phase="SCANNING",prod="—",side="—",otype="—",risk=(a.entry_diagnostics||{}).selected_risk_tier||"—",activitySub="Zoekt continu naar de beste Coinbase spot-kans.";
     if(pos){phase="POSITIE OPEN";prod=pos.product_id||"—";side="LONG";otype="managed";exposure=Number(pos.base_size||0)*Number(pos.entry_price||0);activitySub="Positie wordt bewaakt op stop-loss, take-profit, trailing en signal horizon."}
     if(pending){phase=pending.purpose==="exit"?"EXIT ORDER":pending.purpose==="entry"?"ENTRY ORDER":"ORDER OPEN";prod=pending.product_id||prod;side=pending.side||side;otype=pending.order_type||"—";exposure=Number(pending.quote_size||0)||exposure;activitySub="Order staat bij Coinbase en wordt automatisch bewaakt, herprijsd of naar fallback gestuurd."}
-    set("exposure",exposure?money(exposure):money(0));set("exposuresub",phase.toLowerCase()+" · "+prod);
+    set("exposure",phase);set("exposuresub",(prod!=="—"?prod+" · ":"")+(exposure?money(exposure)+" exposure":"geen open exposure"));
     set("activitytitle",phase);set("activitysub",activitySub);set("activitytag",a.coinbase_armed?"LIVE":"OFF");
     set("activityproduct","product "+prod);set("activityside","side "+side);set("activitytype","type "+otype);set("activityrisk","risk "+risk);
-    E("currentmetrics").innerHTML=pos?
+    const lastEvent=audit.length?audit[audit.length-1]:{};
+    const lastEventHtml='<div class="metric"><span>Laatste actie</span><b>'+esc(lastEvent.action||lastEvent.event||"—")+'</b></div>'+
+      '<div class="metric"><span>Laatste product</span><b>'+esc(lastEvent.product_id||"—")+'</b></div>'+
+      '<div class="metric"><span>Tijd</span><b>'+(lastEvent.at?new Date(Number(lastEvent.at)*1000).toLocaleTimeString("nl-NL"):"—")+'</b></div>';
+    E("currentmetrics").innerHTML=(pos?
       '<div class="metric"><span>Entry price</span><b>'+dec(pos.entry_price,8)+'</b></div><div class="metric"><span>Size</span><b>'+dec(pos.base_size,8)+'</b></div><div class="metric"><span>Opened</span><b>'+(pos.opened_at?new Date(Number(pos.opened_at)*1000).toLocaleTimeString("nl-NL"):"—")+'</b></div>':
       pending?'<div class="metric"><span>Order product</span><b>'+esc(pending.product_id)+'</b></div><div class="metric"><span>Order side</span><b>'+esc(pending.side)+'</b></div><div class="metric"><span>Order type</span><b>'+esc(pending.order_type||"—")+'</b></div>':
-      '<div class="metric"><span>State</span><b>Geen open positie/order</b></div>';
+      '<div class="metric"><span>State</span><b>Geen open positie/order · scanner zoekt verder</b></div>')+lastEventHtml;
 
     set("grosspnl",signedMoney(gross));E("grosspnl").className=gross>=0?"green":"red";
     set("fees","-"+money(fees));E("fees").className="amber";set("netpnl",signedMoney(net));E("netpnl").className=net>=0?"green":"red";
@@ -279,10 +298,10 @@ async function refresh(){
       if(net<0&&gross<0)insight="<strong>Hoofdoorzaak:</strong> de prijsbewegingen van gesloten trades waren negatief. Fees maakten het verlies groter. Totaal fees: <strong>"+money(fees)+"</strong>.";
       else if(net<0&&gross>=0)insight="<strong>Hoofdoorzaak:</strong> vóór fees waren de trades ongeveer positief, maar kosten draaiden het netto resultaat negatief. Fees: <strong>"+money(fees)+"</strong>.";
       else if(net>=0)insight="<strong>Netto positief.</strong> Bruto trading-resultaat "+signedMoney(gross)+" en fees "+money(fees)+".";
-      insight+=" Gesloten trades in lokale journal: <strong>"+tr.length+"</strong>.";
+      insight+=" Gesloten trades vandaag: <strong>"+todayTrades.length+"</strong>.";
     }
     E("lossinsight").innerHTML=insight;
-    E("journal").innerHTML=journalRows(tr);set("journalcount",tr.length+" gesloten trades");drawPnl(tr);
+    E("journal").innerHTML=journalRows(tr);set("journalcount",tr.length+" gesloten trades totaal");drawPnl(todayTrades);
 
     const ed=a.entry_diagnostics||{},top=(o.top_candidates||[])[0]||{};
     set("scanned",o.scanned_markets??0);set("eligible",(o.eligible_scan_markets??o.tradable_markets??0)+" eligible · "+(o.fundable_markets??0)+" nu fundable");
@@ -295,7 +314,7 @@ async function refresh(){
     E("gatechips").innerHTML=gates(r.execution_failed_gates||r.failed_gates||[]);
     set("armed",a.coinbase_armed?"JA":"NEE");set("execready",r.execution_ready_now?"JA":"NEE");set("persisted",(r.arm_persistence||{}).persisted_armed?"JA":"NEE");set("isolated",b.portfolio_scoped?"JA":"NEE");set("runtimeerror",a.runtime_error||"GEEN");
 
-    const assets=b.assets||[];E("balances").innerHTML=assets.length?assets.map(x=>'<div class="metric"><span>'+esc(x.currency)+'</span><b>'+esc(x.available)+' beschikbaar · '+esc(x.hold)+' hold · '+esc(x.total)+' totaal</b></div>').join(""):'<div class="subtitle">Geen balances.</div>';
+    let assets=Array.isArray(b.assets)?b.assets:[];if(!assets.length){assets=["EUR","USDC","BTC"].map(ccy=>({currency:ccy,available:String(Number((rd.balances||{})[ccy]||0)),hold:"0",total:String(Number((rd.balances||{})[ccy]||0))})).filter(x=>Number(x.total)>0)}E("balances").innerHTML=assets.length?assets.map(x=>'<div class="metric"><span>'+esc(x.currency)+'</span><b>'+esc(x.available)+' beschikbaar · '+esc(x.hold)+' hold · '+esc(x.total)+' totaal</b></div>').join(""):'<div class="subtitle">Saldo tijdelijk niet beschikbaar; trading/scanner blijft actief.</div>';
     E("audit").innerHTML=auditRows(audit);
 
     const armed=!!a.coinbase_armed,ready=!!r.execution_ready_now;E("statusdot").className="dot "+(armed?"":"off");set("topstatus",armed?"COINBASE LIVE":"COINBASE OFF");set("readytag",ready?"EXECUTION READY":"GATED");
