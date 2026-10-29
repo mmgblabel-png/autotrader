@@ -299,13 +299,13 @@ async function refresh(){
     E("audit").innerHTML=auditRows(audit);
 
     const armed=!!a.coinbase_armed,ready=!!r.execution_ready_now;E("statusdot").className="dot "+(armed?"":"off");set("topstatus",armed?"COINBASE LIVE":"COINBASE OFF");set("readytag",ready?"EXECUTION READY":"GATED");
-    E("livebtn").disabled=armed||!r.ready_to_arm;E("stopbtn").classList.toggle("hidden",!armed);
+    E("livebtn").disabled=armed;E("livebtn").title=armed?"Coinbase RiskTrader is al live":(r.ready_to_arm?"Alle gates gereed":"Klik om live-check uit te voeren en blocker te tonen");E("stopbtn").classList.toggle("hidden",!armed);
     let msg=armed?(ready?"RiskTrader is live en execution-ready.":"RiskTrader is live maar wacht op: "+(r.execution_failed_gates||[]).join(", ")):"Live execution staat uit.";
     E("notice").textContent=msg;E("notice").className="notice "+(!ready?"warn":"");
     set("updated","Bijgewerkt "+new Date().toLocaleTimeString("nl-NL"));
   }catch(e){E("notice").textContent="Dashboard update mislukt: "+e.message;E("notice").className="notice bad"}
 }
-async function activateLive(){try{const ctl=prompt("AUTOTRADER_CONTROL_TOKEN:");if(!ctl)return;const phrase=prompt("Typ exact I_UNDERSTAND_COINBASE_LIVE_ORDERS");if(phrase!=="I_UNDERSTAND_COINBASE_LIVE_ORDERS")return;await api("/api/coinbase/live/activate",{method:"POST",headers:{"X-Autotrader-Token":ctl},body:JSON.stringify({confirmation:phrase})});await refresh()}catch(e){alert("Live niet geactiveerd: "+e.message)}}
+async function activateLive(){try{const ctl=prompt("AUTOTRADER_CONTROL_TOKEN:");if(!ctl)return;const phrase=prompt("Typ exact I_UNDERSTAND_COINBASE_LIVE_ORDERS");if(phrase!=="I_UNDERSTAND_COINBASE_LIVE_ORDERS")return;await api("/api/coinbase/live/activate",{method:"POST",headers:{"X-Autotrader-Token":ctl},body:JSON.stringify({confirmation:phrase})});await refresh()}catch(e){E("notice").textContent="Live niet geactiveerd: "+e.message;E("notice").className="notice bad";alert("Live niet geactiveerd: "+e.message)}}
 async function deactivateLive(){try{const ctl=prompt("AUTOTRADER_CONTROL_TOKEN:");if(!ctl)return;await api("/api/coinbase/live/deactivate",{method:"POST",headers:{"X-Autotrader-Token":ctl},body:"{}"});await refresh()}catch(e){alert("Live niet gestopt: "+e.message)}}
 async function boot(){if(apiKey||token){E("login").classList.add("hidden");E("app").classList.remove("hidden");try{await refresh();window.dashboardTimer=setInterval(refresh,5000);return}catch{}}showLogin("")}boot();
 </script>
