@@ -305,8 +305,8 @@ async function refresh(){
     set("updated","Bijgewerkt "+new Date().toLocaleTimeString("nl-NL"));
   }catch(e){E("notice").textContent="Dashboard update mislukt: "+e.message;E("notice").className="notice bad"}
 }
-async function activateLive(){try{const ctl=prompt("AUTOTRADER_CONTROL_TOKEN:");if(!ctl)return;const phrase=prompt("Typ exact I_UNDERSTAND_COINBASE_LIVE_ORDERS");if(phrase!=="I_UNDERSTAND_COINBASE_LIVE_ORDERS")return;await api("/api/coinbase/live/activate",{method:"POST",headers:{"X-Autotrader-Token":ctl},body:JSON.stringify({confirmation:phrase})});await refresh()}catch(e){E("notice").textContent="Live niet geactiveerd: "+e.message;E("notice").className="notice bad";alert("Live niet geactiveerd: "+e.message)}}
-async function deactivateLive(){try{const ctl=prompt("AUTOTRADER_CONTROL_TOKEN:");if(!ctl)return;await api("/api/coinbase/live/deactivate",{method:"POST",headers:{"X-Autotrader-Token":ctl},body:"{}"});await refresh()}catch(e){alert("Live niet gestopt: "+e.message)}}
+async function activateLive(){try{if(!confirm("Coinbase RiskTrader live activeren? De agent mag daarna echte spot-orders plaatsen binnen het geïsoleerde Agent-portfolio."))return;await api("/api/coinbase/live/activate",{method:"POST",body:JSON.stringify({confirmation:"I_UNDERSTAND_COINBASE_LIVE_ORDERS"})});await refresh()}catch(e){E("notice").textContent="Live niet geactiveerd: "+e.message;E("notice").className="notice bad";alert("Live niet geactiveerd: "+e.message)}}
+async function deactivateLive(){try{if(!confirm("Live trading stoppen? Open posities/orders blijven door Coinbase bestaan totdat de runtime ze verder afhandelt."))return;await api("/api/coinbase/live/deactivate",{method:"POST",body:"{}"});await refresh()}catch(e){E("notice").textContent="Live niet gestopt: "+e.message;E("notice").className="notice bad";alert("Live niet gestopt: "+e.message)}}
 async function boot(){if(apiKey||token){E("login").classList.add("hidden");E("app").classList.remove("hidden");try{await refresh();window.dashboardTimer=setInterval(refresh,5000);return}catch{}}showLogin("")}boot();
 </script>
 </body></html>'''
