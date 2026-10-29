@@ -78,6 +78,7 @@ class CoinbaseAdvancedMarketData:
     BOOK_PATH = "/api/v3/brokerage/market/product_book"
     PRODUCTS_PATH = "/api/v3/brokerage/market/products"
     ACCOUNTS_PATH = "/api/v3/brokerage/accounts"
+    PORTFOLIOS_PATH = "/api/v3/brokerage/portfolios"
     ORDERS_PATH = "/api/v3/brokerage/orders"
     ORDER_PREVIEW_PATH = "/api/v3/brokerage/orders/preview"
     ORDER_HISTORY_PATH = "/api/v3/brokerage/orders/historical"
@@ -569,17 +570,67 @@ class CoinbaseAdvancedMarketData:
             raise CoinbaseTradingError("Unexpected Coinbase cancel response", category="unexpected_response")
         return response
 
+    def _portfolio_breakdown_accounts(
+        self,
+        portfolio_id: str,
+    ) -> list[dict[str, Any]]:
+        """Convert Coinbase portfolio spot positions to account-shaped rows."""
+        payload = self._auth_get(
+            f"{self.PORTFOLIOS_PATH}/{str(portfolio_id).strip()}"
+        )
+        root = payload.get("breakdown") if isinstance(payload, dict) else None
+        if not isinstance(root, dict):
+            root = payload if isinstance(payload, dict) else {}
+        positions = root.get("spot_positions") if isinstance(root, dict) else None
+        if not isinstance(positions, list):
+            return []
+
+        accounts: list[dict[str, Any]] = []
+        for row in positions:
+            if not isinstance(row, dict):
+                continue
+            currency = str(row.get("asset") or "").upper().strip()
+            if not currency:
+                continue
+            total_raw = row.get("total_balance_crypto")
+            available_raw = row.get("available_to_trade_crypto")
+            if available_raw is None:
+                available_raw = total_raw
+            try:
+                total = max(Decimal(str(total_raw or "0")), Decimal("0"))
+                available = max(Decimal(str(available_raw or "0")), Decimal("0"))
+            except (ValueError, TypeError):
+                continue
+            if total <= 0 and available <= 0:
+                continue
+            available = min(available, total) if total > 0 else available
+            hold = max(total - available, Decimal("0"))
+            accounts.append(
+                {
+                    "currency": currency,
+                    "active": True,
+                    "available_balance": {
+                        "value": format(available, "f"),
+                        "currency": currency,
+                    },
+                    "hold": {
+                        "value": format(hold, "f"),
+                        "currency": currency,
+                    },
+                }
+            )
+        return accounts
+
     def _portfolio_accounts_payload(
         self,
         portfolio_id: str | None = None,
     ) -> tuple[dict[str, Any], bool]:
-        """Read accounts for the configured API-key portfolio.
+        """Read balances for the configured API-key portfolio.
 
-        Coinbase Advanced API keys are portfolio-bound. Some key/portfolio
-        combinations return an empty accounts list when retail_portfolio_id is
-        redundantly supplied even though the key's unfiltered /accounts view
-        correctly exposes that same bound portfolio. Only retry when the
-        explicitly scoped call returns zero account rows.
+        Prefer the explicitly scoped accounts request. If Coinbase returns an
+        empty list, use the portfolio-breakdown endpoint because it reports the
+        chosen portfolio's spot positions directly. Only then try the API key's
+        unfiltered /accounts view as a final compatibility fallback.
         """
         if not portfolio_id:
             payload = self._auth_get(self.ACCOUNTS_PATH)
@@ -590,13 +641,28 @@ class CoinbaseAdvancedMarketData:
             {"retail_portfolio_id": portfolio_id},
         )
         accounts = payload.get("accounts") if isinstance(payload, dict) else None
-        if isinstance(accounts, list) and len(accounts) == 0:
-            fallback = self._auth_get(self.ACCOUNTS_PATH)
-            fallback_accounts = (
-                fallback.get("accounts") if isinstance(fallback, dict) else None
-            )
-            if isinstance(fallback_accounts, list) and fallback_accounts:
-                return dict(fallback), True
+        if isinstance(accounts, list) and accounts:
+            return dict(payload), False
+
+        try:
+            breakdown_accounts = self._portfolio_breakdown_accounts(portfolio_id)
+        except (CoinbaseAuthenticationError, CoinbaseTradingError):
+            breakdown_accounts = []
+        if breakdown_accounts:
+            return {
+                "accounts": breakdown_accounts,
+                "balance_source": "portfolio_breakdown",
+            }, True
+
+        fallback = self._auth_get(self.ACCOUNTS_PATH)
+        fallback_accounts = (
+            fallback.get("accounts") if isinstance(fallback, dict) else None
+        )
+        if isinstance(fallback_accounts, list) and fallback_accounts:
+            result = dict(fallback)
+            result["balance_source"] = "api_key_accounts"
+            return result, True
+
         return (dict(payload) if isinstance(payload, dict) else {}, False)
 
     def account_balances(
@@ -665,6 +731,7 @@ class CoinbaseAdvancedMarketData:
             "portfolio_scoped": bool(portfolio_id),
             "portfolio_id": str(portfolio_id) if portfolio_id else None,
             "portfolio_filter_fallback": bool(portfolio_filter_fallback),
+            "balance_source": str(payload.get("balance_source") or ("scoped_accounts" if portfolio_id else "accounts")),
             "account_count": len(accounts),
             "active_account_count": active_accounts,
             "asset_count": len(assets),
