@@ -439,11 +439,12 @@ def dashboard_snapshot() -> dict[str, Any]:
 @app.post("/api/coinbase/live/activate")
 def activate(
     payload: dict[str, Any] = Body(...),
-    x_autotrader_token: str | None = Header(default=None, alias="X-Autotrader-Token"),
 ) -> dict[str, Any]:
-    _require_control_token(x_autotrader_token)
+    # This endpoint is already protected by local_auth_middleware and the
+    # service is bound to 127.0.0.1 only. Do not require a second browser-side
+    # secret; the authenticated dashboard session is the control boundary.
     if str(payload.get("confirmation") or "") != "I_UNDERSTAND_COINBASE_LIVE_ORDERS":
-        raise HTTPException(status_code=400, detail="Exact Coinbase live confirmation phrase required")
+        raise HTTPException(status_code=400, detail="Explicit Coinbase live confirmation required")
     ready = _executor_readiness(armed=True)
     failed = list(ready.get("failed_gates") or [])
     if failed:
@@ -454,10 +455,8 @@ def activate(
 
 
 @app.post("/api/coinbase/live/deactivate")
-def deactivate(
-    x_autotrader_token: str | None = Header(default=None, alias="X-Autotrader-Token"),
-) -> dict[str, Any]:
-    _require_control_token(x_autotrader_token)
+def deactivate() -> dict[str, Any]:
+    # Same authenticated local-dashboard boundary as activation.
     app.state.live_armed = False
     app.state.arm_store.write(False)
     return {"armed": False, "readiness": _readiness_payload()}
