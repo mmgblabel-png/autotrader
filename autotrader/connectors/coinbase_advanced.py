@@ -569,19 +569,42 @@ class CoinbaseAdvancedMarketData:
             raise CoinbaseTradingError("Unexpected Coinbase cancel response", category="unexpected_response")
         return response
 
+    def _portfolio_accounts_payload(
+        self,
+        portfolio_id: str | None = None,
+    ) -> tuple[dict[str, Any], bool]:
+        """Read accounts for the configured API-key portfolio.
+
+        Coinbase Advanced API keys are portfolio-bound. Some key/portfolio
+        combinations return an empty accounts list when retail_portfolio_id is
+        redundantly supplied even though the key's unfiltered /accounts view
+        correctly exposes that same bound portfolio. Only retry when the
+        explicitly scoped call returns zero account rows.
+        """
+        if not portfolio_id:
+            payload = self._auth_get(self.ACCOUNTS_PATH)
+            return (dict(payload) if isinstance(payload, dict) else {}, False)
+
+        payload = self._auth_get(
+            self.ACCOUNTS_PATH,
+            {"retail_portfolio_id": portfolio_id},
+        )
+        accounts = payload.get("accounts") if isinstance(payload, dict) else None
+        if isinstance(accounts, list) and len(accounts) == 0:
+            fallback = self._auth_get(self.ACCOUNTS_PATH)
+            fallback_accounts = (
+                fallback.get("accounts") if isinstance(fallback, dict) else None
+            )
+            if isinstance(fallback_accounts, list) and fallback_accounts:
+                return dict(fallback), True
+        return (dict(payload) if isinstance(payload, dict) else {}, False)
+
     def account_balances(
         self,
         portfolio_id: str | None = None,
     ) -> dict[str, object]:
         """Return a privacy-safe balance summary from one Coinbase portfolio."""
-        payload = (
-            self._auth_get(
-                self.ACCOUNTS_PATH,
-                {"retail_portfolio_id": portfolio_id},
-            )
-            if portfolio_id
-            else self._auth_get(self.ACCOUNTS_PATH)
-        )
+        payload, portfolio_filter_fallback = self._portfolio_accounts_payload(portfolio_id)
         accounts = payload.get("accounts") if isinstance(payload, dict) else None
         if not isinstance(accounts, list):
             raise CoinbaseAuthenticationError(
@@ -641,6 +664,7 @@ class CoinbaseAdvancedMarketData:
             "read_only": True,
             "portfolio_scoped": bool(portfolio_id),
             "portfolio_id": str(portfolio_id) if portfolio_id else None,
+            "portfolio_filter_fallback": bool(portfolio_filter_fallback),
             "account_count": len(accounts),
             "active_account_count": active_accounts,
             "asset_count": len(assets),
@@ -671,16 +695,10 @@ class CoinbaseAdvancedMarketData:
             )
             return result
         try:
-            payload = (
-                self._auth_get(
-                    self.ACCOUNTS_PATH,
-                    {"retail_portfolio_id": portfolio_id},
-                )
-                if portfolio_id
-                else self._auth_get(self.ACCOUNTS_PATH)
-            )
+            payload, portfolio_filter_fallback = self._portfolio_accounts_payload(portfolio_id)
             accounts = payload.get("accounts") if isinstance(payload, dict) else None
             result["authenticated"] = isinstance(accounts, list)
+            result["portfolio_filter_fallback"] = bool(portfolio_filter_fallback)
             result["status"] = 200 if result["authenticated"] else None
             result["account_count"] = len(accounts) if isinstance(accounts, list) else None
             if not result["authenticated"]:
