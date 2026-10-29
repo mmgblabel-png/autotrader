@@ -120,3 +120,17 @@ def test_coinbase_live_control_uses_authenticated_dashboard_session():
     assert "_require_control_token" not in deactivate
     assert "AUTOTRADER_CONTROL_TOKEN:" not in html
     assert 'confirmation:"I_UNDERSTAND_COINBASE_LIVE_ORDERS"' in html
+
+
+def test_coinbase_operator_dashboard_uses_fresh_balances_and_current_action():
+    server = Path("autotrader/api/coinbase_local_server.py").read_text("utf-8")
+    html = Path("autotrader/api/coinbase_dashboard_html.py").read_text("utf-8")
+    assert 'status["readiness"] = _executor_readiness' in server
+    assert '"fallback_source"] = "readiness"' in server
+    assert "Agent saldo totaal" in html
+    assert "USDC beschikbaar" in html
+    assert "Bot nu" in html
+    assert "const rd=r||a.readiness||{}" in html
+    assert "Laatste actie" in html
+    assert "scanCandidate" in html
+    assert "todayTrades" in html
