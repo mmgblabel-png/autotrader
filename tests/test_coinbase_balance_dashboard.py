@@ -73,3 +73,44 @@ def test_dashboard_is_bitvavo_only():
     assert "section('bitvavo_security')" in html
     assert "coinbase" not in lower
     assert "binance" not in lower
+
+
+def test_coinbase_balance_retries_unfiltered_for_portfolio_bound_key(monkeypatch):
+    client = CoinbaseAdvancedMarketData()
+    calls = []
+
+    def fake_auth_get(path, params=None):
+        calls.append((path, params))
+        if params and params.get("retail_portfolio_id") == "agent-portfolio":
+            return {"accounts": []}
+        return {
+            "accounts": [
+                {
+                    "currency": "USDC",
+                    "active": True,
+                    "available_balance": {"value": "15.128855941", "currency": "USDC"},
+                    "hold": {"value": "0", "currency": "USDC"},
+                },
+                {
+                    "currency": "EUR",
+                    "active": True,
+                    "available_balance": {"value": "0.90928517903825", "currency": "EUR"},
+                    "hold": {"value": "0", "currency": "EUR"},
+                },
+            ]
+        }
+
+    monkeypatch.setattr(client, "_auth_get", fake_auth_get)
+
+    result = client.account_balances("agent-portfolio")
+
+    assert result["portfolio_scoped"] is True
+    assert result["portfolio_id"] == "agent-portfolio"
+    assert result["portfolio_filter_fallback"] is True
+    assert result["asset_count"] == 2
+    assert result["assets"][0]["currency"] == "EUR"
+    assert result["assets"][1]["currency"] == "USDC"
+    assert calls == [
+        (client.ACCOUNTS_PATH, {"retail_portfolio_id": "agent-portfolio"}),
+        (client.ACCOUNTS_PATH, None),
+    ]
