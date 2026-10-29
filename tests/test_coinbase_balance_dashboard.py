@@ -112,5 +112,60 @@ def test_coinbase_balance_retries_unfiltered_for_portfolio_bound_key(monkeypatch
     assert result["assets"][1]["currency"] == "USDC"
     assert calls == [
         (client.ACCOUNTS_PATH, {"retail_portfolio_id": "agent-portfolio"}),
+        (f"{client.PORTFOLIOS_PATH}/agent-portfolio", None),
         (client.ACCOUNTS_PATH, None),
+    ]
+
+
+def test_coinbase_balance_uses_portfolio_breakdown_when_scoped_accounts_are_empty(monkeypatch):
+    client = CoinbaseAdvancedMarketData()
+    calls = []
+
+    def fake_auth_get(path, params=None):
+        calls.append((path, params))
+        if path == client.ACCOUNTS_PATH and params:
+            return {"accounts": []}
+        if path == f"{client.PORTFOLIOS_PATH}/agent-portfolio":
+            return {
+                "portfolio": {"uuid": "agent-portfolio", "name": "AutoTrader Agent"},
+                "spot_positions": [
+                    {
+                        "asset": "USDC",
+                        "available_to_trade_crypto": "15.128855941",
+                        "total_balance_crypto": "15.128855941",
+                        "is_cash": True,
+                    },
+                    {
+                        "asset": "EUR",
+                        "available_to_trade_crypto": "0.90928517903825",
+                        "total_balance_crypto": "0.90928517903825",
+                        "is_cash": True,
+                    },
+                ],
+            }
+        raise AssertionError(f"unexpected fallback request: {path} {params}")
+
+    monkeypatch.setattr(client, "_auth_get", fake_auth_get)
+
+    result = client.account_balances("agent-portfolio")
+
+    assert result["portfolio_scoped"] is True
+    assert result["portfolio_filter_fallback"] is True
+    assert result["balance_source"] == "portfolio_breakdown"
+    assert result["asset_count"] == 2
+    assert result["assets"][0] == {
+        "currency": "EUR",
+        "available": "0.90928517903825",
+        "hold": "0",
+        "total": "0.90928517903825",
+    }
+    assert result["assets"][1] == {
+        "currency": "USDC",
+        "available": "15.128855941",
+        "hold": "0",
+        "total": "15.128855941",
+    }
+    assert calls == [
+        (client.ACCOUNTS_PATH, {"retail_portfolio_id": "agent-portfolio"}),
+        (f"{client.PORTFOLIOS_PATH}/agent-portfolio", None),
     ]
