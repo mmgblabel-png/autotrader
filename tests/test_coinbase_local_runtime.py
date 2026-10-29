@@ -109,3 +109,14 @@ def test_coinbase_local_startup_reconciles_risk_before_live_resume():
     reconcile_at = source.index("reconcile_runtime_state")
     resume_at = source.index("arm_store.should_resume")
     assert reconcile_at < resume_at
+
+
+def test_coinbase_live_control_uses_authenticated_dashboard_session():
+    server = Path("autotrader/api/coinbase_local_server.py").read_text("utf-8")
+    html = Path("autotrader/api/coinbase_dashboard_html.py").read_text("utf-8")
+    activate = server.split('@app.post("/api/coinbase/live/activate")', 1)[1].split('@app.post("/api/coinbase/live/deactivate")', 1)[0]
+    deactivate = server.split('@app.post("/api/coinbase/live/deactivate")', 1)[1]
+    assert "_require_control_token" not in activate
+    assert "_require_control_token" not in deactivate
+    assert "AUTOTRADER_CONTROL_TOKEN:" not in html
+    assert 'confirmation:"I_UNDERSTAND_COINBASE_LIVE_ORDERS"' in html
