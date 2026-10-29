@@ -6,13 +6,16 @@ from autotrader.api import server
 
 def test_coinbase_dashboard_is_standalone_and_uses_coinbase_snapshot():
     html = coinbase_dashboard_html()
-    assert "Coinbase Control Room" in html
+    assert "RiskTrader Control Room" in html
     assert "/api/coinbase/dashboard/snapshot" in html
     assert "/api/dashboard/snapshot" not in html
     assert "/api/security/bitvavo" not in html.lower()
     assert "Bitvavo" not in html
     assert "I_UNDERSTAND_COINBASE_LIVE_ORDERS" in html
     assert "X-Autotrader-Token" in html
+    assert "Trade journal" in html
+    assert "Wat gebeurt er nu?" in html
+    assert "Waarom winnen/verliezen we?" in html
 
 
 def test_coinbase_dashboard_routes_are_registered():
