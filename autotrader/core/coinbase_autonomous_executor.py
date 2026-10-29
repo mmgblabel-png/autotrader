@@ -735,7 +735,7 @@ class CoinbaseAutonomousExecutor:
             self.state.day_start_managed_equity_eur > 0
             and self.state.day_pnl_eur <= -day_limit
         )
-        drawdown_stop = self.state.current_drawdown_pct >= self.config.max_drawdown_pct
+        drawdown_stop = (self.config.max_drawdown_pct < 100.0 and self.state.current_drawdown_pct >= self.config.max_drawdown_pct)
         gates["daily_loss_stop_off"] = not day_stop
         gates["drawdown_stop_off"] = not drawdown_stop
         gates["daily_risk_budget_sufficient"] = (
@@ -780,7 +780,8 @@ class CoinbaseAutonomousExecutor:
             and self.state.day_pnl_eur <= -day_limit
         )
         drawdown_stop = (
-            self.state.current_drawdown_pct >= self.config.max_drawdown_pct
+            self.config.max_drawdown_pct < 100.0
+            and self.state.current_drawdown_pct >= self.config.max_drawdown_pct
         )
         return {
             "enabled": self.config.enabled,
