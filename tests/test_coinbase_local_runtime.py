@@ -130,7 +130,14 @@ def test_coinbase_operator_dashboard_uses_fresh_balances_and_current_action():
     assert "Agent saldo totaal" in html
     assert "USDC beschikbaar" in html
     assert "Bot nu" in html
-    assert "const rd=r||a.readiness||{}" in html
+    assert "const rd=(r.readiness||a.readiness||r||{})" in html
     assert "Laatste actie" in html
     assert "scanCandidate" in html
     assert "todayTrades" in html
+
+
+def test_coinbase_dashboard_snapshot_reads_nested_readiness_balances():
+    server = Path("autotrader/api/coinbase_local_server.py").read_text("utf-8")
+    setup = Path("setup-coinbase-local-windows.ps1").read_text("utf-8")
+    assert 'readiness.get("readiness")' in server
+    assert '$snapshot.readiness.readiness' in setup
