@@ -138,6 +138,6 @@ def test_coinbase_operator_dashboard_uses_fresh_balances_and_current_action():
 
 def test_coinbase_dashboard_snapshot_reads_nested_readiness_balances():
     server = Path("autotrader/api/coinbase_local_server.py").read_text("utf-8")
-    setup = Path("setup-coinbase-local-windows.ps1").read_text("utf-8")
+    html = Path("autotrader/api/coinbase_dashboard_html.py").read_text("utf-8")
     assert 'readiness.get("readiness")' in server
-    assert '$snapshot.readiness.readiness' in setup
+    assert 'const rd=(r.readiness||a.readiness||r||{})' in html
