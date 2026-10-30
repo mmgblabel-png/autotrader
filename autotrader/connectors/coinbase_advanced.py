@@ -625,24 +625,33 @@ class CoinbaseAdvancedMarketData:
         self,
         portfolio_id: str | None = None,
     ) -> tuple[dict[str, Any], bool]:
-        """Read balances for the configured API-key portfolio.
+        """Read balances for the API key's isolated Coinbase portfolio.
 
-        Prefer the explicitly scoped accounts request. If Coinbase returns an
-        empty list, use the portfolio-breakdown endpoint because it reports the
-        chosen portfolio's spot positions directly. Only then try the API key's
-        unfiltered /accounts view as a final compatibility fallback.
+        Coinbase API keys created for a specific portfolio are already scoped
+        by the key itself. In practice, sending retail_portfolio_id again can
+        return an empty account list for consumer portfolios even though the
+        same key's plain /accounts view correctly returns the portfolio wallet.
+
+        Therefore prefer the API-key-scoped /accounts response. Only if that is
+        empty do we try the explicit portfolio breakdown and finally the legacy
+        retail_portfolio_id compatibility path.
         """
-        if not portfolio_id:
-            payload = self._auth_get(self.ACCOUNTS_PATH)
-            return (dict(payload) if isinstance(payload, dict) else {}, False)
-
-        payload = self._auth_get(
-            self.ACCOUNTS_PATH,
-            {"retail_portfolio_id": portfolio_id},
+        key_payload = self._auth_get(self.ACCOUNTS_PATH)
+        key_accounts = (
+            key_payload.get("accounts") if isinstance(key_payload, dict) else None
         )
-        accounts = payload.get("accounts") if isinstance(payload, dict) else None
-        if isinstance(accounts, list) and accounts:
-            return dict(payload), False
+        if isinstance(key_accounts, list) and key_accounts:
+            result = dict(key_payload)
+            result["balance_source"] = (
+                "api_key_accounts" if portfolio_id else "accounts"
+            )
+            return result, bool(portfolio_id)
+
+        if not portfolio_id:
+            return (
+                dict(key_payload) if isinstance(key_payload, dict) else {},
+                False,
+            )
 
         try:
             breakdown_accounts = self._portfolio_breakdown_accounts(portfolio_id)
@@ -654,16 +663,24 @@ class CoinbaseAdvancedMarketData:
                 "balance_source": "portfolio_breakdown",
             }, True
 
-        fallback = self._auth_get(self.ACCOUNTS_PATH)
-        fallback_accounts = (
-            fallback.get("accounts") if isinstance(fallback, dict) else None
+        scoped_payload = self._auth_get(
+            self.ACCOUNTS_PATH,
+            {"retail_portfolio_id": portfolio_id},
         )
-        if isinstance(fallback_accounts, list) and fallback_accounts:
-            result = dict(fallback)
-            result["balance_source"] = "api_key_accounts"
-            return result, True
+        scoped_accounts = (
+            scoped_payload.get("accounts")
+            if isinstance(scoped_payload, dict)
+            else None
+        )
+        if isinstance(scoped_accounts, list) and scoped_accounts:
+            result = dict(scoped_payload)
+            result["balance_source"] = "retail_portfolio_id"
+            return result, False
 
-        return (dict(payload) if isinstance(payload, dict) else {}, False)
+        return (
+            dict(key_payload) if isinstance(key_payload, dict) else {},
+            False,
+        )
 
     def account_balances(
         self,
