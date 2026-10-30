@@ -39,6 +39,23 @@ function Set-EnvValue([string]$Text, [string]$Key, [string]$Value) {
     return $Text + $line + [Environment]::NewLine
 }
 
+function Get-AssetAvailable($Assets, $ReadinessBalances, [string]$Currency) {
+    $rows = @($Assets | Where-Object { [string]$_.currency -eq $Currency } | Select-Object -First 1)
+    if ($rows.Count -gt 0) {
+        $prop = $rows[0].PSObject.Properties["available"]
+        if ($null -ne $prop -and -not [string]::IsNullOrWhiteSpace([string]$prop.Value)) {
+            return [string]$prop.Value
+        }
+    }
+    if ($null -ne $ReadinessBalances) {
+        $fallback = $ReadinessBalances.PSObject.Properties[$Currency]
+        if ($null -ne $fallback -and -not [string]::IsNullOrWhiteSpace([string]$fallback.Value)) {
+            return [string]$fallback.Value
+        }
+    }
+    return "0"
+}
+
 function New-Secret([int]$Bytes = 48) {
     $buffer = New-Object byte[] $Bytes
     [System.Security.Cryptography.RandomNumberGenerator]::Create().GetBytes($buffer)
@@ -154,10 +171,11 @@ if ($Start) {
         try {
             $snapshot = Invoke-RestMethod -Uri "http://127.0.0.1:8787/api/coinbase/dashboard/snapshot" -Headers @{ "X-API-Key" = $publicApiKey } -TimeoutSec 10
             $assets = @($snapshot.balances.assets)
-            $usdc = @($assets | Where-Object { $_.currency -eq "USDC" } | Select-Object -First 1)
-            $eur = @($assets | Where-Object { $_.currency -eq "EUR" } | Select-Object -First 1)
+            $readinessBalances = $snapshot.readiness.balances
+            $usdcValue = Get-AssetAvailable $assets $readinessBalances "USDC"
+            $eurValue = Get-AssetAvailable $assets $readinessBalances "EUR"
             $fundable = [int]($snapshot.opportunity.fundable_markets)
-            if (($usdc.Count -gt 0 -or $eur.Count -gt 0) -and $fundable -gt 0) {
+            if (([double]$usdcValue -gt 0 -or [double]$eurValue -gt 0) -and $fundable -gt 0) {
                 break
             }
         } catch {
@@ -169,11 +187,15 @@ if ($Start) {
     Write-Host "Coinbase RiskTrader draait lokaal en Coinbase-only op http://127.0.0.1:8787/"
     if ($null -ne $snapshot) {
         $assets = @($snapshot.balances.assets)
-        $usdcRow = $assets | Where-Object { $_.currency -eq "USDC" } | Select-Object -First 1
-        $eurRow = $assets | Where-Object { $_.currency -eq "EUR" } | Select-Object -First 1
+        $readinessBalances = $snapshot.readiness.balances
+        $usdcValue = Get-AssetAvailable $assets $readinessBalances "USDC"
+        $eurValue = Get-AssetAvailable $assets $readinessBalances "EUR"
+        $assetNames = @($assets | ForEach-Object { [string]$_.currency } | Where-Object { $_ }) -join ","
+        if ([string]::IsNullOrWhiteSpace($assetNames)) { $assetNames = "(geen)" }
         Write-Host ("Balance source : " + [string]$snapshot.balances.balance_source)
-        Write-Host ("Agent USDC     : " + [string]$usdcRow.available)
-        Write-Host ("Agent EUR      : " + [string]$eurRow.available)
+        Write-Host ("Assets seen    : " + $assetNames)
+        Write-Host ("Agent USDC     : " + $usdcValue)
+        Write-Host ("Agent EUR      : " + $eurValue)
         Write-Host ("Fundable markets: " + [string]$snapshot.opportunity.fundable_markets)
         Write-Host ("Live armed     : " + [string]$snapshot.autonomous.coinbase_armed)
         if ([int]($snapshot.opportunity.fundable_markets) -le 0) {
