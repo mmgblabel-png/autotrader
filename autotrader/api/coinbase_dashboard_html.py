@@ -254,7 +254,7 @@ function gates(failed){const all=["enabled","execution_mode_live","live_executio
 async function refresh(){
   try{
     const d=await api("/api/coinbase/dashboard/snapshot"),a=d.autonomous||{},r=d.readiness||{},o=d.opportunity||{},rt=d.realtime_orderflow||o.realtime||{},b=d.balances||{};
-    const rd=r||a.readiness||{},targets=a.daily_targets||{},rules=a.hard_rules||{},audit=a.order_audit||[],tr=pairTrades(audit);
+    const rd=(r.readiness||a.readiness||r||{}),targets=a.daily_targets||{},rules=a.hard_rules||{},audit=a.order_audit||[],tr=pairTrades(audit);
     const dayKey=new Date().toLocaleDateString("sv-SE",{timeZone:"Europe/Amsterdam"});
     const todayTrades=tr.filter(x=>new Date(Number(x.at||0)*1000).toLocaleDateString("sv-SE",{timeZone:"Europe/Amsterdam"})===dayKey);
     const pnl=Number(targets.profit_eur??a.day_pnl_eur??0),wins=todayTrades.filter(x=>x.pnl>0).length,losses=todayTrades.filter(x=>x.pnl<0).length;
