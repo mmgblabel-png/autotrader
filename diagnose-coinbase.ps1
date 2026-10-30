@@ -12,7 +12,7 @@ if (-not $apiKey) { throw "PUBLIC_API_KEY is leeg." }
 $d = Invoke-RestMethod -Uri "http://127.0.0.1:8787/api/coinbase/dashboard/snapshot" -Headers @{ "X-API-Key" = $apiKey }
 $a = $d.autonomous
 $o = $d.opportunity
-$r = $d.readiness
+$r = $d.readiness`n$b = $d.balances
 $rt = $d.realtime_orderflow
 $diag = $a.entry_diagnostics
 $top = @($o.top_candidates)[0]
@@ -33,7 +33,7 @@ $rules = $a.hard_rules
     cash_reserve_pct         = $rules.min_cash_reserve_pct
     scanned_markets          = $o.scanned_markets
     eligible_scan_markets    = $o.eligible_scan_markets
-    fundable_markets         = $o.fundable_markets
+    balance_source           = $b.balance_source`n    agent_usdc                = ($b.assets | Where-Object { $_.currency -eq "USDC" } | Select-Object -First 1).available`n    agent_eur                 = ($b.assets | Where-Object { $_.currency -eq "EUR" } | Select-Object -First 1).available`n    fundable_markets         = $o.fundable_markets
     fundable_quotes          = (@($o.fundable_quotes) -join ",")
     evaluated_this_tick      = $o.evaluated_markets_this_tick
     websocket_connected      = [bool]$rt.connected
