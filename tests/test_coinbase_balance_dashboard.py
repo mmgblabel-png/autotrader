@@ -153,3 +153,57 @@ def test_coinbase_balance_falls_back_to_portfolio_breakdown_when_key_accounts_ar
         (client.ACCOUNTS_PATH, None),
         (f"{client.PORTFOLIOS_PATH}/agent-portfolio", None),
     ]
+
+
+def test_zero_balance_api_key_rows_fall_through_to_agent_portfolio(monkeypatch):
+    client = CoinbaseAdvancedMarketData()
+    calls = []
+
+    def fake_auth_get(path, params=None):
+        calls.append((path, params))
+        if path == client.ACCOUNTS_PATH and params is None:
+            return {
+                "accounts": [
+                    {
+                        "currency": "BTC",
+                        "active": True,
+                        "available_balance": {"value": "0", "currency": "BTC"},
+                        "hold": {"value": "0", "currency": "BTC"},
+                    },
+                    {
+                        "currency": "USDC",
+                        "active": True,
+                        "available_balance": {"value": "0", "currency": "USDC"},
+                        "hold": {"value": "0", "currency": "USDC"},
+                    },
+                ]
+            }
+        if path == f"{client.PORTFOLIOS_PATH}/agent-portfolio":
+            return {
+                "spot_positions": [
+                    {
+                        "asset": "USDC",
+                        "available_to_trade_crypto": "15.128855941",
+                        "total_balance_crypto": "15.128855941",
+                    },
+                    {
+                        "asset": "EUR",
+                        "available_to_trade_crypto": "0.90928517903825",
+                        "total_balance_crypto": "0.90928517903825",
+                    },
+                ]
+            }
+        raise AssertionError(f"unexpected request: {path} {params}")
+
+    monkeypatch.setattr(client, "_auth_get", fake_auth_get)
+
+    result = client.account_balances("agent-portfolio")
+    assets = {row["currency"]: row for row in result["assets"]}
+
+    assert result["balance_source"] == "portfolio_breakdown"
+    assert float(assets["USDC"]["available"]) > 15
+    assert float(assets["EUR"]["available"]) > 0.9
+    assert calls == [
+        (client.ACCOUNTS_PATH, None),
+        (f"{client.PORTFOLIOS_PATH}/agent-portfolio", None),
+    ]
