@@ -438,7 +438,12 @@ def dashboard_snapshot() -> dict[str, Any]:
     # empty but readiness already has the isolated sleeve balances, expose those
     # instead of misleading the operator with EUR 0 / "Geen balances".
     if not list(balances.get("assets") or []):
-        rb = readiness.get("balances") if isinstance(readiness, dict) else {}
+        readiness_body = (
+            readiness.get("readiness")
+            if isinstance(readiness, dict) and isinstance(readiness.get("readiness"), dict)
+            else readiness
+        )
+        rb = readiness_body.get("balances") if isinstance(readiness_body, dict) else {}
         if isinstance(rb, dict):
             fallback_assets = []
             for currency in ("EUR", "USDC", "BTC"):
