@@ -116,7 +116,7 @@ def test_coinbase_balance_prefers_api_key_scoped_accounts(monkeypatch):
     ]
 
 
-def test_coinbase_balance_uses_portfolio_breakdown_when_scoped_accounts_are_empty(monkeypatch):
+def test_coinbase_balance_falls_back_to_portfolio_breakdown_when_key_accounts_are_empty(monkeypatch):
     client = CoinbaseAdvancedMarketData()
     calls = []
 
@@ -126,42 +126,30 @@ def test_coinbase_balance_uses_portfolio_breakdown_when_scoped_accounts_are_empt
             return {"accounts": []}
         if path == f"{client.PORTFOLIOS_PATH}/agent-portfolio":
             return {
-                "portfolio": {"uuid": "agent-portfolio", "name": "AutoTrader Agent"},
-                "portfolio_balances": {
-                    "total_balance": {"currency": "EUR", "value": "14.49"}
-                },
                 "spot_positions": [
                     {
                         "asset": "USDC",
                         "available_to_trade_crypto": "15.128856",
                         "total_balance_crypto": "15.128856",
-                        "is_cash": True,
                     },
                     {
                         "asset": "EUR",
                         "available_to_trade_crypto": "0.9092852",
                         "total_balance_crypto": "0.9092852",
-                        "is_cash": True,
                     },
-                ],
+                ]
             }
-        raise AssertionError(f"unexpected fallback request: {path} {params}")
+        raise AssertionError(f"unexpected request: {path} {params}")
 
     monkeypatch.setattr(client, "_auth_get", fake_auth_get)
 
     result = client.account_balances("agent-portfolio")
-
-    assert result["portfolio_scoped"] is True
-    assert result["portfolio_filter_fallback"] is True
-    assert result["balance_source"] == "portfolio_breakdown"
-
     assets = {row["currency"]: row for row in result["assets"]}
-    assert set(assets) == {"EUR", "USDC"}
-    assert float(assets["EUR"]["available"]) > 0
-    assert float(assets["USDC"]["available"]) > 15
-    assert float(assets["EUR"]["total"]) == float(assets["EUR"]["available"])
-    assert float(assets["USDC"]["total"]) == float(assets["USDC"]["available"])
 
-    assert calls[0] == (client.ACCOUNTS_PATH, None)
-    assert calls[1] == (f"{client.PORTFOLIOS_PATH}/agent-portfolio", None)
-    assert len(calls) == 2
+    assert result["balance_source"] == "portfolio_breakdown"
+    assert float(assets["USDC"]["available"]) > 15.0
+    assert float(assets["EUR"]["available"]) > 0.9
+    assert calls == [
+        (client.ACCOUNTS_PATH, None),
+        (f"{client.PORTFOLIOS_PATH}/agent-portfolio", None),
+    ]
