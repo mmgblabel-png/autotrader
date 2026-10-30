@@ -171,7 +171,8 @@ if ($Start) {
         try {
             $snapshot = Invoke-RestMethod -Uri "http://127.0.0.1:8787/api/coinbase/dashboard/snapshot" -Headers @{ "X-API-Key" = $publicApiKey } -TimeoutSec 10
             $assets = @($snapshot.balances.assets)
-            $readinessBalances = $snapshot.readiness.balances
+            $readinessNode = if ($null -ne $snapshot.readiness.PSObject.Properties["readiness"]) { $snapshot.readiness.readiness } else { $snapshot.readiness }
+            $readinessBalances = $readinessNode.balances
             $usdcValue = Get-AssetAvailable $assets $readinessBalances "USDC"
             $eurValue = Get-AssetAvailable $assets $readinessBalances "EUR"
             $fundable = [int]($snapshot.opportunity.fundable_markets)
@@ -187,7 +188,8 @@ if ($Start) {
     Write-Host "Coinbase RiskTrader draait lokaal en Coinbase-only op http://127.0.0.1:8787/"
     if ($null -ne $snapshot) {
         $assets = @($snapshot.balances.assets)
-        $readinessBalances = $snapshot.readiness.balances
+        $readinessNode = if ($null -ne $snapshot.readiness.PSObject.Properties["readiness"]) { $snapshot.readiness.readiness } else { $snapshot.readiness }
+        $readinessBalances = $readinessNode.balances
         $usdcValue = Get-AssetAvailable $assets $readinessBalances "USDC"
         $eurValue = Get-AssetAvailable $assets $readinessBalances "EUR"
         $assetNames = @($assets | ForEach-Object { [string]$_.currency } | Where-Object { $_ }) -join ","
