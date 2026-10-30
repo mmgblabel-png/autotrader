@@ -621,6 +621,28 @@ class CoinbaseAdvancedMarketData:
             )
         return accounts
 
+    @staticmethod
+    def _accounts_have_positive_balance(accounts: list[dict[str, Any]] | None) -> bool:
+        if not isinstance(accounts, list):
+            return False
+        for row in accounts:
+            if not isinstance(row, dict):
+                continue
+            available = row.get("available_balance")
+            hold = row.get("hold")
+            available_value = (
+                available.get("value") if isinstance(available, dict) else available
+            )
+            hold_value = hold.get("value") if isinstance(hold, dict) else hold
+            try:
+                if Decimal(str(available_value or "0")) > 0:
+                    return True
+                if Decimal(str(hold_value or "0")) > 0:
+                    return True
+            except (ValueError, TypeError):
+                continue
+        return False
+
     def _portfolio_accounts_payload(
         self,
         portfolio_id: str | None = None,
@@ -640,7 +662,7 @@ class CoinbaseAdvancedMarketData:
         key_accounts = (
             key_payload.get("accounts") if isinstance(key_payload, dict) else None
         )
-        if isinstance(key_accounts, list) and key_accounts:
+        if self._accounts_have_positive_balance(key_accounts):
             result = dict(key_payload)
             result["balance_source"] = (
                 "api_key_accounts" if portfolio_id else "accounts"
@@ -672,7 +694,7 @@ class CoinbaseAdvancedMarketData:
             if isinstance(scoped_payload, dict)
             else None
         )
-        if isinstance(scoped_accounts, list) and scoped_accounts:
+        if self._accounts_have_positive_balance(scoped_accounts):
             result = dict(scoped_payload)
             result["balance_source"] = "retail_portfolio_id"
             return result, False
