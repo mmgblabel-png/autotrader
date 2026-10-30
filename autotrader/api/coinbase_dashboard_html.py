@@ -319,9 +319,10 @@ async function refresh(){
     let assets=Array.isArray(b.assets)?b.assets:[];if(!assets.length){assets=["EUR","USDC","BTC"].map(ccy=>({currency:ccy,available:String(Number((rd.balances||{})[ccy]||0)),hold:"0",total:String(Number((rd.balances||{})[ccy]||0))})).filter(x=>Number(x.total)>0)}E("balances").innerHTML=assets.length?assets.map(x=>'<div class="metric"><span>'+esc(x.currency)+'</span><b>'+esc(x.available)+' beschikbaar · '+esc(x.hold)+' hold · '+esc(x.total)+' totaal</b></div>').join(""):'<div class="subtitle">Saldo tijdelijk niet beschikbaar; trading/scanner blijft actief.</div>';
     E("audit").innerHTML=auditRows(audit);
 
-    const armed=!!a.coinbase_armed,ready=!!r.execution_ready_now;E("statusdot").className="dot "+(armed?"":"off");set("topstatus",armed?"COINBASE LIVE":"COINBASE OFF");set("readytag",ready?"EXECUTION READY":"GATED");
+    const armed=!!a.coinbase_armed,baseReady=!!r.execution_ready_now,fundable=Number(o.fundable_markets||0),hasExposure=!!(pending||pos),ready=baseReady&&(fundable>0||hasExposure);
+    E("statusdot").className="dot "+(armed?"":"off");set("topstatus",armed?"COINBASE LIVE":"COINBASE OFF");set("readytag",ready?"EXECUTION READY":(armed&&fundable<=0&&!hasExposure?"FUNDING BLOCKED":"GATED"));
     E("livebtn").disabled=armed;E("livebtn").title=armed?"Coinbase RiskTrader is al live":(r.ready_to_arm?"Alle gates gereed":"Klik om live-check uit te voeren en blocker te tonen");E("stopbtn").classList.toggle("hidden",!armed);
-    let msg=armed?(ready?"RiskTrader is live en execution-ready.":"RiskTrader is live maar wacht op: "+(r.execution_failed_gates||[]).join(", ")):"Live execution staat uit.";
+    let msg=armed?(ready?"RiskTrader is live en execution-ready.":(fundable<=0&&!hasExposure?"RiskTrader is live maar heeft 0 fundable markets; saldo-koppeling blokkeert nieuwe entries.":"RiskTrader is live maar wacht op: "+(r.execution_failed_gates||[]).join(", "))):"Live execution staat uit.";
     E("notice").textContent=msg;E("notice").className="notice "+(!ready?"warn":"");
     set("updated","Bijgewerkt "+new Date().toLocaleTimeString("nl-NL"));
   }catch(e){E("notice").textContent="Dashboard update mislukt: "+e.message;E("notice").className="notice bad"}
