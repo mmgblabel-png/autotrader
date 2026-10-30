@@ -75,30 +75,30 @@ def test_dashboard_is_bitvavo_only():
     assert "binance" not in lower
 
 
-def test_coinbase_balance_retries_unfiltered_for_portfolio_bound_key(monkeypatch):
+def test_coinbase_balance_prefers_api_key_scoped_accounts(monkeypatch):
     client = CoinbaseAdvancedMarketData()
     calls = []
 
     def fake_auth_get(path, params=None):
         calls.append((path, params))
-        if params and params.get("retail_portfolio_id") == "agent-portfolio":
-            return {"accounts": []}
-        return {
-            "accounts": [
-                {
-                    "currency": "USDC",
-                    "active": True,
-                    "available_balance": {"value": "15.128855941", "currency": "USDC"},
-                    "hold": {"value": "0", "currency": "USDC"},
-                },
-                {
-                    "currency": "EUR",
-                    "active": True,
-                    "available_balance": {"value": "0.90928517903825", "currency": "EUR"},
-                    "hold": {"value": "0", "currency": "EUR"},
-                },
-            ]
-        }
+        if path == client.ACCOUNTS_PATH and params is None:
+            return {
+                "accounts": [
+                    {
+                        "currency": "USDC",
+                        "active": True,
+                        "available_balance": {"value": "15.128855941", "currency": "USDC"},
+                        "hold": {"value": "0", "currency": "USDC"},
+                    },
+                    {
+                        "currency": "EUR",
+                        "active": True,
+                        "available_balance": {"value": "0.90928517903825", "currency": "EUR"},
+                        "hold": {"value": "0", "currency": "EUR"},
+                    },
+                ]
+            }
+        raise AssertionError(f"unexpected request: {path} {params}")
 
     monkeypatch.setattr(client, "_auth_get", fake_auth_get)
 
@@ -110,9 +110,8 @@ def test_coinbase_balance_retries_unfiltered_for_portfolio_bound_key(monkeypatch
     assert result["asset_count"] == 2
     assert result["assets"][0]["currency"] == "EUR"
     assert result["assets"][1]["currency"] == "USDC"
+    assert result["balance_source"] == "api_key_accounts"
     assert calls == [
-        (client.ACCOUNTS_PATH, {"retail_portfolio_id": "agent-portfolio"}),
-        (f"{client.PORTFOLIOS_PATH}/agent-portfolio", None),
         (client.ACCOUNTS_PATH, None),
     ]
 
@@ -123,7 +122,7 @@ def test_coinbase_balance_uses_portfolio_breakdown_when_scoped_accounts_are_empt
 
     def fake_auth_get(path, params=None):
         calls.append((path, params))
-        if path == client.ACCOUNTS_PATH and params:
+        if path == client.ACCOUNTS_PATH and params is None:
             return {"accounts": []}
         if path == f"{client.PORTFOLIOS_PATH}/agent-portfolio":
             return {
@@ -163,9 +162,6 @@ def test_coinbase_balance_uses_portfolio_breakdown_when_scoped_accounts_are_empt
     assert float(assets["EUR"]["total"]) == float(assets["EUR"]["available"])
     assert float(assets["USDC"]["total"]) == float(assets["USDC"]["available"])
 
-    assert calls[0] == (
-        client.ACCOUNTS_PATH,
-        {"retail_portfolio_id": "agent-portfolio"},
-    )
+    assert calls[0] == (client.ACCOUNTS_PATH, None)
     assert calls[1] == (f"{client.PORTFOLIOS_PATH}/agent-portfolio", None)
     assert len(calls) == 2
