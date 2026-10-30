@@ -148,6 +148,38 @@ if ($Start) {
         throw "Container is gestart, maar de Coinbase-only healthcheck werd niet groen."
     }
 
+    $publicApiKey = Get-EnvValue $current "PUBLIC_API_KEY"
+    $snapshot = $null
+    for ($attempt = 1; $attempt -le 10; $attempt++) {
+        try {
+            $snapshot = Invoke-RestMethod -Uri "http://127.0.0.1:8787/api/coinbase/dashboard/snapshot" -Headers @{ "X-API-Key" = $publicApiKey } -TimeoutSec 10
+            $assets = @($snapshot.balances.assets)
+            $usdc = @($assets | Where-Object { $_.currency -eq "USDC" } | Select-Object -First 1)
+            $eur = @($assets | Where-Object { $_.currency -eq "EUR" } | Select-Object -First 1)
+            $fundable = [int]($snapshot.opportunity.fundable_markets)
+            if (($usdc.Count -gt 0 -or $eur.Count -gt 0) -and $fundable -gt 0) {
+                break
+            }
+        } catch {
+            $snapshot = $null
+        }
+        Start-Sleep -Seconds 2
+    }
+
     Write-Host "Coinbase RiskTrader draait lokaal en Coinbase-only op http://127.0.0.1:8787/"
-    Write-Host "Live trading blijft disarmed totdat je het expliciet in het lokale dashboard activeert."
+    if ($null -ne $snapshot) {
+        $assets = @($snapshot.balances.assets)
+        $usdcRow = $assets | Where-Object { $_.currency -eq "USDC" } | Select-Object -First 1
+        $eurRow = $assets | Where-Object { $_.currency -eq "EUR" } | Select-Object -First 1
+        Write-Host ("Balance source : " + [string]$snapshot.balances.balance_source)
+        Write-Host ("Agent USDC     : " + [string]$usdcRow.available)
+        Write-Host ("Agent EUR      : " + [string]$eurRow.available)
+        Write-Host ("Fundable markets: " + [string]$snapshot.opportunity.fundable_markets)
+        Write-Host ("Live armed     : " + [string]$snapshot.autonomous.coinbase_armed)
+        if ([int]($snapshot.opportunity.fundable_markets) -le 0) {
+            Write-Warning "Coinbase is bereikbaar maar er zijn nog 0 fundable markets. Voer .\diagnose-coinbase.cmd uit."
+        }
+    } else {
+        Write-Warning "Dashboard-snapshot kon na startup niet worden gelezen. Voer .\diagnose-coinbase.cmd uit."
+    }
 }
