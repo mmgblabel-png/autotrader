@@ -20,6 +20,13 @@ $top = @($o.top_candidates)[0]
 $lastReject = $diag.last_reject
 $arm = $r.arm_persistence
 $rules = $a.hard_rules
+$assets = @($b.assets)
+$usdcRows = @($assets | Where-Object { [string]$_.currency -eq "USDC" } | Select-Object -First 1)
+$eurRows = @($assets | Where-Object { [string]$_.currency -eq "EUR" } | Select-Object -First 1)
+$agentUsdc = if ($usdcRows.Count -gt 0) { [string]$usdcRows[0].available } elseif ($null -ne $r.balances) { [string]$r.balances.USDC } else { "0" }
+$agentEur = if ($eurRows.Count -gt 0) { [string]$eurRows[0].available } elseif ($null -ne $r.balances) { [string]$r.balances.EUR } else { "0" }
+$assetNames = @($assets | ForEach-Object { [string]$_.currency } | Where-Object { $_ }) -join ","
+if ([string]::IsNullOrWhiteSpace($assetNames)) { $assetNames = "(geen)" }
 
 [pscustomobject]@{
     status                   = "ok"
@@ -35,8 +42,9 @@ $rules = $a.hard_rules
     scanned_markets          = $o.scanned_markets
     eligible_scan_markets    = $o.eligible_scan_markets
     balance_source           = $b.balance_source
-    agent_usdc                = ($b.assets | Where-Object { $_.currency -eq "USDC" } | Select-Object -First 1).available
-    agent_eur                 = ($b.assets | Where-Object { $_.currency -eq "EUR" } | Select-Object -First 1).available
+    assets_seen              = $assetNames
+    agent_usdc               = $agentUsdc
+    agent_eur                = $agentEur
     fundable_markets         = $o.fundable_markets
     fundable_quotes          = (@($o.fundable_quotes) -join ",")
     evaluated_this_tick      = $o.evaluated_markets_this_tick
