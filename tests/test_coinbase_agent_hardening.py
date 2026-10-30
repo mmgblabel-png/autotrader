@@ -112,14 +112,30 @@ def test_spot_sell_parent_rejects_attached_exit_configuration():
         CoinbaseAdvancedMarketData._spot_market_payload(product_id="BTC-EUR", side="SELL", base_size="0.00002", attached_stop_loss_price="74000")
 
 
-def test_account_balance_query_can_be_portfolio_scoped(monkeypatch):
+def test_account_balance_query_respects_portfolio_bound_api_key_scope(monkeypatch):
     client = CoinbaseAdvancedMarketData()
-    observed = {}
+    calls = []
+
     def fake_get(path, params=None):
-        observed["path"], observed["params"] = path, params
-        return {"accounts": [{"currency": "BTC", "active": True, "available_balance": {"value": "0.001"}, "hold": {"value": "0"}}]}
+        calls.append((path, params))
+        assert path == client.ACCOUNTS_PATH
+        assert params is None
+        return {
+            "accounts": [
+                {
+                    "currency": "BTC",
+                    "active": True,
+                    "available_balance": {"value": "0.001"},
+                    "hold": {"value": "0"},
+                }
+            ]
+        }
+
     monkeypatch.setattr(client, "_auth_get", fake_get)
+
     result = client.account_balances("portfolio-1")
-    assert observed["params"]["retail_portfolio_id"] == "portfolio-1"
+
+    assert calls == [(client.ACCOUNTS_PATH, None)]
     assert result["portfolio_scoped"] is True
     assert result["portfolio_id"] == "portfolio-1"
+    assert result["balance_source"] == "api_key_accounts"
