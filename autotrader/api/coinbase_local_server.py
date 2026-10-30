@@ -421,6 +421,19 @@ def dashboard_snapshot() -> dict[str, Any]:
             "error_category": exc.category,
         }
 
+    try:
+        auth_probe = app.state.market.authenticated_accounts_probe(
+            portfolio_id=portfolio_id or None
+        )
+    except Exception as exc:
+        auth_probe = {
+            "authenticated": False,
+            "status": None,
+            "error_category": type(exc).__name__,
+            "portfolio_scoped": bool(portfolio_id),
+            "portfolio_id": portfolio_id or None,
+        }
+
     # Fail-safe dashboard fallback: if the direct balance list is temporarily
     # empty but readiness already has the isolated sleeve balances, expose those
     # instead of misleading the operator with EUR 0 / "Geen balances".
@@ -455,6 +468,7 @@ def dashboard_snapshot() -> dict[str, Any]:
             portfolio_id and app.state.executor.config.require_isolated_portfolio
         ),
         "balances": balances,
+        "auth_probe": auth_probe,
         "autonomous": autonomous(),
         "readiness": readiness,
         "shadow": zscore_shadow(),
