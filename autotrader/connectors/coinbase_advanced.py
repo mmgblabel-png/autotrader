@@ -9,7 +9,7 @@ import json
 import urllib.parse
 import urllib.request
 from dataclasses import dataclass
-from decimal import Decimal
+from decimal import Decimal, localcontext
 from typing import Any
 import os
 import base64
@@ -785,43 +785,48 @@ class CoinbaseAdvancedMarketData:
 
         aggregated: dict[str, dict[str, Decimal]] = {}
         active_accounts = 0
-        for account in accounts:
-            if not isinstance(account, dict):
-                continue
-            currency = str(account.get("currency") or "").upper().strip()
-            if not currency:
-                continue
-            if account.get("active", True):
-                active_accounts += 1
+        with localcontext() as decimal_ctx:
+            # Coinbase can return balances with more than Decimal's default
+            # 28 significant digits. Keep aggregation lossless for wallet
+            # balances instead of silently rounding funded amounts.
+            decimal_ctx.prec = 80
+            for account in accounts:
+                if not isinstance(account, dict):
+                    continue
+                currency = str(account.get("currency") or "").upper().strip()
+                if not currency:
+                    continue
+                if account.get("active", True):
+                    active_accounts += 1
 
-            available_obj = account.get("available_balance") or {}
-            hold_obj = account.get("hold") or {}
-            try:
-                available = Decimal(str(available_obj.get("value") or "0"))
-                hold = Decimal(str(hold_obj.get("value") or "0"))
-            except (ValueError, TypeError):
-                continue
+                available_obj = account.get("available_balance") or {}
+                hold_obj = account.get("hold") or {}
+                try:
+                    available = Decimal(str(available_obj.get("value") or "0"))
+                    hold = Decimal(str(hold_obj.get("value") or "0"))
+                except (ValueError, TypeError):
+                    continue
 
-            bucket = aggregated.setdefault(
-                currency,
-                {"available": Decimal("0"), "hold": Decimal("0")},
-            )
-            bucket["available"] += max(available, Decimal("0"))
-            bucket["hold"] += max(hold, Decimal("0"))
+                bucket = aggregated.setdefault(
+                    currency,
+                    {"available": Decimal("0"), "hold": Decimal("0")},
+                )
+                bucket["available"] += max(available, Decimal("0"))
+                bucket["hold"] += max(hold, Decimal("0"))
 
-        assets = []
-        for currency, amounts in aggregated.items():
-            total = amounts["available"] + amounts["hold"]
-            if total == 0:
-                continue
-            assets.append(
-                {
-                    "currency": currency,
-                    "available": format(amounts["available"], "f"),
-                    "hold": format(amounts["hold"], "f"),
-                    "total": format(total, "f"),
-                }
-            )
+            assets = []
+            for currency, amounts in aggregated.items():
+                total = amounts["available"] + amounts["hold"]
+                if total == 0:
+                    continue
+                assets.append(
+                    {
+                        "currency": currency,
+                        "available": format(amounts["available"], "f"),
+                        "hold": format(amounts["hold"], "f"),
+                        "total": format(total, "f"),
+                    }
+                )
         preferred_order = {"EUR": 0, "USD": 1, "USDC": 2, "BTC": 3, "ETH": 4, "SOL": 5, "XRP": 6}
         assets.sort(
             key=lambda row: (
