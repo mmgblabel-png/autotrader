@@ -21,13 +21,13 @@ coinbase_opportunity_engine:
   decision_window_seconds: 300
   daily_trade_target: 10
   daily_profit_target_eur: 1.0
-  high_risk_enabled: true
+  high_risk_enabled: false
   high_risk_min_samples: 2
   high_risk_min_recent_momentum_bps: 3
   high_risk_max_spread_bps: 45
   high_risk_min_24h_quote_volume: 1000
   realtime_product_limit: 20
-  realtime_min_edge_bps: 4
+  realtime_min_edge_bps: 8
   orderbook_imbalance_weight_bps: 22
   trade_flow_weight_bps: 15
   microprice_weight: 2
@@ -88,8 +88,8 @@ coinbase_autonomous_execution:
   max_order_eur: 1000.0
   min_order_eur: 1.0
 
-  max_daily_loss_pct: 100.0
-  max_drawdown_pct: 100.0
+  max_daily_loss_pct: 3.0
+  max_drawdown_pct: 10.0
   stop_loss_pct: 1.0
   take_profit_pct: 1.5
   trailing_activate_pct: 0.8
@@ -98,8 +98,8 @@ coinbase_autonomous_execution:
   max_preview_fee_bps: 35.0
   max_preview_slippage_bps: 25.0
   assumed_exit_fee_bps: 25.0
-  min_live_net_edge_bps: 8.0
-  max_spread_bps: 20.0
+  min_live_net_edge_bps: 15.0
+  max_spread_bps: 15.0
 
   # Multi-market entries rest post-only at the bid first to target maker fees.
   maker_first: true
@@ -112,18 +112,21 @@ coinbase_autonomous_execution:
   max_taker_entry_fee_bps: 60.0
   max_taker_entry_slippage_bps: 35.0
 
+  # Profit-quality profile: full isolated agent capital remains usable, but
+  # live entries must retain positive net edge after execution costs. Negative-
+  # edge exploration/high-risk fallbacks stay disabled in the live profile.
   # Activity/profit objectives are cumulative realized-day targets.
   daily_trade_target: 10
   daily_profit_target_eur: 1.0
   stop_after_daily_profit_target: false
-  high_risk_fallback: true
-  high_risk_min_live_net_edge_bps: 0.0
-  high_risk_max_spread_bps: 45.0
-  exploration_enabled: true
+  high_risk_fallback: false
+  high_risk_min_live_net_edge_bps: 15.0
+  high_risk_max_spread_bps: 15.0
+  exploration_enabled: false
   exploration_trade_fraction_pct: 20.0
   exploration_min_forecast_bps: 5.0
-  exploration_max_negative_edge_bps: 80.0
-  exploration_max_spread_bps: 20.0
+  exploration_max_negative_edge_bps: 0.0
+  exploration_max_spread_bps: 15.0
   day_timezone: Europe/Amsterdam
 
   # RiskTrader evaluates each current setup directly; no historical promotion quota.
