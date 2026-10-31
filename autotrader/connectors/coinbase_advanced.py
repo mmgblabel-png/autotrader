@@ -311,6 +311,65 @@ class CoinbaseAdvancedMarketData:
     ) -> Any:
         return self._auth_request("GET", path, params=params)
 
+
+    def _auth_accounts_all_pages(
+        self,
+        params: dict[str, Any] | None = None,
+        *,
+        page_size: int = 250,
+        max_pages: int = 20,
+    ) -> dict[str, Any]:
+        """Return all authenticated Coinbase account rows across cursor pages."""
+        page_size = max(1, min(250, int(page_size)))
+        max_pages = max(1, min(100, int(max_pages)))
+        base_params = dict(params or {})
+        cursor: str | None = None
+        accounts: list[dict[str, Any]] = []
+        seen_cursors: set[str] = set()
+        last_payload: dict[str, Any] = {}
+
+        for _ in range(max_pages):
+            page_params = {**base_params, "limit": str(page_size)}
+            if cursor:
+                page_params["cursor"] = cursor
+            payload = self._auth_get(self.ACCOUNTS_PATH, page_params)
+            if not isinstance(payload, dict):
+                raise CoinbaseAuthenticationError(
+                    "Coinbase accounts response was not understood",
+                    category="unexpected_response",
+                )
+            last_payload = dict(payload)
+            rows = payload.get("accounts")
+            if not isinstance(rows, list):
+                raise CoinbaseAuthenticationError(
+                    "Coinbase accounts response was not understood",
+                    category="unexpected_response",
+                )
+            accounts.extend(row for row in rows if isinstance(row, dict))
+
+            next_cursor = str(
+                payload.get("cursor")
+                or (payload.get("pagination") or {}).get("next_cursor")
+                or ""
+            ).strip()
+            has_next = payload.get("has_next")
+            if (
+                not next_cursor
+                or next_cursor == cursor
+                or next_cursor in seen_cursors
+                or has_next is False
+            ):
+                break
+            seen_cursors.add(next_cursor)
+            cursor = next_cursor
+
+        result = dict(last_payload)
+        result["accounts"] = accounts
+        result["has_next"] = False
+        result["cursor"] = ""
+        result["pages_aggregated"] = len(seen_cursors) + (1 if last_payload else 0)
+        return result
+
     @staticmethod
     def _spot_market_payload(
         *,
@@ -658,7 +717,7 @@ class CoinbaseAdvancedMarketData:
         empty do we try the explicit portfolio breakdown and finally the legacy
         retail_portfolio_id compatibility path.
         """
-        key_payload = self._auth_get(self.ACCOUNTS_PATH)
+        key_payload = self._auth_accounts_all_pages()
         key_accounts = (
             key_payload.get("accounts") if isinstance(key_payload, dict) else None
         )
@@ -685,8 +744,7 @@ class CoinbaseAdvancedMarketData:
                 "balance_source": "portfolio_breakdown",
             }, True
 
-        scoped_payload = self._auth_get(
-            self.ACCOUNTS_PATH,
+        scoped_payload = self._auth_accounts_all_pages(
             {"retail_portfolio_id": portfolio_id},
         )
         scoped_accounts = (
