@@ -45,6 +45,12 @@ class CoinbaseAutonomousConfig:
     take_profit_pct: float = 1.5
     max_preview_fee_bps: float = 60.0
     max_preview_slippage_bps: float = 25.0
+    min_probability_up: float = 0.66
+    min_expected_net_edge_bps: float = 25.0
+    estimated_exit_fee_bps: float = 60.0
+    estimated_exit_slippage_bps: float = 5.0
+    safety_margin_bps: float = 10.0
+    min_seconds_remaining: float = 45.0
     require_shadow_promotion: bool = True
     state_path: str = "/data/coinbase_autonomous_canary.json"
 
@@ -66,6 +72,12 @@ class CoinbaseAutonomousConfig:
             take_profit_pct=max(0.1, float(cfg.get("take_profit_pct", 1.5))),
             max_preview_fee_bps=max(0.0, float(cfg.get("max_preview_fee_bps", 60.0))),
             max_preview_slippage_bps=max(0.0, float(cfg.get("max_preview_slippage_bps", 25.0))),
+            min_probability_up=min(0.99, max(0.50, float(cfg.get("min_probability_up", 0.66)))),
+            min_expected_net_edge_bps=max(0.0, float(cfg.get("min_expected_net_edge_bps", 25.0))),
+            estimated_exit_fee_bps=max(0.0, float(cfg.get("estimated_exit_fee_bps", 60.0))),
+            estimated_exit_slippage_bps=max(0.0, float(cfg.get("estimated_exit_slippage_bps", 5.0))),
+            safety_margin_bps=max(0.0, float(cfg.get("safety_margin_bps", 10.0))),
+            min_seconds_remaining=max(0.0, float(cfg.get("min_seconds_remaining", 45.0))),
             require_shadow_promotion=bool(cfg.get("require_shadow_promotion", True)),
             state_path=str(cfg.get("state_path", "/data/coinbase_autonomous_canary.json")),
         )
@@ -347,6 +359,7 @@ class CoinbaseAutonomousExecutor:
             "order_id": order_id, "base_size": base_size,
             "preview_fee_bps": round(fee_bps, 4),
             "preview_slippage_bps": round(slip_bps, 4),
+            **expectancy,
         }
         self.state.last_action = action
         return action
@@ -368,6 +381,45 @@ class CoinbaseAutonomousExecutor:
             return {"at": now, "action": "HOLD", "reason": "preview_fee_too_high", "fee_bps": fee_bps}
         if slip_bps > self.config.max_preview_slippage_bps:
             return {"at": now, "action": "HOLD", "reason": "preview_slippage_too_high", "slippage_bps": slip_bps}
+
+        try:
+            probability_up = float(decision.get("probability_up") or 0.0)
+            forecast_move_bps = float(decision.get("forecast_move_bps") or 0.0)
+            seconds_remaining = float(decision.get("seconds_remaining") or 0.0)
+        except (TypeError, ValueError):
+            return {"at": now, "action": "HOLD", "reason": "invalid_signal_expectancy"}
+
+        roundtrip_cost_bps = (
+            fee_bps
+            + slip_bps
+            + self.config.estimated_exit_fee_bps
+            + self.config.estimated_exit_slippage_bps
+            + self.config.safety_margin_bps
+        )
+        expected_net_edge_bps = forecast_move_bps - roundtrip_cost_bps
+        expectancy = {
+            "probability_up": round(probability_up, 6),
+            "forecast_move_bps": round(forecast_move_bps, 4),
+            "roundtrip_cost_bps": round(roundtrip_cost_bps, 4),
+            "expected_net_edge_bps": round(expected_net_edge_bps, 4),
+            "seconds_remaining": round(seconds_remaining, 3),
+        }
+        if probability_up < self.config.min_probability_up:
+            return {
+                "at": now, "action": "HOLD", "reason": "probability_below_live_threshold",
+                **expectancy,
+            }
+        if seconds_remaining < self.config.min_seconds_remaining:
+            return {
+                "at": now, "action": "HOLD", "reason": "signal_horizon_too_short",
+                **expectancy,
+            }
+        if expected_net_edge_bps < self.config.min_expected_net_edge_bps:
+            return {
+                "at": now, "action": "HOLD", "reason": "net_expectancy_below_threshold",
+                **expectancy,
+            }
+
         client_id = str(uuid.uuid4())
         response = self.client.create_spot_market_order(
             client_order_id=client_id,
