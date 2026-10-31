@@ -586,5 +586,14 @@ coinbase_autonomous_execution:
   take_profit_pct: 1.5
   max_preview_fee_bps: 60.0
   max_preview_slippage_bps: 25.0
+  # Live entry gate: forecast must still have positive room after the actual
+  # entry preview plus modeled exit costs. This prevents high raw forecasts
+  # from being mistaken for profitable trades when fees consume the edge.
+  min_probability_up: 0.66
+  min_expected_net_edge_bps: 25.0
+  estimated_exit_fee_bps: 60.0
+  estimated_exit_slippage_bps: 5.0
+  safety_margin_bps: 10.0
+  min_seconds_remaining: 45.0
   require_shadow_promotion: true
   state_path: /data/coinbase_autonomous_canary.json
