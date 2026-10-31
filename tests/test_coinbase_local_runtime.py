@@ -85,11 +85,12 @@ def test_coinbase_local_config_is_risktrader_and_portfolio_isolated():
     assert realtime["trade_window_seconds"] == 60
     opportunity = cfg["coinbase_opportunity_engine"]
     assert opportunity["enabled"] is True
+    assert opportunity["max_spread_bps"] == 15
     assert opportunity["daily_trade_target"] == 10
     assert opportunity["daily_profit_target_eur"] == 1.0
     assert opportunity["high_risk_enabled"] is False
     assert opportunity["high_risk_min_recent_momentum_bps"] == 3
-    assert opportunity["high_risk_max_spread_bps"] == 45
+    assert opportunity["high_risk_max_spread_bps"] == 15
     assert opportunity["realtime_product_limit"] == 20
     assert opportunity["realtime_min_edge_bps"] == 8
     assert opportunity["orderbook_imbalance_weight_bps"] == 22
