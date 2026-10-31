@@ -308,17 +308,27 @@ async def startup() -> None:
         except Exception as exc:
             log.warning("Coinbase local auth probe failed: %s", type(exc).__name__)
 
-    if app.state.arm_store.should_resume():
+    auto_arm_requested = os.getenv("COINBASE_AUTO_ARM_ON_START", "").strip().lower() in {
+        "1", "true", "yes", "on"
+    }
+    if app.state.arm_store.should_resume() or auto_arm_requested:
         try:
             test_ready = await asyncio.to_thread(_executor_readiness, armed=True)
             failed = list(test_ready.get("failed_gates") or [])
             if not failed:
                 app.state.live_armed = True
-                log.info("Coinbase local live arm restored from persistent operator intent")
+                if auto_arm_requested:
+                    app.state.arm_store.write(True, source="startup_auto_arm")
+                    log.info("Coinbase local live arm enabled from explicit startup auto-arm intent")
+                else:
+                    log.info("Coinbase local live arm restored from persistent operator intent")
             else:
-                log.warning("Coinbase local arm not restored; failed_gates=%s", failed)
+                log.warning(
+                    "Coinbase local arm not restored/auto-armed; failed_gates=%s",
+                    failed,
+                )
         except Exception as exc:
-            log.warning("Coinbase local arm restore failed safely: %s", type(exc).__name__)
+            log.warning("Coinbase local arm restore/auto-arm failed safely: %s", type(exc).__name__)
 
     app.state.tasks = [
         asyncio.create_task(_shadow_loop(), name="coinbase-local-shadow"),

@@ -108,6 +108,20 @@ def test_coinbase_local_compose_enables_existing_btc_seed():
     assert 'COINBASE_ALLOW_EXISTING_BTC_SEED: "true"' in text
 
 
+def test_coinbase_local_compose_requests_fail_closed_auto_arm():
+    text = Path("docker-compose.coinbase.local.yml").read_text(encoding="utf-8")
+    assert 'COINBASE_AUTO_ARM_ON_START: "true"' in text
+
+
+def test_coinbase_local_auto_arm_still_requires_readiness_gates():
+    source = Path("autotrader/api/coinbase_local_server.py").read_text("utf-8")
+    assert 'COINBASE_AUTO_ARM_ON_START' in source
+    assert 'test_ready = await asyncio.to_thread(_executor_readiness, armed=True)' in source
+    assert 'if not failed:' in source
+    assert 'app.state.live_armed = True' in source
+    assert 'app.state.arm_store.write(True, source="startup_auto_arm")' in source
+
+
 def test_coinbase_local_startup_reconciles_risk_before_live_resume():
     source = Path("autotrader/api/coinbase_local_server.py").read_text("utf-8")
     reconcile_at = source.index("reconcile_runtime_state")
