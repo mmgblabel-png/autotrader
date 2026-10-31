@@ -14,7 +14,7 @@ coinbase_opportunity_engine:
   sample_lookback_seconds: 600
   min_samples: 3
   min_recent_momentum_bps: 8
-  max_spread_bps: 20
+  max_spread_bps: 15
   min_quote_balance: 1
   min_24h_quote_volume: 5000
   quote_currencies: [EUR, USDC]
@@ -24,7 +24,7 @@ coinbase_opportunity_engine:
   high_risk_enabled: false
   high_risk_min_samples: 2
   high_risk_min_recent_momentum_bps: 3
-  high_risk_max_spread_bps: 45
+  high_risk_max_spread_bps: 15
   high_risk_min_24h_quote_volume: 1000
   realtime_product_limit: 20
   realtime_min_edge_bps: 8
