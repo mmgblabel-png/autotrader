@@ -25,6 +25,7 @@ from autotrader.connectors.coinbase_advanced import (
     CoinbaseAuthenticationError,
     CoinbaseTradingError,
 )
+from autotrader.core.coinbase_strategy_v2 import DirectionalEntryController
 
 
 def _env_true(name: str, default: bool = False) -> bool:
@@ -262,6 +263,7 @@ class CoinbaseAutonomousExecutor:
         )
         self.client = client or CoinbaseAdvancedMarketData(timeout=5.0)
         self.state = CoinbaseAutonomousState()
+        self.controller = DirectionalEntryController()
         self._product_rule_cache: dict[str, dict[str, str]] = {}
         self._risk_state_needs_rebase = False
         self._load()
@@ -2176,113 +2178,51 @@ class CoinbaseAutonomousExecutor:
                     and self.state.day_pnl_eur >= self.config.daily_profit_target_eur
                 )
                 if not (profit_target_met and self.config.stop_after_daily_profit_target):
-                    decisions = ((shadow.get("last_signal") or {}).get("decisions") or [])
-                    longs = [
-                        row for row in decisions
+                    decisions = [
+                        row
+                        for row in ((shadow.get("last_signal") or {}).get("decisions") or [])
                         if isinstance(row, dict)
-                        and row.get("decision") == "LONG"
-                        and str(row.get("window_key") or "") not in self.state.seen_windows
                     ]
-                    normal_longs = [
-                        row for row in longs
-                        if str(row.get("risk_tier") or "normal").lower() != "high"
-                    ]
-                    high_longs = [
-                        row for row in longs
-                        if str(row.get("risk_tier") or "").lower() == "high"
-                    ]
+                    exploration_trade_eur = max(
+                        self.config.min_order_eur,
+                        float(ready["portfolio_nav_eur"])
+                        * self.config.exploration_trade_fraction_pct / 100.0,
+                    )
 
-                    entry_diag: dict[str, Any] = {
-                        "at": ts,
-                        "decisions_seen": len(longs),
-                        "normal_decisions": len(normal_longs),
-                        "high_risk_decisions": len(high_longs),
-                        "routes_considered": 0,
-                        "accepted_routes": 0,
-                        "rejects": {},
-                        "exploration_attempted": False,
-                    }
-
-                    def best_route(
-                        rows: list[dict[str, Any]],
-                        *,
-                        min_edge_override_bps: float | None = None,
-                        max_trade_override_eur: float | None = None,
-                        max_spread_override_bps: float | None = None,
-                        force_market: bool = False,
-                    ) -> tuple[dict[str, Any], dict[str, Any]] | None:
-                        best_pair: tuple[dict[str, Any], dict[str, Any]] | None = None
-                        for decision in rows:
-                            route = self._best_entry_route(
-                                decision=decision,
-                                balances=balances,
-                                spendable_eur=spendable_eur,
-                                max_trade_eur=max_trade_eur,
-                                diagnostics=entry_diag,
-                                min_edge_override_bps=min_edge_override_bps,
-                                max_trade_override_eur=max_trade_override_eur,
-                                max_spread_override_bps=max_spread_override_bps,
-                                force_market=force_market,
-                            )
-                            if route is None:
-                                continue
-                            if (
-                                best_pair is None
-                                or float(route["score"]) > float(best_pair[1]["score"])
-                            ):
-                                best_pair = (decision, route)
-                        return best_pair
-
-                    best_pair = best_route(normal_longs)
-                    if best_pair is None and self.config.high_risk_fallback:
-                        best_pair = best_route(high_longs)
-
-                    if (
-                        best_pair is None
-                        and self.config.exploration_enabled
-                        and self.state.day_settled_trades < self.config.daily_trade_target
-                    ):
-                        exploration_rows = [
-                            row for row in longs
-                            if float(row.get("forecast_move_bps") or 0.0)
-                            >= self.config.exploration_min_forecast_bps
-                        ]
-                        if exploration_rows:
-                            entry_diag["exploration_attempted"] = True
-                            exploration_trade_eur = max(
-                                self.config.min_order_eur,
-                                float(ready["portfolio_nav_eur"])
-                                * self.config.exploration_trade_fraction_pct / 100.0,
-                            )
-                            exploration_pair = best_route(
-                                exploration_rows,
-                                min_edge_override_bps=-self.config.exploration_max_negative_edge_bps,
-                                max_trade_override_eur=exploration_trade_eur,
-                                max_spread_override_bps=self.config.exploration_max_spread_bps,
-                                force_market=True,
-                            )
-                            if exploration_pair is not None:
-                                decision, route = exploration_pair
-                                decision = {
-                                    **decision,
-                                    "risk_tier": "exploration",
-                                    "reason": "daily_learning_exploration",
-                                }
-                                route["risk_tier"] = "exploration"
-                                best_pair = (decision, route)
-                                entry_diag["exploration_selected"] = True
-                                entry_diag["exploration_notional_eur"] = round(
-                                    float(route.get("notional_eur") or 0.0), 8
-                                )
-
-                    if best_pair is not None:
-                        decision, route = best_pair
-                        entry_diag["selected_product"] = route.get("product_id")
-                        entry_diag["selected_risk_tier"] = decision.get("risk_tier")
-                        entry_diag["selected_after_cost_edge_bps"] = round(
-                            float(route.get("after_cost_edge_bps") or 0.0), 4
+                    def resolve_route(**kwargs: Any) -> dict[str, Any] | None:
+                        return self._best_entry_route(
+                            balances=balances,
+                            spendable_eur=spendable_eur,
+                            max_trade_eur=max_trade_eur,
+                            **kwargs,
                         )
-                        action = self._submit_buy(route=route, decision=decision, now=ts)
+
+                    controller_result = self.controller.evaluate(
+                        decisions=decisions,
+                        seen_windows=set(self.state.seen_windows),
+                        route_resolver=resolve_route,
+                        high_risk_fallback=self.config.high_risk_fallback,
+                        exploration_enabled=self.config.exploration_enabled,
+                        exploration_min_forecast_bps=self.config.exploration_min_forecast_bps,
+                        exploration_trade_eur=exploration_trade_eur,
+                        exploration_max_negative_edge_bps=self.config.exploration_max_negative_edge_bps,
+                        exploration_max_spread_bps=self.config.exploration_max_spread_bps,
+                        day_settled_trades=self.state.day_settled_trades,
+                        daily_trade_target=self.config.daily_trade_target,
+                    )
+                    entry_diag = dict(controller_result.diagnostics)
+                    entry_diag["at"] = ts
+
+                    if controller_result.proposals:
+                        proposal = controller_result.proposals[0]
+                        action = self._submit_buy(
+                            route=proposal.route,
+                            decision=proposal.decision,
+                            now=ts,
+                        )
+                        action["controller_id"] = proposal.controller_id
+                        action["executor_action"] = proposal.action
+                        self.state.last_action = action
                     self.state.entry_diagnostics = entry_diag
 
             self.state.last_error = None
