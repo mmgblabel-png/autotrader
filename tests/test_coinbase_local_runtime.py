@@ -61,20 +61,23 @@ def test_coinbase_local_config_is_risktrader_and_portfolio_isolated():
     assert auto["submission_retry_after_seconds"] == 20
     assert auto["submission_abandon_after_seconds"] == 90
     assert auto["assumed_exit_fee_bps"] == 25.0
-    assert auto["exploration_enabled"] is True
+    assert auto["min_live_net_edge_bps"] == 15.0
+    assert auto["max_spread_bps"] == 15.0
+    assert auto["high_risk_min_live_net_edge_bps"] >= auto["min_live_net_edge_bps"]
+    assert auto["exploration_enabled"] is False
     assert auto["exploration_trade_fraction_pct"] == 20.0
     assert auto["exploration_min_forecast_bps"] == 5.0
-    assert auto["exploration_max_negative_edge_bps"] == 80.0
-    assert auto["exploration_max_spread_bps"] == 20.0
+    assert auto["exploration_max_negative_edge_bps"] == 0.0
+    assert auto["exploration_max_spread_bps"] == 15.0
     assert auto["daily_trade_target"] == 10
     assert auto["daily_profit_target_eur"] == 1.0
     assert auto["stop_after_daily_profit_target"] is False
-    assert auto["high_risk_fallback"] is True
-    assert auto["high_risk_min_live_net_edge_bps"] == 0.0
-    assert auto["high_risk_max_spread_bps"] == 45.0
+    assert auto["high_risk_fallback"] is False
+    assert auto["high_risk_min_live_net_edge_bps"] == 15.0
+    assert auto["high_risk_max_spread_bps"] == 15.0
     assert auto["day_timezone"] == "Europe/Amsterdam"
-    assert auto["max_daily_loss_pct"] == 100.0
-    assert auto["max_drawdown_pct"] == 100.0
+    assert auto["max_daily_loss_pct"] == 3.0
+    assert auto["max_drawdown_pct"] == 10.0
     realtime = cfg["coinbase_realtime_orderflow"]
     assert realtime["enabled"] is True
     assert realtime["max_products"] == 20
@@ -84,11 +87,11 @@ def test_coinbase_local_config_is_risktrader_and_portfolio_isolated():
     assert opportunity["enabled"] is True
     assert opportunity["daily_trade_target"] == 10
     assert opportunity["daily_profit_target_eur"] == 1.0
-    assert opportunity["high_risk_enabled"] is True
+    assert opportunity["high_risk_enabled"] is False
     assert opportunity["high_risk_min_recent_momentum_bps"] == 3
     assert opportunity["high_risk_max_spread_bps"] == 45
     assert opportunity["realtime_product_limit"] == 20
-    assert opportunity["realtime_min_edge_bps"] == 4
+    assert opportunity["realtime_min_edge_bps"] == 8
     assert opportunity["orderbook_imbalance_weight_bps"] == 22
     assert opportunity["trade_flow_weight_bps"] == 15
     assert "EUR" in opportunity["quote_currencies"]
