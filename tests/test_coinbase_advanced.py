@@ -113,3 +113,56 @@ def test_coinbase_create_spot_market_order_requires_success(monkeypatch):
     assert payload["client_order_id"] == "cid-1"
     assert payload["preview_id"] == "preview-1"
     assert payload["order_configuration"]["market_market_ioc"]["base_size"] == "0.00002"
+
+
+
+def test_coinbase_account_balances_follow_cursor_pages(monkeypatch):
+    client = CoinbaseAdvancedMarketData()
+    calls = []
+
+    pages = {
+        None: {
+            "accounts": [
+                {
+                    "currency": "OP",
+                    "active": True,
+                    "available_balance": {"value": "0.0000000000000064"},
+                    "hold": {"value": "0"},
+                }
+            ],
+            "cursor": "page-2",
+            "has_next": True,
+        },
+        "page-2": {
+            "accounts": [
+                {
+                    "currency": "USDC",
+                    "active": True,
+                    "available_balance": {"value": "13.55241313574999275975626014870528"},
+                    "hold": {"value": "0"},
+                },
+                {
+                    "currency": "EUR",
+                    "active": True,
+                    "available_balance": {"value": "0.90928517903825"},
+                    "hold": {"value": "0"},
+                },
+            ],
+            "has_next": False,
+        },
+    }
+
+    def fake_auth_get(path, params=None):
+        assert path == client.ACCOUNTS_PATH
+        params = dict(params or {})
+        calls.append(params)
+        return pages[params.get("cursor")]
+
+    monkeypatch.setattr(client, "_auth_get", fake_auth_get)
+    result = client.account_balances("agent-portfolio-id")
+
+    by_currency = {row["currency"]: row for row in result["assets"]}
+    assert by_currency["USDC"]["available"] == "13.55241313574999275975626014870528"
+    assert by_currency["EUR"]["available"] == "0.90928517903825"
+    assert len(calls) == 2
+    assert calls[1]["cursor"] == "page-2"
