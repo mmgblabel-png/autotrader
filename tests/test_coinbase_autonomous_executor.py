@@ -8,6 +8,7 @@ from autotrader.core.coinbase_autonomous_executor import (
 )
 
 
+# Net expectancy regression coverage.
 class FakeCoinbase:
     def __init__(self):
         self.eur = 0.0
