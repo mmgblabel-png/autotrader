@@ -168,6 +168,8 @@ def test_shadow_gate_blocks_new_buy_but_not_reserve_seeding(tmp_path, monkeypatc
                     "window_key": "BTC-EUR:300:1",
                     "duration_seconds": 300,
                     "seconds_remaining": 120,
+                    "probability_up": 0.80,
+                    "forecast_move_bps": 250.0,
                 }]
             },
         },
@@ -207,3 +209,76 @@ def test_promoted_signal_can_submit_bounded_buy(tmp_path, monkeypatch):
     assert fake.created[0]["side"] == "BUY"
     assert float(fake.created[0]["quote_size"]) <= 3.0
     assert status["pending_order"]["purpose"] == "entry"
+
+
+def test_live_buy_is_blocked_when_roundtrip_expectancy_is_negative(tmp_path, monkeypatch):
+    _set_live_env(monkeypatch)
+    fake = FakeCoinbase()
+    fake.eur = 20.0
+    fake.btc = 0.00005
+    cfg = CoinbaseAutonomousConfig(
+        state_path=str(tmp_path / "coinbase.json"),
+        require_shadow_promotion=True,
+        max_order_eur=3.0,
+        min_probability_up=0.66,
+        min_expected_net_edge_bps=25.0,
+        estimated_exit_fee_bps=60.0,
+        estimated_exit_slippage_bps=5.0,
+        safety_margin_bps=10.0,
+    )
+    executor = CoinbaseAutonomousExecutor(cfg, client=fake)
+    executor.state.managed_cash_eur = 3.0
+    status = executor.tick(
+        armed=True,
+        shadow_status={
+            "promotion_ready": True,
+            "last_signal": {
+                "decisions": [{
+                    "decision": "LONG",
+                    "window_key": "BTC-EUR:300:negative-edge",
+                    "duration_seconds": 300,
+                    "seconds_remaining": 120,
+                    "probability_up": 0.80,
+                    "forecast_move_bps": 100.0,
+                }]
+            },
+        },
+    )
+    assert status["live_orders_sent"] == 0
+    assert fake.created == []
+    assert status["last_action"]["reason"] == "net_expectancy_below_threshold"
+    assert status["last_action"]["expected_net_edge_bps"] < 25.0
+
+
+def test_live_buy_requires_stronger_probability_than_shadow_floor(tmp_path, monkeypatch):
+    _set_live_env(monkeypatch)
+    fake = FakeCoinbase()
+    fake.eur = 20.0
+    fake.btc = 0.00005
+    cfg = CoinbaseAutonomousConfig(
+        state_path=str(tmp_path / "coinbase.json"),
+        require_shadow_promotion=True,
+        max_order_eur=3.0,
+        min_probability_up=0.70,
+    )
+    executor = CoinbaseAutonomousExecutor(cfg, client=fake)
+    executor.state.managed_cash_eur = 3.0
+    status = executor.tick(
+        armed=True,
+        shadow_status={
+            "promotion_ready": True,
+            "last_signal": {
+                "decisions": [{
+                    "decision": "LONG",
+                    "window_key": "BTC-EUR:300:weak-probability",
+                    "duration_seconds": 300,
+                    "seconds_remaining": 120,
+                    "probability_up": 0.68,
+                    "forecast_move_bps": 300.0,
+                }]
+            },
+        },
+    )
+    assert status["live_orders_sent"] == 0
+    assert fake.created == []
+    assert status["last_action"]["reason"] == "probability_below_live_threshold"
