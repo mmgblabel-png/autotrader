@@ -329,10 +329,13 @@ class CoinbaseAdvancedMarketData:
         last_payload: dict[str, Any] = {}
 
         for _ in range(max_pages):
-            page_params = {**base_params, "limit": str(page_size)}
+            page_params = dict(base_params)
             if cursor:
                 page_params["cursor"] = cursor
-            payload = self._auth_get(self.ACCOUNTS_PATH, page_params)
+            payload = self._auth_get(
+                self.ACCOUNTS_PATH,
+                page_params or None,
+            )
             if not isinstance(payload, dict):
                 raise CoinbaseAuthenticationError(
                     "Coinbase accounts response was not understood",
