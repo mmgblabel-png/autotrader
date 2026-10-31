@@ -201,6 +201,8 @@ def test_promoted_signal_can_submit_bounded_buy(tmp_path, monkeypatch):
                     "window_key": "BTC-EUR:300:2",
                     "duration_seconds": 300,
                     "seconds_remaining": 120,
+                    "probability_up": 0.80,
+                    "forecast_move_bps": 250.0,
                 }]
             },
         },
