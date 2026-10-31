@@ -1,3 +1,4 @@
+import json
 import pytest
 import os
 from decimal import Decimal
@@ -1571,3 +1572,43 @@ def test_legacy_drawdown_peak_is_rebased_to_cashflow_aware_basis(tmp_path, monke
     assert executor.state.max_drawdown_pct == pytest.approx(2.5244862, rel=1e-6)
     assert executor.state.current_drawdown_pct < cfg.max_drawdown_pct
     assert executor.state.order_audit[-1]["action"] == "DRAWDOWN_STATE_REBASED"
+
+
+
+def test_v2_risk_state_rebases_after_balance_model_fix(tmp_path):
+    fake = FakeCoinbase()
+    fake.btc = 0.0
+    fake.eur = 13.0
+    state_path = tmp_path / "coinbase.json"
+    state_path.write_text(
+        json.dumps({
+            "risk_model_version": 2,
+            "state": {
+                "managed_cash_eur": 0.0,
+                "day_key": "",
+                "day_start_managed_equity_eur": 0.0,
+                "day_pnl_eur": 0.0,
+                "peak_managed_equity_eur": 80.0,
+                "current_drawdown_pct": 83.75,
+                "max_drawdown_pct": 83.75,
+            },
+        }),
+        encoding="utf-8",
+    )
+
+    cfg = CoinbaseAutonomousConfig(
+        state_path=str(state_path),
+        portfolio_id="agent-portfolio",
+        require_isolated_portfolio=True,
+        require_shadow_promotion=False,
+    )
+    executor = CoinbaseAutonomousExecutor(cfg, client=fake)
+    result = executor.reconcile_runtime_state(now=1_800_000_000.0)
+
+    assert result["risk_model_version"] == 3
+    assert result["managed_equity_eur"] == 13.0
+    assert result["peak_managed_equity_eur"] == 13.0
+    assert result["current_drawdown_pct"] == 0.0
+    assert executor.state.max_drawdown_pct == 0.0
+    saved = json.loads(state_path.read_text("utf-8"))
+    assert saved["risk_model_version"] == 3

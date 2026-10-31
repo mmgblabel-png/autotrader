@@ -293,7 +293,7 @@ class CoinbaseAutonomousExecutor:
             risk_model_version = int(payload.get("risk_model_version", 0) or 0)
         except (TypeError, ValueError):
             risk_model_version = 0
-        self._risk_state_needs_rebase = risk_model_version < 2
+        self._risk_state_needs_rebase = risk_model_version < 3
         position = raw.get("position")
         pending = raw.get("pending")
         submission_intent = raw.get("submission_intent")
@@ -344,7 +344,7 @@ class CoinbaseAutonomousExecutor:
             self.config.state_path,
             {
                 "venue": "coinbase_advanced",
-                "risk_model_version": 2,
+                "risk_model_version": 3,
                 "instrument_scope": "spot_only",
                 "leverage": False,
                 "margin": False,
@@ -649,7 +649,7 @@ class CoinbaseAutonomousExecutor:
             "new_peak_eur": round(new_peak, 8),
             "managed_equity_eur": round(managed_equity, 8),
             "current_drawdown_pct": round(current_dd, 6),
-            "risk_model_version": 2,
+            "risk_model_version": 3,
         })
         self._save()
 
@@ -688,7 +688,7 @@ class CoinbaseAutonomousExecutor:
             "peak_managed_equity_eur": round(self.state.peak_managed_equity_eur, 8),
             "current_drawdown_pct": round(current_dd, 6),
             "max_drawdown_pct": round(self.state.max_drawdown_pct, 6),
-            "risk_model_version": 2,
+            "risk_model_version": 3,
         }
 
     def _daily_risk_capacity(self) -> dict[str, float]:
