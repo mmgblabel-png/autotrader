@@ -320,34 +320,40 @@ class CoinbaseAdvancedMarketData:
         max_pages: int = 20,
     ) -> dict[str, Any]:
         """Return all authenticated Coinbase account rows across cursor pages."""
-        page_size = max(1, min(250, int(page_size)))
+        del page_size  # Coinbase chooses the default page size for this endpoint.
         max_pages = max(1, min(100, int(max_pages)))
         base_params = dict(params or {})
-        cursor: str | None = None
         accounts: list[dict[str, Any]] = []
         seen_cursors: set[str] = set()
+        pages_aggregated = 0
         last_payload: dict[str, Any] = {}
 
+        cursor: str | None = None
         for _ in range(max_pages):
-            page_params = dict(base_params)
+            request_params = dict(base_params)
             if cursor:
-                page_params["cursor"] = cursor
-            if page_params:
-                payload = self._auth_get(self.ACCOUNTS_PATH, page_params)
+                request_params["cursor"] = cursor
+
+            if request_params:
+                payload = self._auth_get(self.ACCOUNTS_PATH, request_params)
             else:
                 payload = self._auth_get(self.ACCOUNTS_PATH)
+
             if not isinstance(payload, dict):
                 raise CoinbaseAuthenticationError(
                     "Coinbase accounts response was not understood",
                     category="unexpected_response",
                 )
-            last_payload = dict(payload)
+
             rows = payload.get("accounts")
             if not isinstance(rows, list):
                 raise CoinbaseAuthenticationError(
                     "Coinbase accounts response was not understood",
                     category="unexpected_response",
                 )
+
+            pages_aggregated += 1
+            last_payload = dict(payload)
             accounts.extend(row for row in rows if isinstance(row, dict))
 
             next_cursor = str(
@@ -356,13 +362,12 @@ class CoinbaseAdvancedMarketData:
                 or ""
             ).strip()
             has_next = payload.get("has_next")
-            if (
-                not next_cursor
-                or next_cursor == cursor
-                or next_cursor in seen_cursors
-                or has_next is False
-            ):
+
+            if has_next is False or not next_cursor:
                 break
+            if next_cursor == cursor or next_cursor in seen_cursors:
+                break
+
             seen_cursors.add(next_cursor)
             cursor = next_cursor
 
@@ -370,7 +375,7 @@ class CoinbaseAdvancedMarketData:
         result["accounts"] = accounts
         result["has_next"] = False
         result["cursor"] = ""
-        result["pages_aggregated"] = len(seen_cursors) + (1 if last_payload else 0)
+        result["pages_aggregated"] = pages_aggregated
         return result
 
     @staticmethod
