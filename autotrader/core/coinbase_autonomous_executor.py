@@ -2254,6 +2254,9 @@ class CoinbaseAutonomousExecutor:
         return {
             "venue": "coinbase_advanced",
             "mode": "coinbase_risktrader",
+            "architecture": "controller_executor_v2",
+            "controller_id": self.controller.controller_id,
+            "executor_type": "coinbase_position_executor",
             "enabled": self.config.enabled,
             "product_id": self.config.product_id,
             "live_orders_sent": int(self.state.live_orders_sent),
