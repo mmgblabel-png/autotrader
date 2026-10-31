@@ -359,7 +359,6 @@ class CoinbaseAutonomousExecutor:
             "order_id": order_id, "base_size": base_size,
             "preview_fee_bps": round(fee_bps, 4),
             "preview_slippage_bps": round(slip_bps, 4),
-            **expectancy,
         }
         self.state.last_action = action
         return action
@@ -444,6 +443,7 @@ class CoinbaseAutonomousExecutor:
             "quote_eur": quote_eur, "window_key": window_key,
             "preview_fee_bps": round(fee_bps, 4),
             "preview_slippage_bps": round(slip_bps, 4),
+            **expectancy,
         }
         self.state.last_action = action
         return action
