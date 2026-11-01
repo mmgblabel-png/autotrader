@@ -122,6 +122,16 @@ def test_coinbase_local_auto_arm_still_requires_readiness_gates():
     assert 'app.state.arm_store.write(True, source="startup_auto_arm")' in source
 
 
+def test_coinbase_local_preserves_live_intent_for_gate_recovery():
+    source = Path("autotrader/api/coinbase_local_server.py").read_text("utf-8")
+    assert 'app.state.arm_store.write(True, source="startup_auto_arm")' in source
+    assert "async def _arm_recovery_loop()" in source
+    assert "if not bool(app.state.live_armed) and app.state.arm_store.should_resume()" in source
+    assert 'asyncio.create_task(_arm_recovery_loop(), name="coinbase-local-arm-recovery")' in source
+    deactivate = source.split('@app.post("/api/coinbase/live/deactivate")', 1)[1]
+    assert "app.state.arm_store.write(False)" in deactivate
+
+
 def test_coinbase_local_startup_reconciles_risk_before_live_resume():
     source = Path("autotrader/api/coinbase_local_server.py").read_text("utf-8")
     reconcile_at = source.index("reconcile_runtime_state")
