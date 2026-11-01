@@ -54,8 +54,8 @@ def test_coinbase_local_config_is_risktrader_and_portfolio_isolated():
     assert auto["allow_dynamic_products"] is True
     assert auto["maker_first"] is True
     assert auto["maker_first_exit"] is True
-    assert auto["maker_exit_market_fallback"] is True
-    assert auto["maker_entry_market_fallback"] is True
+    assert auto["maker_exit_market_fallback"] is False
+    assert auto["maker_entry_market_fallback"] is False
     assert auto["max_taker_entry_fee_bps"] == 60.0
     assert auto["max_taker_entry_slippage_bps"] == 35.0
     assert auto["submission_retry_after_seconds"] == 20
