@@ -134,8 +134,9 @@ def test_coinbase_local_preserves_live_intent_for_gate_recovery():
 
 def test_coinbase_local_startup_reconciles_risk_before_live_resume():
     source = Path("autotrader/api/coinbase_local_server.py").read_text("utf-8")
-    reconcile_at = source.index("reconcile_runtime_state")
-    resume_at = source.index("arm_store.should_resume")
+    startup = source.split('@app.on_event("startup")', 1)[1].split('@app.on_event("shutdown")', 1)[0]
+    reconcile_at = startup.index("reconcile_runtime_state")
+    resume_at = startup.index("arm_store.should_resume")
     assert reconcile_at < resume_at
 
 
