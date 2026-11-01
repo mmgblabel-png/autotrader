@@ -238,6 +238,21 @@ async def _preview_loop() -> None:
         await asyncio.sleep(60.0)
 
 
+async def _arm_recovery_loop() -> None:
+    """Re-arm after temporary readiness blocks when operator intent remains live."""
+    while True:
+        try:
+            if not bool(app.state.live_armed) and app.state.arm_store.should_resume():
+                test_ready = await asyncio.to_thread(_executor_readiness, armed=True)
+                failed = list(test_ready.get("failed_gates") or [])
+                if not failed:
+                    app.state.live_armed = True
+                    log.info("Coinbase local live arm recovered after temporary readiness block")
+        except Exception as exc:
+            log.warning("Coinbase local arm recovery failed safely: %s", type(exc).__name__)
+        await asyncio.sleep(30.0)
+
+
 @app.on_event("startup")
 async def startup() -> None:
     cfg = _load_config()
@@ -311,20 +326,23 @@ async def startup() -> None:
     auto_arm_requested = os.getenv("COINBASE_AUTO_ARM_ON_START", "").strip().lower() in {
         "1", "true", "yes", "on"
     }
-    if app.state.arm_store.should_resume() or auto_arm_requested:
+    if auto_arm_requested:
+        # Persist desired live intent even when a temporary gate (for example
+        # the daily risk budget) prevents arming right now. The recovery loop
+        # can then re-arm automatically once the gate clears. Manual Stop live
+        # writes False and therefore cancels this intent.
+        app.state.arm_store.write(True, source="startup_auto_arm")
+
+    if app.state.arm_store.should_resume():
         try:
             test_ready = await asyncio.to_thread(_executor_readiness, armed=True)
             failed = list(test_ready.get("failed_gates") or [])
             if not failed:
                 app.state.live_armed = True
-                if auto_arm_requested:
-                    app.state.arm_store.write(True, source="startup_auto_arm")
-                    log.info("Coinbase local live arm enabled from explicit startup auto-arm intent")
-                else:
-                    log.info("Coinbase local live arm restored from persistent operator intent")
+                log.info("Coinbase local live arm enabled/restored from operator intent")
             else:
                 log.warning(
-                    "Coinbase local arm not restored/auto-armed; failed_gates=%s",
+                    "Coinbase local arm pending; temporary failed_gates=%s",
                     failed,
                 )
         except Exception as exc:
@@ -336,6 +354,7 @@ async def startup() -> None:
         asyncio.create_task(_executor_loop(), name="coinbase-local-executor"),
         asyncio.create_task(_universe_loop(), name="coinbase-local-universe"),
         asyncio.create_task(_preview_loop(), name="coinbase-local-preview"),
+        asyncio.create_task(_arm_recovery_loop(), name="coinbase-local-arm-recovery"),
     ]
 
 
