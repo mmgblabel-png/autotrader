@@ -1294,6 +1294,48 @@ def test_current_drawdown_is_visible_as_readiness_gate(tmp_path, monkeypatch):
     assert ready["ready_for_new_entry"] is False
 
 
+def test_protective_exit_submission_intent_is_not_abandoned(tmp_path, monkeypatch):
+    _set_live_env(monkeypatch)
+
+    class MissingIntentCoinbase(FakeCoinbase):
+        def find_order_by_client_id(self, client_order_id, product_id=None, portfolio_id=None):
+            return None
+
+    fake = MissingIntentCoinbase()
+    fake.eur = 0.0
+    fake.btc = 0.0
+    cfg = CoinbaseAutonomousConfig(
+        state_path=str(tmp_path / "protective-intent.json"),
+        portfolio_id="agent-portfolio",
+        require_isolated_portfolio=True,
+        require_shadow_promotion=False,
+        submission_retry_after_seconds=20.0,
+        submission_abandon_after_seconds=90.0,
+    )
+    executor = CoinbaseAutonomousExecutor(cfg, client=fake)
+    executor.state.submission_intent = SubmissionIntent(
+        client_order_id="protective-submit",
+        side="SELL",
+        purpose="exit",
+        created_at=1000.0,
+        base_size="1",
+        product_id="SYND-USDC",
+        quote_currency="USDC",
+        quote_to_eur=0.9,
+        order_type="market",
+        retry_count=1,
+        exit_reason="drawdown_limit",
+    )
+
+    executor._recover_submission_intent(1091.0)
+
+    assert executor.state.submission_intent is None
+    assert executor.state.pending is not None
+    assert executor.state.pending.purpose == "exit"
+    assert executor.state.pending.exit_reason == "drawdown_limit"
+    assert fake.created[-1]["side"] == "SELL"
+
+
 def test_uncertain_submission_is_abandoned_after_timeout(tmp_path, monkeypatch):
     _set_live_env(monkeypatch)
 
