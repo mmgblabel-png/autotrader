@@ -1654,3 +1654,73 @@ def test_v2_risk_state_rebases_after_balance_model_fix(tmp_path):
     assert executor.state.max_drawdown_pct == 0.0
     saved = json.loads(state_path.read_text("utf-8"))
     assert saved["risk_model_version"] == 3
+
+
+
+def test_orphaned_drawdown_position_watchdog_recreates_exit_same_tick(tmp_path, monkeypatch):
+    _set_live_env(monkeypatch)
+    fake = FakeCoinbase()
+    fake.eur = 0.0
+    fake.usdc = 0.05
+    fake.btc = 0.0
+    fake.bid = 0.0070
+    fake.ask = 0.00701
+
+    cfg = CoinbaseAutonomousConfig(
+        state_path=str(tmp_path / "orphaned-watchdog.json"),
+        portfolio_id="agent-portfolio",
+        require_isolated_portfolio=True,
+        require_shadow_promotion=False,
+        max_drawdown_pct=10.0,
+    )
+    executor = CoinbaseAutonomousExecutor(cfg, client=fake)
+    executor.state.position = ManagedPosition(
+        product_id="SYND-USDC",
+        base_size=1746.12,
+        entry_price=0.0072,
+        entry_fee_eur=0.03,
+        opened_at=1000.0,
+        window_end=9999999999.0,
+        quote_currency="USDC",
+        quote_to_eur=0.9,
+        peak_price=0.0072,
+    )
+    executor.state.peak_managed_equity_eur = 12.5
+    executor.state.day_start_managed_equity_eur = 12.5
+    executor.state.last_action = {
+        "action": "SUBMISSION_INTENT_ABANDONED",
+        "purpose": "exit",
+    }
+
+    original_account_nav = executor._account_nav
+    def fake_account_nav(_bid):
+        return 10.0, {
+            "EUR": 0.0,
+            "USDC": 0.05,
+            "BTC": 0.0,
+            "SYND": 1746.12,
+            "_USDC_TO_EUR": 0.9,
+        }
+    monkeypatch.setattr(executor, "_account_nav", fake_account_nav)
+    monkeypatch.setattr(executor, "_managed_equity", lambda _bid: 10.0)
+    monkeypatch.setattr(executor, "_product_rules", lambda _product: {
+        "base_increment": "0.01",
+        "base_min_size": "0.01",
+        "quote_increment": "0.000001",
+        "quote_min_size": "0.01",
+    })
+    monkeypatch.setattr(executor, "_usdc_to_eur", lambda: 0.9)
+
+    status = executor.tick(
+        armed=False,
+        shadow_status={"promotion_ready": True, "last_signal": {"decisions": []}},
+        now=2000.0,
+    )
+
+    assert fake.created
+    assert fake.created[-1]["side"] == "SELL"
+    assert fake.created[-1]["product_id"] == "SYND-USDC"
+    assert executor.state.pending is not None
+    assert executor.state.pending.purpose == "exit"
+    assert executor.state.pending.exit_reason == "drawdown_limit"
+    assert status["last_action"]["watchdog_recovery"] is True

@@ -2058,9 +2058,45 @@ class CoinbaseAutonomousExecutor:
             drawdown_stop = not bool(ready["gates"].get("drawdown_stop_off", True))
             action: dict[str, Any] | None = None
 
-            # A tick that started with an unknown submit outcome is reconciliation-only.
-            # Even after a recovered fill, do not chain a second order in the same tick.
-            if had_uncertain_submission:
+            # Protective watchdog: a risk exit must be able to recover even when
+            # an older uncertain submission was just cleared/abandoned. This runs
+            # before the reconciliation-only return and never opens new exposure.
+            if (
+                self.state.pending is None
+                and self.state.submission_intent is None
+                and self.state.position is not None
+                and (day_stop or drawdown_stop)
+            ):
+                pos = self.state.position
+                pos_book = (
+                    self.client.top_of_book(pos.product_id)
+                    if pos.product_id != self.config.product_id
+                    else None
+                )
+                pos_bid = float(pos_book.bid_price) if pos_book is not None else bid
+                protective_reason = "daily_loss_limit" if day_stop else "drawdown_limit"
+                action = self._submit_sell(
+                    base_size=pos.base_size,
+                    purpose="exit",
+                    now=ts,
+                    reference_bid=pos_bid,
+                    product_id=pos.product_id,
+                    quote_currency=pos.quote_currency,
+                    quote_to_eur=(
+                        1.0 if pos.quote_currency == "EUR" else self._usdc_to_eur()
+                    ),
+                    exit_reason=protective_reason,
+                )
+                action["watchdog_recovery"] = True
+                action["recovery_reason"] = "orphaned_protective_position"
+                self.state.last_action = dict(action)
+                self._audit(dict(action))
+                self._save()
+
+            # A tick that started with an unknown submit outcome remains
+            # reconciliation-only unless the protective watchdog above had to
+            # recover an orphaned risk exit in this same tick.
+            if had_uncertain_submission and action is None:
                 self.state.last_error = None
                 self._save()
                 return self.status(
@@ -2070,7 +2106,7 @@ class CoinbaseAutonomousExecutor:
                     drawdown_stop=drawdown_stop,
                 )
 
-            if self.state.pending is None and self.state.position is not None:
+            if action is None and self.state.pending is None and self.state.position is not None:
                 pos = self.state.position
                 pos_book = (
                     self.client.top_of_book(pos.product_id)
