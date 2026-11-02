@@ -1743,6 +1743,7 @@ def test_entry_route_rejects_tiny_absolute_expected_profit(tmp_path, monkeypatch
         require_isolated_portfolio=True,
         require_shadow_promotion=False,
         maker_first=True,
+        assumed_exit_fee_bps=25.0,
         min_live_net_edge_bps=80.0,
         min_expected_net_profit_eur=0.08,
         max_spread_bps=20.0,
