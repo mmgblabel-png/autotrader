@@ -1125,11 +1125,13 @@ def test_exploration_uses_small_market_order_when_regular_edge_is_too_low(tmp_pa
         min_live_net_edge_bps=8.0,
         min_expected_net_profit_eur=0.0,
         high_risk_min_live_net_edge_bps=0.0,
+        max_taker_entry_fee_bps=100.0,
+        max_taker_entry_slippage_bps=100.0,
         daily_trade_target=10,
         exploration_enabled=True,
         exploration_trade_fraction_pct=20.0,
         exploration_min_forecast_bps=20.0,
-        exploration_max_negative_edge_bps=60.0,
+        exploration_max_negative_edge_bps=120.0,
         exploration_max_spread_bps=20.0,
     )
     executor = CoinbaseAutonomousExecutor(cfg, client=fake)
