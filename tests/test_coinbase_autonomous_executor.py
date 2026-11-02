@@ -1726,3 +1726,51 @@ def test_orphaned_drawdown_position_watchdog_recreates_exit_same_tick(tmp_path, 
     assert executor.state.pending.purpose == "exit"
     assert executor.state.pending.exit_reason == "drawdown_limit"
     assert status["last_action"]["watchdog_recovery"] is True
+
+
+
+def test_entry_route_rejects_tiny_absolute_expected_profit(tmp_path, monkeypatch):
+    _set_live_env(monkeypatch)
+    fake = FakeCoinbase()
+    fake.eur = 10.0
+    fake.usdc = 0.0
+    fake.btc = 0.0
+
+    cfg = CoinbaseAutonomousConfig(
+        state_path=str(tmp_path / "profit-floor.json"),
+        portfolio_id="agent-portfolio",
+        require_isolated_portfolio=True,
+        require_shadow_promotion=False,
+        maker_first=True,
+        min_live_net_edge_bps=80.0,
+        min_expected_net_profit_eur=0.08,
+        max_spread_bps=20.0,
+    )
+    executor = CoinbaseAutonomousExecutor(cfg, client=fake)
+
+    monkeypatch.setattr(executor, "_product_rules", lambda _product: {
+        "base_increment": "0.00000001",
+        "base_min_size": "0.00000001",
+        "quote_increment": "0.01",
+        "quote_min_size": "1",
+    })
+
+    diagnostics = {}
+    route = executor._best_entry_route(
+        decision={
+            "decision": "LONG",
+            "product_id": "BTC-EUR",
+            "forecast_move_bps": 140.0,
+            "probability_up": 0.7,
+            "reference_z": 0.1,
+            "risk_tier": "normal",
+        },
+        balances={"EUR": 10.0, "USDC": 0.0, "_USDC_TO_EUR": 0.9},
+        spendable_eur=5.0,
+        max_trade_eur=5.0,
+        diagnostics=diagnostics,
+    )
+
+    assert route is None
+    assert diagnostics["rejects"]["expected_net_profit"] >= 1
+    assert diagnostics["last_reject"]["required_net_profit_eur"] == 0.08
