@@ -884,7 +884,17 @@ class CoinbaseAutonomousExecutor:
                 self._save()
                 return
         age = max(0.0, now - float(intent.created_at))
-        if intent.retry_count >= 1:
+        protective_exit = bool(
+            intent.purpose == "exit"
+            and intent.side == "SELL"
+            and intent.exit_reason in {
+                "stop_loss",
+                "daily_loss_limit",
+                "drawdown_limit",
+                "trailing_profit_lock",
+            }
+        )
+        if intent.retry_count >= 1 and not protective_exit:
             if age >= self.config.submission_abandon_after_seconds:
                 self.state.last_action = {
                     "at": now,
@@ -900,7 +910,10 @@ class CoinbaseAutonomousExecutor:
                 self.state.submission_intent = None
                 self._save()
             return
-        if age < self.config.submission_retry_after_seconds:
+
+        retry_number = max(1, int(intent.retry_count) + 1)
+        next_retry_age = self.config.submission_retry_after_seconds * retry_number
+        if age < next_retry_age:
             return
         # One retry uses the exact same client_order_id. Coinbase documents
         # client_order_id as the duplicate-order safeguard; never generate a
@@ -951,11 +964,16 @@ class CoinbaseAutonomousExecutor:
         self.state.live_orders_sent += 1
         self._audit({
             "at": now,
-            "action": "SUBMISSION_RETRY_ACCEPTED",
+            "action": (
+                "PROTECTIVE_EXIT_RETRY_ACCEPTED"
+                if protective_exit else "SUBMISSION_RETRY_ACCEPTED"
+            ),
             "order_id": order_id,
             "client_order_id": intent.client_order_id,
             "side": intent.side,
             "purpose": intent.purpose,
+            "exit_reason": intent.exit_reason or None,
+            "retry_count": int(intent.retry_count),
         })
         self._save()
 
