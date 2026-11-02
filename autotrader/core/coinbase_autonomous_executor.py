@@ -1783,7 +1783,10 @@ class CoinbaseAutonomousExecutor:
                 continue
 
             expected_net_profit_eur = target_eur * after_cost_edge_bps / 10_000.0
-            if expected_net_profit_eur + 1e-12 < self.config.min_expected_net_profit_eur:
+            if (
+                self.config.min_expected_net_profit_eur > 0.0
+                and expected_net_profit_eur + 1e-12 < self.config.min_expected_net_profit_eur
+            ):
                 reject(
                     "expected_net_profit",
                     product,
