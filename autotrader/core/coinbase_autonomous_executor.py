@@ -56,6 +56,7 @@ class CoinbaseAutonomousConfig:
     max_preview_slippage_bps: float = 25.0
     assumed_exit_fee_bps: float = 50.0
     min_live_net_edge_bps: float = 10.0
+    min_expected_net_profit_eur: float = 0.0
     max_spread_bps: float = 25.0
     trailing_activate_pct: float = 0.8
     trailing_stop_pct: float = 0.5
@@ -116,6 +117,9 @@ class CoinbaseAutonomousConfig:
             max_preview_slippage_bps=max(0.0, float(cfg.get("max_preview_slippage_bps", 25.0))),
             assumed_exit_fee_bps=max(0.0, float(cfg.get("assumed_exit_fee_bps", 50.0))),
             min_live_net_edge_bps=max(0.0, float(cfg.get("min_live_net_edge_bps", 10.0))),
+            min_expected_net_profit_eur=max(
+                0.0, float(cfg.get("min_expected_net_profit_eur", 0.0))
+            ),
             max_spread_bps=max(0.0, float(cfg.get("max_spread_bps", 25.0))),
             trailing_activate_pct=max(0.1, float(cfg.get("trailing_activate_pct", 0.8))),
             trailing_stop_pct=max(0.1, float(cfg.get("trailing_stop_pct", 0.5))),
@@ -1778,6 +1782,20 @@ class CoinbaseAutonomousExecutor:
                 )
                 continue
 
+            expected_net_profit_eur = target_eur * after_cost_edge_bps / 10_000.0
+            if expected_net_profit_eur + 1e-12 < self.config.min_expected_net_profit_eur:
+                reject(
+                    "expected_net_profit",
+                    product,
+                    expected_net_profit_eur=round(expected_net_profit_eur, 8),
+                    required_net_profit_eur=round(
+                        self.config.min_expected_net_profit_eur, 8
+                    ),
+                    after_cost_edge_bps=round(after_cost_edge_bps, 4),
+                    notional_eur=round(target_eur, 8),
+                )
+                continue
+
             learning_adjustment_bps, learning = self._market_learning_adjustment(product)
             score = (
                 after_cost_edge_bps
@@ -1798,6 +1816,7 @@ class CoinbaseAutonomousExecutor:
                 "preview_fee_bps": fee_bps,
                 "preview_slippage_bps": slip_bps,
                 "after_cost_edge_bps": after_cost_edge_bps,
+                "expected_net_profit_eur": expected_net_profit_eur,
                 "score": score,
                 "preview": preview,
                 "order_type": order_type,
@@ -1903,6 +1922,9 @@ class CoinbaseAutonomousExecutor:
             "forecast_move_bps": round(float(decision.get("forecast_move_bps") or 0.0), 4),
             "probability_up": round(float(decision.get("probability_up") or 0.0), 6),
             "after_cost_edge_bps": round(float(route["after_cost_edge_bps"]), 4),
+            "expected_net_profit_eur": round(
+                float(route.get("expected_net_profit_eur") or 0.0), 8
+            ),
             "spread_bps": round(float(route["spread_bps"]), 4),
             "preview_fee_bps": round(float(route["preview_fee_bps"]), 4),
             "preview_slippage_bps": round(float(route["preview_slippage_bps"]), 4),
@@ -2421,6 +2443,7 @@ class CoinbaseAutonomousExecutor:
                 "day_timezone": self.config.day_timezone,
                 "full_capacity": self.config.full_capacity,
                 "min_live_net_edge_bps": self.config.min_live_net_edge_bps,
+                "min_expected_net_profit_eur": self.config.min_expected_net_profit_eur,
                 "max_spread_bps": self.config.max_spread_bps,
                 "shadow_promotion_required": self.config.require_shadow_promotion,
             },
