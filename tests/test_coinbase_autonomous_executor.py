@@ -1123,6 +1123,7 @@ def test_exploration_uses_small_market_order_when_regular_edge_is_too_low(tmp_pa
         max_single_trade_pct=100.0,
         assumed_exit_fee_bps=25.0,
         min_live_net_edge_bps=8.0,
+        min_expected_net_profit_eur=0.0,
         high_risk_min_live_net_edge_bps=0.0,
         daily_trade_target=10,
         exploration_enabled=True,
