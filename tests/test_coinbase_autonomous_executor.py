@@ -1685,6 +1685,7 @@ def test_orphaned_drawdown_position_watchdog_recreates_exit_same_tick(tmp_path, 
         quote_to_eur=0.9,
         peak_price=0.0072,
     )
+    executor.state.day_key = "1970-01-01"
     executor.state.peak_managed_equity_eur = 12.5
     executor.state.day_start_managed_equity_eur = 12.5
     executor.state.last_action = {
