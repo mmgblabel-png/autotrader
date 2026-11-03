@@ -50,6 +50,7 @@ def test_coinbase_local_config_is_risktrader_and_portfolio_isolated():
     assert auto["cash_reserve_pct"] == 0.0
     assert auto["max_single_trade_pct"] == 100.0
     assert auto["full_capacity"] is True
+    assert auto["dynamic_product_max_portfolio_pct"] == 25.0
     assert auto["require_shadow_promotion"] is False
     assert auto["allow_dynamic_products"] is True
     assert auto["maker_first"] is True
