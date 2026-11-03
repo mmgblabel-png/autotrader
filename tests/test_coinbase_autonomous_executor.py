@@ -1778,3 +1778,130 @@ def test_entry_route_rejects_tiny_absolute_expected_profit(tmp_path, monkeypatch
     assert route is None
     assert diagnostics["rejects"]["expected_net_profit"] >= 1
     assert diagnostics["last_reject"]["required_net_profit_eur"] == 0.08
+
+
+
+def test_entry_route_rejects_coinbase_product_that_is_no_longer_tradeable(tmp_path, monkeypatch):
+    _set_live_env(monkeypatch)
+
+    class UnavailableProductCoinbase(FakeCoinbase):
+        def product_info(self, product_id):
+            return {
+                "product_id": product_id,
+                "product_type": "SPOT",
+                "status": "OFFLINE",
+                "trading_disabled": True,
+            }
+
+    fake = UnavailableProductCoinbase()
+    fake.eur = 10.0
+    fake.btc = 0.0
+    cfg = CoinbaseAutonomousConfig(
+        state_path=str(tmp_path / "unavailable-product.json"),
+        portfolio_id="agent-portfolio",
+        require_isolated_portfolio=True,
+        require_shadow_promotion=False,
+        allow_dynamic_products=True,
+        maker_first=True,
+        min_live_net_edge_bps=0.0,
+        min_expected_net_profit_eur=0.0,
+    )
+    executor = CoinbaseAutonomousExecutor(cfg, client=fake)
+    diagnostics = {}
+
+    route = executor._best_entry_route(
+        decision={
+            "decision": "LONG",
+            "product_id": "SYND-USDC",
+            "forecast_move_bps": 500.0,
+            "probability_up": 0.8,
+            "reference_z": 0.1,
+            "risk_tier": "normal",
+        },
+        balances={"EUR": 0.0, "USDC": 10.0, "_USDC_TO_EUR": 0.9},
+        spendable_eur=9.0,
+        max_trade_eur=9.0,
+        diagnostics=diagnostics,
+    )
+
+    assert route is None
+    assert diagnostics["rejects"]["product_unavailable"] >= 1
+    assert diagnostics["last_reject"]["product_id"] == "SYND-USDC"
+
+
+def test_dynamic_alt_entry_is_capped_but_core_product_keeps_full_capacity(tmp_path, monkeypatch):
+    _set_live_env(monkeypatch)
+
+    class TradeableProductCoinbase(FakeCoinbase):
+        def product_info(self, product_id):
+            return {
+                "product_id": product_id,
+                "product_type": "SPOT",
+                "status": "ONLINE",
+                "trading_disabled": False,
+                "cancel_only": False,
+                "is_disabled": False,
+                "view_only": False,
+            }
+
+    fake = TradeableProductCoinbase()
+    fake.eur = 20.0
+    fake.btc = 0.0
+    cfg = CoinbaseAutonomousConfig(
+        state_path=str(tmp_path / "dynamic-cap.json"),
+        portfolio_id="agent-portfolio",
+        require_isolated_portfolio=True,
+        require_shadow_promotion=False,
+        allow_dynamic_products=True,
+        supported_products=("BTC-EUR", "BTC-USDC"),
+        maker_first=True,
+        full_capacity=True,
+        dynamic_product_max_portfolio_pct=25.0,
+        max_preview_fee_bps=100.0,
+        max_preview_slippage_bps=100.0,
+        assumed_exit_fee_bps=0.0,
+        min_live_net_edge_bps=0.0,
+        min_expected_net_profit_eur=0.0,
+        max_spread_bps=100.0,
+    )
+    executor = CoinbaseAutonomousExecutor(cfg, client=fake)
+    monkeypatch.setattr(executor, "_product_rules", lambda _product: {
+        "base_increment": "0.00000001",
+        "base_min_size": "0",
+        "quote_increment": "0.01",
+        "quote_min_size": "1",
+    })
+
+    alt_route = executor._best_entry_route(
+        decision={
+            "decision": "LONG",
+            "product_id": "XRP-EUR",
+            "forecast_move_bps": 500.0,
+            "probability_up": 0.8,
+            "reference_z": 0.1,
+            "risk_tier": "normal",
+        },
+        balances={"EUR": 20.0, "USDC": 0.0, "_USDC_TO_EUR": 0.9},
+        spendable_eur=10.0,
+        max_trade_eur=10.0,
+        diagnostics={},
+    )
+    core_route = executor._best_entry_route(
+        decision={
+            "decision": "LONG",
+            "product_id": "BTC-EUR",
+            "forecast_move_bps": 500.0,
+            "probability_up": 0.8,
+            "reference_z": 0.1,
+            "risk_tier": "normal",
+        },
+        balances={"EUR": 20.0, "USDC": 0.0, "_USDC_TO_EUR": 0.9},
+        spendable_eur=10.0,
+        max_trade_eur=10.0,
+        diagnostics={},
+    )
+
+    assert alt_route is not None
+    assert core_route is not None
+    assert alt_route["notional_eur"] == pytest.approx(2.5)
+    assert core_route["notional_eur"] == pytest.approx(10.0)
