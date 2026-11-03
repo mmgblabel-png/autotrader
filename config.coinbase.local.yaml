@@ -85,6 +85,10 @@ coinbase_autonomous_execution:
   cash_reserve_pct: 0.0
   max_single_trade_pct: 100.0
   full_capacity: true
+  # Core BTC routes may use the full isolated budget. Dynamically discovered
+  # altcoins are capped so a later suspension/delisting cannot strand nearly
+  # the entire Agent portfolio in one asset.
+  dynamic_product_max_portfolio_pct: 25.0
   max_order_eur: 1000.0
   min_order_eur: 1.0
 
