@@ -48,6 +48,7 @@ class CoinbaseAutonomousConfig:
     max_order_eur: float = 5.0
     min_order_eur: float = 1.0
     full_capacity: bool = False
+    dynamic_product_max_portfolio_pct: float = 25.0
     max_daily_loss_pct: float = 3.0
     max_drawdown_pct: float = 10.0
     stop_loss_pct: float = 1.0
@@ -109,6 +110,9 @@ class CoinbaseAutonomousConfig:
             max_order_eur=max(1.0, float(cfg.get("max_order_eur", 5.0))),
             min_order_eur=max(1.0, float(cfg.get("min_order_eur", 1.0))),
             full_capacity=bool(cfg.get("full_capacity", False)),
+            dynamic_product_max_portfolio_pct=min(
+                100.0, max(1.0, float(cfg.get("dynamic_product_max_portfolio_pct", 25.0)))
+            ),
             max_daily_loss_pct=min(100.0, max(0.1, float(cfg.get("max_daily_loss_pct", 3.0)))),
             max_drawdown_pct=min(100.0, max(0.1, float(cfg.get("max_drawdown_pct", 10.0)))),
             stop_loss_pct=max(0.1, float(cfg.get("stop_loss_pct", 1.0))),
@@ -399,6 +403,45 @@ class CoinbaseAutonomousExecutor:
     def _product_increments(self, product_id: str) -> tuple[str, str]:
         rules = self._product_rules(product_id)
         return rules["base_increment"], rules["quote_increment"]
+
+    def _entry_product_tradeable(self, product_id: str) -> tuple[bool, dict[str, Any]]:
+        """Fail closed for production entry routes if Coinbase no longer exposes a tradable product."""
+        product = str(product_id).upper().strip()
+        product_info = getattr(self.client, "product_info", None)
+        if not callable(product_info):
+            # Lightweight test doubles may not implement product lookup.
+            return True, {"source": "client_without_product_info"}
+
+        try:
+            info = product_info(product)
+        except Exception as exc:
+            return False, {
+                "source": "product_info",
+                "error": type(exc).__name__,
+            }
+
+        if not isinstance(info, dict):
+            return False, {"source": "product_info", "error": "unexpected_response"}
+
+        product_type = str(info.get("product_type") or "SPOT").upper()
+        status = str(info.get("status") or "").upper()
+        disabled_flags = {
+            "trading_disabled": bool(info.get("trading_disabled", False)),
+            "cancel_only": bool(info.get("cancel_only", False)),
+            "is_disabled": bool(info.get("is_disabled", False)),
+            "view_only": bool(info.get("view_only", False)),
+        }
+        tradable = (
+            product_type in {"SPOT", "UNKNOWN_PRODUCT_TYPE", ""}
+            and status in {"", "ONLINE"}
+            and not any(disabled_flags.values())
+        )
+        return tradable, {
+            "source": "product_info",
+            "product_type": product_type or None,
+            "status": status or None,
+            **disabled_flags,
+        }
 
     def _market_learning_adjustment(self, product_id: str) -> tuple[float, dict[str, Any]]:
         row = dict(self.state.market_learning.get(str(product_id).upper(), {}) or {})
@@ -1610,6 +1653,11 @@ class CoinbaseAutonomousExecutor:
                 reject("unsupported_quote", product, quote=quote)
                 continue
 
+            tradeable_now, tradeability = self._entry_product_tradeable(product)
+            if not tradeable_now:
+                reject("product_unavailable", product, **tradeability)
+                continue
+
             quote_to_eur = 1.0 if quote == "EUR" else max(
                 0.0, float(balances.get("_USDC_TO_EUR") or 0.0)
             )
@@ -1625,6 +1673,16 @@ class CoinbaseAutonomousExecutor:
                     max(0.0, float(max_trade_override_eur)),
                 )
             target_eur = min(route_available_eur, spendable_eur, effective_max_trade)
+            if product not in set(self.config.supported_products):
+                dynamic_cap_eur = (
+                    max_trade_eur
+                    * self.config.dynamic_product_max_portfolio_pct
+                    / 100.0
+                )
+                target_eur = min(target_eur, dynamic_cap_eur)
+                if diagnostics is not None:
+                    diagnostics["dynamic_product_cap_eur"] = round(dynamic_cap_eur, 8)
+
             if target_eur + 1e-9 < self.config.min_order_eur:
                 reject(
                     "insufficient_quote_balance",
@@ -2445,6 +2503,7 @@ class CoinbaseAutonomousExecutor:
                 "stop_after_daily_profit_target": self.config.stop_after_daily_profit_target,
                 "day_timezone": self.config.day_timezone,
                 "full_capacity": self.config.full_capacity,
+                "dynamic_product_max_portfolio_pct": self.config.dynamic_product_max_portfolio_pct,
                 "min_live_net_edge_bps": self.config.min_live_net_edge_bps,
                 "min_expected_net_profit_eur": self.config.min_expected_net_profit_eur,
                 "max_spread_bps": self.config.max_spread_bps,
