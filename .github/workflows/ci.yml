@@ -2,9 +2,9 @@ name: CI
 
 on:
   push:
-    branches: ["main", "production", "coinbase-hardening-20261005", "coinbase-local"]
+    branches: ["main", "production", "coinbase-hardening-20261005", "coinbase-local", "fix/coinbase-agent-state-reconcile-eth"]
   pull_request:
-    branches: ["main", "production"]
+    branches: ["main", "production", "coinbase-local"]
 
 jobs:
   test:
