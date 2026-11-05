@@ -2053,10 +2053,6 @@ class CoinbaseAutonomousExecutor:
             return []
 
         usdc_to_eur = max(0.0, float(balances.get("_USDC_TO_EUR") or 0.0))
-        tracked_asset = (
-            str(self.state.position.product_id).upper().split("-", 1)[0]
-            if self.state.position is not None else ""
-        )
         rows: list[dict[str, Any]] = []
         assets = sorted(
             key.removeprefix("_TOTAL_")
@@ -2299,9 +2295,8 @@ class CoinbaseAutonomousExecutor:
             sleeve_target = float(ready["managed_sleeve_target_eur"])
             total_cash_target = reserve_target + sleeve_target
 
-            # Existing BTC is only used to seed the bounded sleeve. Each seed
-            # order remains <=20% of portfolio NAV and stops once reserve+sleeve
-            # cash has been created.
+            # Explicitly allowlisted Agent inventory is converted to quote cash
+            # before new directional entries; the order remains portfolio-scoped.
             if (
                 action is None
                 and self.state.pending is None
