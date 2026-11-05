@@ -155,8 +155,17 @@ async def _executor_loop() -> None:
             app.state.executor_status = dict(status)
             app.state.executor_error = None
         except Exception as exc:
-            app.state.executor_error = type(exc).__name__
-            log.warning("Coinbase local executor tick failed safely: %s", type(exc).__name__)
+            category = str(getattr(exc, "category", "") or "").strip()
+            status = getattr(exc, "status", None)
+            app.state.executor_error = (
+                f"{type(exc).__name__}:{category}" if category else type(exc).__name__
+            )
+            # Expose only the structured error category/status, never request
+            # headers, JWTs, private keys, or raw Coinbase response bodies.
+            log.warning(
+                "Coinbase local executor tick failed safely: type=%s category=%s status=%s",
+                type(exc).__name__, category or "unknown", status,
+            )
         await asyncio.sleep(app.state.executor_interval)
 
 
