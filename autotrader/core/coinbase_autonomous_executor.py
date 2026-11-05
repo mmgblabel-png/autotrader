@@ -751,7 +751,7 @@ class CoinbaseAutonomousExecutor:
         ts = float(time.time() if now is None else now)
         book = self.client.top_of_book(self.config.product_id)
         bid = float(book.bid_price)
-        _, balances = self._account_nav(bid)
+        nav, balances = self._account_nav(bid)
         self._reconcile_missing_position(balances, portfolio_nav_eur=nav, now=ts)
         self._reconcile_isolated_cash(balances, ts)
         managed_equity = self._managed_equity(bid)
