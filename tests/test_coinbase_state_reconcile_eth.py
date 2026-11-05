@@ -95,11 +95,14 @@ def test_stale_synd_position_reconciles_against_isolated_coinbase_inventory(tmp_
         quote_currency="USDC",
         quote_to_eur=0.90,
     )
+    # Historical high-water mark remains authoritative; stale state cleanup
+    # must not silently reset the user's explicit 10% drawdown limit.
+    executor.state.peak_managed_equity_eur = 13.0
 
     result = executor.reconcile_runtime_state(now=100.0)
 
     assert executor.state.position is None
-    assert result["current_drawdown_pct"] == 0.0
+    assert result["current_drawdown_pct"] > 10.0
     assert executor.state.last_action["action"] == "STALE_POSITION_CLEARED_NO_COINBASE_BALANCE"
     assert executor.state.realized_pnl_eur == 0.0
     readiness = executor.readiness(armed=False, shadow_status={})
