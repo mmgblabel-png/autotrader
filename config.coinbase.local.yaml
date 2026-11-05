@@ -77,6 +77,8 @@ coinbase_autonomous_execution:
   portfolio_id: ""
   require_isolated_portfolio: true
   allow_existing_btc_seed: true
+  # Existing ETH in the isolated Agent portfolio is explicitly bot-assigned seed inventory.
+  seed_existing_assets: [ETH]
   interval_seconds: 5
 
   # RiskTrader: the complete isolated agent portfolio is bot-owned capital.
