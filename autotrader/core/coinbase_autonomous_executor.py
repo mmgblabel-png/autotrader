@@ -596,10 +596,8 @@ class CoinbaseAutonomousExecutor:
             previous = tracked
             self.state.position = None
             action = "STALE_POSITION_CLEARED_NO_COINBASE_BALANCE"
-            # The prior peak included a synthetic position absent from Coinbase.
-            # Rebase current risk to verified NAV while preserving historical max DD and PnL.
-            self.state.peak_managed_equity_eur = max(0.0, float(portfolio_nav_eur))
-            self.state.current_drawdown_pct = 0.0
+            # Preserve the existing high-water mark. The position is stale,
+            # but its absence does not prove that historical losses were fictitious.
         self.state.last_action = {
             "at": now,
             "action": action,
