@@ -2079,9 +2079,16 @@ class CoinbaseAutonomousExecutor:
                 try:
                     seed_value = amount * max(0.0, float(self.client.top_of_book(f"{asset}-EUR").bid_price))
                 except Exception:
-                    seed_value = 0.0
+                    rows.append({
+                        "asset": asset,
+                        "amount": amount,
+                        "estimated_value_eur": None,
+                        "reason": "allowlisted_seed_market_unavailable",
+                    })
+                    continue
                 if seed_value + 1e-9 >= self.config.min_order_eur:
                     continue
+                # Below-minimum residuals are dust and do not block the runtime.
                 continue
 
             value_eur = 0.0
