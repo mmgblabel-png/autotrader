@@ -535,7 +535,7 @@ class CoinbaseAutonomousExecutor:
             if key.startswith("_TOTAL_")
         }
         for asset in assets:
-            if asset in {"EUR", "USDC"}:
+            if asset in {"EUR", "USDC"} or asset == tracked_asset:
                 continue
             amount = max(0.0, float(balances.get(f"_TOTAL_{asset}", 0.0) or 0.0))
             if amount <= 0:
@@ -2053,6 +2053,10 @@ class CoinbaseAutonomousExecutor:
             return []
 
         usdc_to_eur = max(0.0, float(balances.get("_USDC_TO_EUR") or 0.0))
+        tracked_asset = (
+            str(self.state.position.product_id).upper().split("-", 1)[0]
+            if self.state.position is not None else ""
+        )
         rows: list[dict[str, Any]] = []
         assets = sorted(
             key.removeprefix("_TOTAL_")
