@@ -570,6 +570,50 @@ class CoinbaseAutonomousExecutor:
         nav, _ = self._account_nav(bid)
         return max(0.0, float(nav))
 
+    def _clear_orphaned_exit_intent(
+        self, balances: dict[str, float], *, now: float
+    ) -> bool:
+        """Retire an unsubmitted stale SELL intent only after Coinbase checks.
+
+        Never clear a known Coinbase order or submit a replacement SELL.
+        """
+        intent = self.state.submission_intent
+        if (
+            intent is None or self.state.pending is not None
+            or self.state.position is None
+            or intent.side != "SELL" or intent.purpose != "exit"
+            or intent.product_id != self.state.position.product_id
+        ):
+            return False
+        asset = str(intent.product_id).upper().split("-", 1)[0]
+        amount = max(0.0, float(
+            balances.get(f"_TOTAL_{asset}", balances.get(asset, 0.0)) or 0.0
+        ))
+        if amount > max(1e-10, float(self.state.position.base_size) * 1e-6):
+            return False
+        # The order lookup must succeed and explicitly return no order;
+        # an API exception fails closed and leaves the intent untouched.
+        existing = self.client.find_order_by_client_id(
+            intent.client_order_id,
+            product_id=intent.product_id,
+            portfolio_id=self.config.portfolio_id or None,
+        )
+        if existing is not None:
+            return False
+        self.state.submission_intent = None
+        self.state.last_action = {
+            "at": now,
+            "action": "ORPHANED_EXIT_INTENT_CLEARED",
+            "client_order_id": intent.client_order_id,
+            "product_id": intent.product_id,
+            "coinbase_base_balance": amount,
+            "reason": "no_coinbase_order_and_no_isolated_inventory",
+            "realized_pnl_changed": False,
+        }
+        self._audit(dict(self.state.last_action))
+        self._save()
+        return True
+
     def _reconcile_missing_position(
         self, balances: dict[str, float], *, portfolio_nav_eur: float, now: float
     ) -> bool:
@@ -750,6 +794,7 @@ class CoinbaseAutonomousExecutor:
         book = self.client.top_of_book(self.config.product_id)
         bid = float(book.bid_price)
         nav, balances = self._account_nav(bid)
+        self._clear_orphaned_exit_intent(balances, now=ts)
         self._reconcile_missing_position(balances, portfolio_nav_eur=nav, now=ts)
         self._reconcile_isolated_cash(balances, ts)
         managed_equity = self._managed_equity(bid)
@@ -2159,6 +2204,11 @@ class CoinbaseAutonomousExecutor:
         shadow = shadow_status or {}
         try:
             had_uncertain_submission = self.state.submission_intent is not None
+            if self.state.submission_intent is not None:
+                probe_book = self.client.top_of_book(self.config.product_id)
+                probe_nav, probe_balances = self._account_nav(float(probe_book.bid_price))
+                if self._clear_orphaned_exit_intent(probe_balances, now=ts):
+                    self._reconcile_missing_position(probe_balances, portfolio_nav_eur=probe_nav, now=ts)
             self._recover_submission_intent(ts)
             current_decisions = [
                 row for row in ((shadow.get("last_signal") or {}).get("decisions") or [])
