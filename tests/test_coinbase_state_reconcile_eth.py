@@ -149,7 +149,6 @@ def test_allowlisted_eth_is_seeded_only_inside_isolated_agent_portfolio(tmp_path
 
 def test_orphaned_synd_exit_intent_cleared_without_sell_or_pnl_reset(tmp_path):
     from autotrader.core.coinbase_autonomous_executor import SubmissionIntent
-    from dataclasses import fields
     fake = CoinbaseInventoryFake()
     cfg = CoinbaseAutonomousConfig(
         state_path=str(tmp_path / "state.json"),
@@ -164,25 +163,13 @@ def test_orphaned_synd_exit_intent_cleared_without_sell_or_pnl_reset(tmp_path):
         window_key="legacy-synd", window_end=0.0, opened_at=1.0,
         product_id="SYND-USDC", quote_currency="USDC", quote_to_eur=0.90,
     )
-    required = {
-        "client_order_id": "old-synd-sell", "product_id": "SYND-USDC",
-        "side": "SELL", "purpose": "exit", "created_at": 1.0,
-    }
-    kwargs = {}
-    for field in fields(SubmissionIntent):
-        if field.name in required:
-            kwargs[field.name] = required[field.name]
-        elif field.default is not __import__("dataclasses").MISSING:
-            continue
-        elif field.type is float:
-            kwargs[field.name] = 0.0
-        elif field.type is int:
-            kwargs[field.name] = 0
-        elif field.type is bool:
-            kwargs[field.name] = False
-        else:
-            kwargs[field.name] = ""
-    executor.state.submission_intent = SubmissionIntent(**kwargs)
+    executor.state.submission_intent = SubmissionIntent(
+        client_order_id="old-synd-sell",
+        product_id="SYND-USDC",
+        side="SELL",
+        purpose="exit",
+        created_at=1.0,
+    )
     executor.state.peak_managed_equity_eur = 13.0
     executor.state.realized_pnl_eur = -3.43
     result = executor.reconcile_runtime_state(now=100.0)
