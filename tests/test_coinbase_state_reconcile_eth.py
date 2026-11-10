@@ -14,6 +14,12 @@ class CoinbaseInventoryFake:
         self.eur = 0.90
         self.usdc = 0.05
         self.orders = []
+        self.found_order = None
+        self.order_lookups = []
+
+    def find_order_by_client_id(self, client_order_id, *, product_id=None, portfolio_id=None):
+        self.order_lookups.append((client_order_id, product_id, portfolio_id))
+        return self.found_order
 
     def authenticated_accounts_probe(self, portfolio_id=None):
         return {"authenticated": True, "format_compatible": True, "status": 200}
@@ -139,3 +145,77 @@ def test_allowlisted_eth_is_seeded_only_inside_isolated_agent_portfolio(tmp_path
     assert fake.orders[0]["portfolio_id"] == "agent-only"
     assert status["pending_order"]["purpose"] == "seed"
     assert status["readiness"]["gates"]["unmanaged_inventory_clear"] is True
+
+
+def test_orphaned_synd_exit_intent_cleared_without_sell_or_pnl_reset(tmp_path):
+    from autotrader.core.coinbase_autonomous_executor import SubmissionIntent
+    from dataclasses import fields
+    fake = CoinbaseInventoryFake()
+    cfg = CoinbaseAutonomousConfig(
+        state_path=str(tmp_path / "state.json"),
+        portfolio_id="agent-only",
+        require_isolated_portfolio=True,
+        seed_existing_assets=("ETH",),
+        require_shadow_promotion=False,
+    )
+    executor = CoinbaseAutonomousExecutor(cfg, client=fake)
+    executor.state.position = ManagedPosition(
+        base_size=1746.12, entry_price=0.0072, entry_fee_eur=0.0,
+        window_key="legacy-synd", window_end=0.0, opened_at=1.0,
+        product_id="SYND-USDC", quote_currency="USDC", quote_to_eur=0.90,
+    )
+    required = {
+        "client_order_id": "old-synd-sell", "product_id": "SYND-USDC",
+        "side": "SELL", "purpose": "exit", "created_at": 1.0,
+    }
+    kwargs = {}
+    for field in fields(SubmissionIntent):
+        if field.name in required:
+            kwargs[field.name] = required[field.name]
+        elif field.default is not __import__("dataclasses").MISSING:
+            continue
+        elif field.type is float:
+            kwargs[field.name] = 0.0
+        elif field.type is int:
+            kwargs[field.name] = 0
+        elif field.type is bool:
+            kwargs[field.name] = False
+        else:
+            kwargs[field.name] = ""
+    executor.state.submission_intent = SubmissionIntent(**kwargs)
+    executor.state.peak_managed_equity_eur = 13.0
+    executor.state.realized_pnl_eur = -3.43
+    result = executor.reconcile_runtime_state(now=100.0)
+    assert executor.state.position is None
+    assert executor.state.submission_intent is None
+    assert executor.state.realized_pnl_eur == -3.43
+    assert result["current_drawdown_pct"] > 10
+    assert fake.orders == []
+    assert fake.order_lookups == [("old-synd-sell", "SYND-USDC", "agent-only")]
+
+
+def test_existing_coinbase_order_prevents_intent_clear(tmp_path):
+    from autotrader.core.coinbase_autonomous_executor import SubmissionIntent
+    fake = CoinbaseInventoryFake()
+    fake.found_order = {"order_id": "live-order", "status": "OPEN"}
+    cfg = CoinbaseAutonomousConfig(
+        state_path=str(tmp_path / "state.json"),
+        portfolio_id="agent-only",
+        require_isolated_portfolio=True,
+    )
+    executor = CoinbaseAutonomousExecutor(cfg, client=fake)
+    executor.state.position = ManagedPosition(
+        base_size=1746.12, entry_price=0.0072, entry_fee_eur=0.0,
+        window_key="legacy-synd", window_end=0.0, opened_at=1.0,
+        product_id="SYND-USDC", quote_currency="USDC", quote_to_eur=0.90,
+    )
+    # Directly verify fail-closed behavior when Coinbase reports an order.
+    from unittest.mock import SimpleNamespace
+    executor.state.submission_intent = SimpleNamespace(
+        client_order_id="old-synd-sell", product_id="SYND-USDC",
+        side="SELL", purpose="exit",
+    )
+    _, balances = executor._account_nav(75000.0)
+    assert executor._clear_orphaned_exit_intent(balances, now=100.0) is False
+    assert executor.state.position is not None
+    assert executor.state.submission_intent is not None
