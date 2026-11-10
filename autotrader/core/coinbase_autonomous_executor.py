@@ -41,6 +41,7 @@ class CoinbaseAutonomousConfig:
     portfolio_id: str = ""
     require_isolated_portfolio: bool = True
     allow_existing_btc_seed: bool = False
+    seed_existing_assets: tuple[str, ...] = ()
     interval_seconds: float = 5.0
     managed_capital_pct: float = 100.0
     cash_reserve_pct: float = 20.0
@@ -102,6 +103,11 @@ class CoinbaseAutonomousConfig:
             allow_existing_btc_seed=_env_true(
                 "COINBASE_ALLOW_EXISTING_BTC_SEED",
                 bool(cfg.get("allow_existing_btc_seed", False)),
+            ),
+            seed_existing_assets=tuple(
+                str(value).upper().strip()
+                for value in cfg.get("seed_existing_assets", [])
+                if str(value).strip()
             ),
             interval_seconds=max(2.0, float(cfg.get("interval_seconds", 5.0))),
             managed_capital_pct=min(100.0, max(1.0, float(cfg.get("managed_capital_pct", 100.0)))),
@@ -560,17 +566,95 @@ class CoinbaseAutonomousExecutor:
         return max(0.0, nav), balances
 
     def _managed_equity(self, bid: float) -> float:
-        position_value = 0.0
-        if self.state.position is not None:
-            pos = self.state.position
-            pos_bid = bid
-            if pos.product_id != self.config.product_id:
-                try:
-                    pos_bid = float(self.client.top_of_book(pos.product_id).bid_price)
-                except Exception:
-                    pos_bid = float(pos.entry_price)
-            position_value = pos.base_size * pos_bid * max(float(pos.quote_to_eur or 0.0), 0.0)
-        return max(0.0, self.state.managed_cash_eur + position_value)
+        """Use verified isolated-portfolio NAV, including existing crypto inventory."""
+        nav, _ = self._account_nav(bid)
+        return max(0.0, float(nav))
+
+    def _clear_orphaned_exit_intent(
+        self, balances: dict[str, float], *, now: float
+    ) -> bool:
+        """Retire an unsubmitted stale SELL intent only after Coinbase checks.
+
+        Never clear a known Coinbase order or submit a replacement SELL.
+        """
+        intent = self.state.submission_intent
+        if (
+            intent is None or self.state.pending is not None
+            or self.state.position is None
+            or intent.side != "SELL" or intent.purpose != "exit"
+            or intent.product_id != self.state.position.product_id
+        ):
+            return False
+        asset = str(intent.product_id).upper().split("-", 1)[0]
+        amount = max(0.0, float(
+            balances.get(f"_TOTAL_{asset}", balances.get(asset, 0.0)) or 0.0
+        ))
+        if amount > max(1e-10, float(self.state.position.base_size) * 1e-6):
+            return False
+        # The order lookup must succeed and explicitly return no order;
+        # an API exception fails closed and leaves the intent untouched.
+        existing = self.client.find_order_by_client_id(
+            intent.client_order_id,
+            product_id=intent.product_id,
+            portfolio_id=self.config.portfolio_id or None,
+        )
+        if existing is not None:
+            return False
+        self.state.submission_intent = None
+        self.state.last_action = {
+            "at": now,
+            "action": "ORPHANED_EXIT_INTENT_CLEARED",
+            "client_order_id": intent.client_order_id,
+            "product_id": intent.product_id,
+            "coinbase_base_balance": amount,
+            "reason": "no_coinbase_order_and_no_isolated_inventory",
+            "realized_pnl_changed": False,
+        }
+        self._audit(dict(self.state.last_action))
+        self._save()
+        return True
+
+    def _reconcile_missing_position(
+        self, balances: dict[str, float], *, portfolio_nav_eur: float, now: float
+    ) -> bool:
+        """Clear persisted position only when its base asset is absent from the isolated account.
+
+        This is state-only: it never submits an order or realizes PnL.
+        """
+        pos = self.state.position
+        if pos is None or self.state.pending is not None or self.state.submission_intent is not None:
+            return False
+        base_asset = str(pos.product_id).upper().split("-", 1)[0]
+        actual_total = max(0.0, float(
+            balances.get(f"_TOTAL_{base_asset}", balances.get(base_asset, 0.0)) or 0.0
+        ))
+        tracked = max(0.0, float(pos.base_size or 0.0))
+        tolerance = max(1e-10, tracked * 1e-6)
+        if actual_total + tolerance >= tracked:
+            return False
+        if actual_total > tolerance:
+            previous = tracked
+            pos.base_size = actual_total
+            action = "POSITION_SIZE_RECONCILED_TO_COINBASE_BALANCE"
+        else:
+            previous = tracked
+            self.state.position = None
+            action = "STALE_POSITION_CLEARED_NO_COINBASE_BALANCE"
+            # Preserve the existing high-water mark. The position is stale,
+            # but its absence does not prove that historical losses were fictitious.
+        self.state.last_action = {
+            "at": now,
+            "action": action,
+            "product_id": pos.product_id,
+            "tracked_base_size_before": previous,
+            "coinbase_base_balance": actual_total,
+            "portfolio_nav_eur": round(float(portfolio_nav_eur), 8),
+            "realized_pnl_changed": False,
+            "reason": "isolated_portfolio_balance_reconciliation",
+        }
+        self._audit(dict(self.state.last_action))
+        self._save()
+        return True
 
     def _reconcile_isolated_cash(self, balances: dict[str, float], now: float) -> None:
         """Adopt EUR + USDC cash only from the configured isolated portfolio."""
@@ -709,7 +793,9 @@ class CoinbaseAutonomousExecutor:
         ts = float(time.time() if now is None else now)
         book = self.client.top_of_book(self.config.product_id)
         bid = float(book.bid_price)
-        _, balances = self._account_nav(bid)
+        nav, balances = self._account_nav(bid)
+        self._clear_orphaned_exit_intent(balances, now=ts)
+        self._reconcile_missing_position(balances, portfolio_nav_eur=nav, now=ts)
         self._reconcile_isolated_cash(balances, ts)
         managed_equity = self._managed_equity(bid)
         self._roll_day(ts, managed_equity)
@@ -2006,7 +2092,7 @@ class CoinbaseAutonomousExecutor:
         btc_eur_bid: float,
     ) -> list[dict[str, Any]]:
         """Return material non-cash inventory not represented by local position state."""
-        if self.state.position is not None or not self.config.require_isolated_portfolio:
+        if not self.config.require_isolated_portfolio:
             return []
 
         usdc_to_eur = max(0.0, float(balances.get("_USDC_TO_EUR") or 0.0))
@@ -2016,20 +2102,36 @@ class CoinbaseAutonomousExecutor:
             for key in balances
             if key.startswith("_TOTAL_")
         )
+        tracked_asset = (
+            str(self.state.position.product_id).upper().split("-", 1)[0]
+            if self.state.position is not None else ""
+        )
         for asset in assets:
-            if asset in {"EUR", "USDC"}:
+            if asset in {"EUR", "USDC"} or asset == tracked_asset:
                 continue
             amount = max(0.0, float(balances.get(f"_TOTAL_{asset}", 0.0) or 0.0))
             if amount <= 0:
                 continue
 
-            # BTC is intentionally seedable by this runtime. Dust below the
-            # configured minimum is harmless and must not block new entries.
-            if asset == "BTC" and self.config.allow_existing_btc_seed:
-                value_eur = amount * max(0.0, btc_eur_bid)
-                if value_eur + 1e-9 < self.config.min_order_eur:
+            # Explicitly allowlisted inventory can be converted to quote cash
+            # by the seed path. Small residuals are harmless dust.
+            seed_assets = set(self.config.seed_existing_assets)
+            if self.config.allow_existing_btc_seed:
+                seed_assets.add("BTC")
+            if asset in seed_assets:
+                try:
+                    seed_value = amount * max(0.0, float(self.client.top_of_book(f"{asset}-EUR").bid_price))
+                except Exception:
+                    rows.append({
+                        "asset": asset,
+                        "amount": amount,
+                        "estimated_value_eur": None,
+                        "reason": "allowlisted_seed_market_unavailable",
+                    })
                     continue
-                # Material BTC can be handled by the seed path, so it is not orphaned.
+                if seed_value + 1e-9 >= self.config.min_order_eur:
+                    continue
+                # Below-minimum residuals are dust and do not block the runtime.
                 continue
 
             value_eur = 0.0
@@ -2083,6 +2185,7 @@ class CoinbaseAutonomousExecutor:
             "portfolio_isolated": bool(self.config.portfolio_id),
             "isolated_portfolio_required": self.config.require_isolated_portfolio,
             "existing_btc_auto_seed_enabled": self.config.allow_existing_btc_seed,
+            "seed_existing_assets": sorted(set(self.config.seed_existing_assets) | ({"BTC"} if self.config.allow_existing_btc_seed else set())),
             "unmanaged_inventory": unmanaged_inventory,
             "submission_outcome_unknown": self.state.submission_intent is not None,
             "best_bid": bid,
@@ -2101,6 +2204,11 @@ class CoinbaseAutonomousExecutor:
         shadow = shadow_status or {}
         try:
             had_uncertain_submission = self.state.submission_intent is not None
+            if self.state.submission_intent is not None:
+                probe_book = self.client.top_of_book(self.config.product_id)
+                probe_nav, probe_balances = self._account_nav(float(probe_book.bid_price))
+                if self._clear_orphaned_exit_intent(probe_balances, now=ts):
+                    self._reconcile_missing_position(probe_balances, portfolio_nav_eur=probe_nav, now=ts)
             self._recover_submission_intent(ts)
             current_decisions = [
                 row for row in ((shadow.get("last_signal") or {}).get("decisions") or [])
@@ -2242,27 +2350,25 @@ class CoinbaseAutonomousExecutor:
             sleeve_target = float(ready["managed_sleeve_target_eur"])
             total_cash_target = reserve_target + sleeve_target
 
-            # Existing BTC is only used to seed the bounded sleeve. Each seed
-            # order remains <=20% of portfolio NAV and stops once reserve+sleeve
-            # cash has been created.
+            # Explicitly allowlisted Agent inventory is converted to quote cash
+            # before new directional entries; the order remains portfolio-scoped.
             if (
                 action is None
                 and self.state.pending is None
                 and self.state.submission_intent is None
                 and self.state.position is None
-                and self.config.allow_existing_btc_seed
+                and bool(set(self.config.seed_existing_assets) | ({"BTC"} if self.config.allow_existing_btc_seed else set()))
                 and env_ready
-                and float(balances.get("EUR") or 0.0) + 1e-9 < total_cash_target
-                and float(balances.get("BTC") or 0.0) > 0
+                and (
+                    float(balances.get("EUR") or 0.0)
+                    + float(balances.get("USDC") or 0.0) * float(balances.get("_USDC_TO_EUR") or 0.0)
+                ) + 1e-9 < total_cash_target
             ):
                 gap = total_cash_target - (
                     float(balances.get("EUR") or 0.0)
                     + float(balances.get("USDC") or 0.0)
                     * float(balances.get("_USDC_TO_EUR") or 0.0)
                 )
-                # Seed conversion reduces existing BTC inventory and does
-                # not create a new directional position. Daily entry-risk
-                # sizing must therefore never split or block seed liquidation.
                 hard_max_trade = float(
                     ready.get("hard_max_single_trade_eur", ready["max_single_trade_eur"])
                 )
@@ -2273,15 +2379,34 @@ class CoinbaseAutonomousExecutor:
                 )
                 seed_eur = min(gap, max_trade)
                 if seed_eur >= self.config.min_order_eur:
-                    base_size = min(float(balances["BTC"]), seed_eur / bid)
-                    actual_seed_eur = max(0.0, base_size * bid)
-                    # Never create a pending seed order from sub-minimum BTC
-                    # dust. Otherwise a harmless residual can temporarily
-                    # block all strategy entries.
-                    if actual_seed_eur + 1e-9 >= self.config.min_order_eur:
+                    seed_assets = set(self.config.seed_existing_assets)
+                    if self.config.allow_existing_btc_seed:
+                        seed_assets.add("BTC")
+                    for asset in sorted(seed_assets, key=lambda value: (value != "ETH", value)):
+                        available_asset = max(0.0, float(balances.get(asset) or 0.0))
+                        if available_asset <= 0:
+                            continue
+                        product = f"{asset}-EUR"
+                        try:
+                            asset_bid = float(self.client.top_of_book(product).bid_price)
+                        except Exception:
+                            continue
+                        if asset_bid <= 0:
+                            continue
+                        base_size = min(available_asset, seed_eur / asset_bid)
+                        actual_seed_eur = max(0.0, base_size * asset_bid)
+                        if actual_seed_eur + 1e-9 < self.config.min_order_eur:
+                            continue
                         action = self._submit_sell(
-                            base_size=base_size, purpose="seed", now=ts, reference_bid=bid
+                            base_size=base_size,
+                            purpose="seed",
+                            now=ts,
+                            reference_bid=asset_bid,
+                            product_id=product,
+                            quote_currency="EUR",
+                            quote_to_eur=1.0,
                         )
+                        break
 
             if (
                 action is None
@@ -2481,6 +2606,7 @@ class CoinbaseAutonomousExecutor:
                 "withdrawals": False,
                 "isolated_portfolio_required": self.config.require_isolated_portfolio,
                 "existing_btc_auto_seed": self.config.allow_existing_btc_seed,
+                "seed_existing_assets": sorted(set(self.config.seed_existing_assets) | ({"BTC"} if self.config.allow_existing_btc_seed else set())),
                 "supported_products": list(self.config.supported_products),
                 "dynamic_products_enabled": self.config.allow_dynamic_products,
                 "maker_first_entries": self.config.maker_first,
